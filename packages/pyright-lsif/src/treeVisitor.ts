@@ -149,6 +149,7 @@ export class TreeVisitor extends ParseTreeWalker {
 
         let moniker = this.emitter.EmitExportMoniker(this.makeMoniker(node.name.token.value), UniquenessLevel.scheme);
 
+
         this.emitter.EmitMonikerEdge(result, moniker);
 
         return true;
