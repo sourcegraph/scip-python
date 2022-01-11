@@ -1,0 +1,28 @@
+{
+  "name": "pyright-lsif",
+  "version": "0.1.0",
+  "description": "LSIF indexer for Python",
+  "main": "./src/indexer.js",
+  "scripts": {
+    "build": "webpack --mode production --progress",
+    "clean": "shx rm -rf ./dist ./out README.md LICENSE.txt",
+    "prepack": "npm run clean && shx cp ../../README.md . && shx cp ../../LICENSE.txt . && npm run build",
+    "webpack": "webpack --mode development --progress",
+    "watch": "webpack --mode development --progress --watch",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "MIT",
+  "devDependencies": {
+    "copy-webpack-plugin": "^10.2.0",
+    "shx": "^0.3.3",
+    "ts-loader": "^9.2.6",
+    "tsconfig-paths-webpack-plugin": "^3.5.2",
+    "typescript": "^4.5.4",
+    "webpack": "^5.65.0",
+    "webpack-cli": "^4.9.1"
+  },
+  "dependencies": {
+    "lsif-protocol": "^0.5.3"
+  }
+}

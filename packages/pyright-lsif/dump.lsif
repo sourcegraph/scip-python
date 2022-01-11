@@ -1,0 +1,5 @@
+{"id":1,"label":"metaData","version":"0.5.0","positionEncoding":"utf-16","type":"vertex"}
+{"id":2,"languageId":"python","label":"document","type":"vertex","uri":"file:///home/tjdevries/tmp/pyxample/src/pyxample/__init__.py"}
+{"id":3,"label":"range","type":"vertex","start":{"line":2,"character":6},"end":{"line":2,"character":13}}
+{"id":4,"label":"definitionResult","type":"vertex"}
+{"id":5,"label":"range","type":"vertex","start":{"line":6,"character":8},"end":{"line":6,"character":16}}

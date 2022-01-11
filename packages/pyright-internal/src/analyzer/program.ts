@@ -544,6 +544,7 @@ export class Program {
                 }
             }
 
+            console.log("YOOOOO");
             let count = 0;
             for (const sourceFileInfo of this._sourceFileList) {
                 if (!this._isUserCode(sourceFileInfo) || !sourceFileInfo.sourceFile.isIndexingRequired()) {
@@ -553,6 +554,7 @@ export class Program {
                 this._bindFile(sourceFileInfo);
                 const results = sourceFileInfo.sourceFile.index({ indexingForAutoImportMode: false }, token);
                 if (results) {
+                    // TODO(tjdevries): Probably just want to remove this entirely.
                     if (++count > MaxWorkspaceIndexFileCount) {
                         this._console.warn(`Workspace indexing has hit its upper limit: 2000 files`);
 
