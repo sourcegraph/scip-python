@@ -88,6 +88,7 @@ import { Type } from './types';
 import { TypeStubWriter } from './typeStubWriter';
 
 const _maxImportDepth = 256;
+const _isLsifMode = true;
 
 export const MaxWorkspaceIndexFileCount = 2000;
 
@@ -559,12 +560,14 @@ export class Program {
                 this._bindFile(sourceFileInfo);
                 const results = sourceFileInfo.sourceFile.index({ indexingForAutoImportMode: false }, token);
                 if (results) {
-                    if (++count > MaxWorkspaceIndexFileCount) {
-                        this._console.warn(`Workspace indexing has hit its upper limit: 2000 files`);
-
-                        dropParseAndBindInfoCreatedForIndexing(this._sourceFileList, initiallyParsedSet);
-                        return count;
-                    }
+                    count++;
+                    // TODO(tjdevries): Probably just want to remove this entirely.
+                    // if (++count > MaxWorkspaceIndexFileCount) {
+                    //     this._console.warn(`Workspace indexing has hit its upper limit: 2000 files`);
+                    //
+                    //     dropParseAndBindInfoCreatedForIndexing(this._sourceFileList, initiallyParsedSet);
+                    //     return count;
+                    // }
 
                     callback(sourceFileInfo.sourceFile.getFilePath(), results);
                 }
@@ -2243,6 +2246,11 @@ export class Program {
     }
 
     private _handleMemoryHighUsage() {
+        // Skip this, we wanna keep everything
+        if (_isLsifMode) {
+          return
+        }
+
         const typeCacheSize = this._evaluator!.getTypeCacheSize();
         const convertToMB = (bytes: number) => {
             return `${Math.round(bytes / (1024 * 1024))}MB`;
