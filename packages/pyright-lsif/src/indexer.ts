@@ -22,22 +22,24 @@ const fs = createFromRealFileSystem();
 const host = new FullAccessHost(fs);
 const importResolver = new ImportResolver(createFromRealFileSystem(), configOptions, host);
 
-const pyFiles = glob.sync("/home/tjdevries/tmp/pyxample/**/*.py");
+const pyFiles = glob.sync("/home/tjdevries/tmp/pyxample/src/**/*.py");
 const program = new Program(importResolver, configOptions);
 
 program.setTrackedFiles(pyFiles)
 
 const writeStream = createWriteStream("dump.lsif", { start: 0});
 
+let visitors: Map<string, TreeVisitor> = new Map();
+
 console.log("Workspace:", program.indexWorkspace(
     (path: string, results: IndexResults) => {
-        // console.log("Are we indexing?");
-        // console.log(path + '\n' + results.symbols.map((s) => JSON.stringify(s)));
-
         const parseResults = program.getSourceFile(path)?.getParseResults();
         const tree = parseResults?.parseTree;
         const typeEvaluator = program.evaluator;
-        new TreeVisitor(new Emitter(writeStream), program, typeEvaluator!!, path).walk(tree!!);
+        let visitor = new TreeVisitor(new Emitter(writeStream), program, typeEvaluator!!, path);
+        visitor.walk(tree!!);
+
+        visitors.set(path, visitor);
     },
     {
         isCancellationRequested: false,
@@ -46,7 +48,16 @@ console.log("Workspace:", program.indexWorkspace(
 ));
 
 while (program.analyze()) {};
-const sourceFile = program.getSourceFile(pyFiles[1])!;
+
+visitors.forEach((visitor, path) => {
+  // console.log(path, "=>", emitter);
+  // _ = i.emitter.EmitContains(d.DocumentID, union(d.DefinitionRangeIDs, d.ReferenceRangeIDs))
+  // visitor.writ
+  if (visitor.contains.length > 0) {
+    visitor.emitter.EmitContains(visitor.document!, visitor.contains);
+  }
+});
+
 // console.log(sourceFile.getImports());
 // console.log(sourceFile.getSymbolsForDocument("", {
 //     isCancellationRequested: false,
