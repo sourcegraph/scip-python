@@ -1,14 +1,25 @@
-import { Document, Range, UniquenessLevel } from 'lsif-protocol';
 import { AnalyzerFileInfo } from 'pyright-internal/analyzer/analyzerFileInfo';
 import { getFileInfo } from 'pyright-internal/analyzer/analyzerNodeInfo';
-import { getClassFullName } from 'pyright-internal/analyzer/parseTreeUtils';
+// import { getClassFullName } from 'pyright-internal/analyzer/parseTreeUtils';
 import { ParseTreeWalker } from 'pyright-internal/analyzer/parseTreeWalker';
 import { Program } from 'pyright-internal/analyzer/program';
 import { TypeEvaluator } from 'pyright-internal/analyzer/typeEvaluatorTypes';
-import { convertOffsetToPosition } from 'pyright-internal/common/positionUtils';
-import { ClassNode, FunctionNode, ModuleNameNode, ModuleNode, ParameterNode, ParseNodeBase } from 'pyright-internal/parser/parseNodes';
-import { UnescapeErrorType } from 'pyright-internal/parser/stringTokenUtils';
-import { Emitter } from './lsif';
+// import { convertOffsetToPosition } from 'pyright-internal/common/positionUtils';
+import {
+    ClassNode,
+    FunctionNode,
+    ModuleNameNode,
+    ModuleNode,
+    ParameterNode,
+    ParseNodeBase,
+} from 'pyright-internal/parser/parseNodes';
+// import { UnescapeErrorType } from 'pyright-internal/parser/stringTokenUtils';
+import { Emitter } from './emitter';
+
+import { lib } from './lsif';
+
+let Document = lib.codeintel.lsif_typed.Document;
+let Occurence = lib.codeintel.lsif_typed.Occurrence;
 
 // TODO:
 // - [ ] Emit definitions for all class
@@ -34,7 +45,7 @@ export class TreeVisitor extends ParseTreeWalker {
     private fileInfo: AnalyzerFileInfo | undefined;
     private uri: string;
 
-    public document: number | undefined;
+    public document;
     public contains: number[];
     private resultSets: Map<number, number>;
 
@@ -47,6 +58,9 @@ export class TreeVisitor extends ParseTreeWalker {
         private file: string
     ) {
         super();
+
+        // TODO: Make filepath relative
+        this.document = new Document({ relative_path: this.file, symbols: [], occurrences: [] });
 
         this.uri = 'file://' + this.file;
         this.contains = [];
@@ -67,7 +81,6 @@ export class TreeVisitor extends ParseTreeWalker {
 
     override visitModule(node: ModuleNode): boolean {
         this.fileInfo = getFileInfo(node);
-        this.document = this.emitter.EmitDocument(this.uri);
         this.scopeStack.push({ name: this.fileInfo.moduleName, end: Infinity });
 
         // this.scopeStack.push({
@@ -95,27 +108,32 @@ export class TreeVisitor extends ParseTreeWalker {
         //    Probably can do something like keep track of the moniker -> result, and then emit that
         this.popScopeStack(node);
 
-        let name = node.name;
-        let start = convertOffsetToPosition(name.start, this.fileInfo!!.lines);
-        let end = convertOffsetToPosition(name.start + name.length, this.fileInfo!.lines);
-        let range = this.emitter.EmitRange(start, end);
-        this.contains.push(range);
+        this.document.occurrences.push(new Occurence({}));
 
-        let result = this.resultSets.get(range);
-        if (result === undefined) {
-            result = this.emitter.EmitResultSet();
-            this.resultSets.set(range, result);
-        }
-
-        let defResult = this.emitter.EmitDefinitionResult();
-
-        this.emitter.EmitNext(range, result);
-        this.emitter.EmitTextDocumentDefinition(result, defResult);
-        this.emitter.EmitItem(defResult, [range], this.document!);
-
-        // TODO: Cache monikers
-        let moniker = this.emitter.EmitExportMoniker(this.makeMoniker(node.name.value), UniquenessLevel.scheme);
-        this.emitter.EmitMonikerEdge(result, moniker);
+        // let name = node.name;
+        // let start = convertOffsetToPosition(name.start, this.fileInfo!!.lines);
+        // this.document.occurrences.push({
+        //     range: [start.line, start.character, start.character + node.length],
+        // });
+        // let end = convertOffsetToPosition(name.start + name.length, this.fileInfo!.lines);
+        // let range = this.emitter.EmitRange(start, end);
+        // this.contains.push(range);
+        //
+        // let result = this.resultSets.get(range);
+        // if (result === undefined) {
+        //     result = this.emitter.EmitResultSet();
+        //     this.resultSets.set(range, result);
+        // }
+        //
+        // let defResult = this.emitter.EmitDefinitionResult();
+        //
+        // this.emitter.EmitNext(range, result);
+        // this.emitter.EmitTextDocumentDefinition(result, defResult);
+        // this.emitter.EmitItem(defResult, [range], this.document!);
+        //
+        // // TODO: Cache monikers
+        // let moniker = this.emitter.EmitExportMoniker(this.makeMoniker(node.name.value), UniquenessLevel.scheme);
+        // this.emitter.EmitMonikerEdge(result, moniker);
 
         this.scopeStack.push({ name: node.name.value, end: node.start + node.length });
 
@@ -128,29 +146,28 @@ export class TreeVisitor extends ParseTreeWalker {
     override visitFunction(node: FunctionNode): boolean {
         this.popScopeStack(node);
 
-        let name = node.name;
-        let start = convertOffsetToPosition(name.start, this.fileInfo!!.lines);
-        let end = convertOffsetToPosition(name.start + name.length, this.fileInfo!.lines);
-
-        let range = this.emitter.EmitRange(start, end);
-        this.contains.push(range);
-
-        let result = this.resultSets.get(range);
-        if (result === undefined) {
-            result = this.emitter.EmitResultSet();
-            this.resultSets.set(range, result);
-        }
-
-        let defResult = this.emitter.EmitDefinitionResult();
-
-        this.emitter.EmitNext(range, result);
-        this.emitter.EmitTextDocumentDefinition(result, defResult);
-        this.emitter.EmitItem(defResult, [range], this.document!);
-
-        let moniker = this.emitter.EmitExportMoniker(this.makeMoniker(node.name.token.value), UniquenessLevel.scheme);
-
-
-        this.emitter.EmitMonikerEdge(result, moniker);
+        // let name = node.name;
+        // let start = convertOffsetToPosition(name.start, this.fileInfo!!.lines);
+        // let end = convertOffsetToPosition(name.start + name.length, this.fileInfo!.lines);
+        //
+        // let range = this.emitter.EmitRange(start, end);
+        // this.contains.push(range);
+        //
+        // let result = this.resultSets.get(range);
+        // if (result === undefined) {
+        //     result = this.emitter.EmitResultSet();
+        //     this.resultSets.set(range, result);
+        // }
+        //
+        // let defResult = this.emitter.EmitDefinitionResult();
+        //
+        // this.emitter.EmitNext(range, result);
+        // this.emitter.EmitTextDocumentDefinition(result, defResult);
+        // this.emitter.EmitItem(defResult, [range], this.document!);
+        //
+        // let moniker = this.emitter.EmitExportMoniker(this.makeMoniker(node.name.token.value), UniquenessLevel.scheme);
+        //
+        // this.emitter.EmitMonikerEdge(result, moniker);
 
         return true;
     }
@@ -158,20 +175,20 @@ export class TreeVisitor extends ParseTreeWalker {
     // TODO: Could possibly move this into visitFunction.
     //  I'm not sure of what the best way is to do this, since
     //  we don't always need to traverse these if we already know good info?
-    override visitParameter(node: ParameterNode): boolean {
-      return true;
+    override visitParameter(_node: ParameterNode): boolean {
+        return true;
     }
 
-    private makeMoniker(last: string): string {
-        return this.scopeStack.map((value) => value.name).join('.') + '.' + last;
-    }
+    // private makeMoniker(last: string): string {
+    //     return this.scopeStack.map((value) => value.name).join('.') + '.' + last;
+    // }
 
     private emitDefinition(resultSetID: number, rangeID: number) {
-        let defResult = this.emitter.EmitDefinitionResult();
-
-        this.emitter.EmitNext(rangeID, resultSetID);
-        this.emitter.EmitTextDocumentDefinition(resultSetID, defResult);
-        this.emitter.EmitItem(defResult, [range], this.document!);
+        // let defResult = this.emitter.EmitDefinitionResult();
+        //
+        // this.emitter.EmitNext(rangeID, resultSetID);
+        // this.emitter.EmitTextDocumentDefinition(resultSetID, defResult);
+        // this.emitter.EmitItem(defResult, [range], this.document!);
     }
 
     // override visitName(node: NameNode): boolean {

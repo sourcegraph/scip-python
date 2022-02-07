@@ -8,11 +8,12 @@ import { IndexResults } from 'pyright-internal/languageService/documentSymbolPro
 import { TreeVisitor } from './treeVisitor';
 import { FullAccessHost } from 'pyright-internal/common/fullAccessHost';
 import { glob } from 'glob';
-import { Document, ElementTypes, MetaData, VertexLabels } from 'lsif-protocol';
 import { createWriteStream } from 'fs';
 import { Emitter } from './emitter';
 
 if (false) {
+    const writeStream = createWriteStream('dump.lsif', { start: 0 });
+
     const configOptions = new ConfigOptions('/home/tjdevries/tmp/pyxample/');
     configOptions.checkOnlyOpenFiles = false;
     configOptions.indexing = true;
@@ -26,10 +27,7 @@ if (false) {
 
     program.setTrackedFiles(pyFiles);
 
-    const writeStream = createWriteStream('dump.lsif', { start: 0 });
-
     let visitors: Map<string, TreeVisitor> = new Map();
-
     console.log(
         'Workspace:',
         program.indexWorkspace(
@@ -50,24 +48,10 @@ if (false) {
     );
 
     while (program.analyze()) {}
-
-    visitors.forEach((visitor, path) => {
-        // console.log(path, "=>", emitter);
-        // _ = i.emitter.EmitContains(d.DocumentID, union(d.DefinitionRangeIDs, d.ReferenceRangeIDs))
-        // visitor.writ
-        if (visitor.contains.length > 0) {
-            visitor.emitter.EmitContains(visitor.document!, visitor.contains);
-        }
-    });
-
-    // console.log(sourceFile.getImports());
-    // console.log(sourceFile.getSymbolsForDocument("", {
-    //     isCancellationRequested: false,
-    //     onCancellationRequested: Event.None,
-    // }));
-    // program.setFileClosed
-
-    console.log('All done!');
 }
 
-console.log("Trying Proto Bufs");
+export class Indexer {
+    constructor() {}
+
+    public index(): void {}
+}

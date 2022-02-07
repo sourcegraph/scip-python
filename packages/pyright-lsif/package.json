@@ -9,11 +9,13 @@
     "prepack": "npm run clean && shx cp ../../README.md . && shx cp ../../LICENSE.txt . && npm run build",
     "webpack": "webpack --mode development --progress",
     "watch": "webpack --mode development --progress --watch",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "uvu -r ts-node/register --ignore dist"
   },
   "author": "",
   "license": "MIT",
   "devDependencies": {
+    "@types/diff": "^5.0.2",
+    "@types/google-protobuf": "^3.15.5",
     "copy-webpack-plugin": "^10.2.0",
     "shx": "^0.3.3",
     "ts-loader": "^9.2.6",
@@ -23,6 +25,9 @@
     "webpack-cli": "^4.9.1"
   },
   "dependencies": {
-    "lsif-protocol": "^0.5.3"
+    "diff": "^5.0.0",
+    "google-protobuf": "^3.19.3",
+    "ts-node": "^10.5.0",
+    "uvu": "^0.5.3"
   }
 }
