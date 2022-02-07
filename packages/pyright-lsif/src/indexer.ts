@@ -1,5 +1,3 @@
-import { Event } from '../../pyright-internal/node_modules/vscode-languageserver/lib/common/api';
-
 import { Program } from 'pyright-internal/analyzer/program';
 import { ImportResolver } from 'pyright-internal/analyzer/importResolver';
 import { createFromRealFileSystem } from 'pyright-internal/common/realFileSystem';
@@ -27,25 +25,26 @@ if (false) {
 
     program.setTrackedFiles(pyFiles);
 
-    let visitors: Map<string, TreeVisitor> = new Map();
-    console.log(
-        'Workspace:',
-        program.indexWorkspace(
-            (path: string, results: IndexResults) => {
-                const parseResults = program.getSourceFile(path)?.getParseResults();
-                const tree = parseResults?.parseTree;
-                const typeEvaluator = program.evaluator;
-                let visitor = new TreeVisitor(new Emitter(writeStream), program, typeEvaluator!!, path);
-                visitor.walk(tree!!);
-
-                visitors.set(path, visitor);
-            },
-            {
-                isCancellationRequested: false,
-                onCancellationRequested: Event.None,
-            }
-        )
-    );
+  // import { Event } from 'vscode-languageserver/lib/common/api';
+  //   let visitors: Map<string, TreeVisitor> = new Map();
+  //   console.log(
+  //       'Workspace:',
+  //       program.indexWorkspace(
+  //           (path: string, results: IndexResults) => {
+  //               const parseResults = program.getSourceFile(path)?.getParseResults();
+  //               const tree = parseResults?.parseTree;
+  //               const typeEvaluator = program.evaluator;
+  //               let visitor = new TreeVisitor(new Emitter(writeStream), program, typeEvaluator!!, path);
+  //               visitor.walk(tree!!);
+  //
+  //               visitors.set(path, visitor);
+  //           },
+  //           {
+  //               isCancellationRequested: false,
+  //               onCancellationRequested: Event.None,
+  //           }
+  //       )
+  //   );
 
     while (program.analyze()) {}
 }
