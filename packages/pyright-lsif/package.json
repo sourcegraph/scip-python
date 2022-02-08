@@ -9,8 +9,7 @@
     "prepack": "npm run clean && shx cp ../../README.md . && shx cp ../../LICENSE.txt . && npm run build",
     "webpack": "webpack --mode development --progress",
     "watch": "webpack --mode development --progress --watch",
-    "test": "jest --forceExit",
-    "test_snapshot": "uvu -r ts-node/register --ignore dist"
+    "test": "jest --forceExit --watch --silent=false"
   },
   "author": "",
   "license": "MIT",
@@ -33,6 +32,7 @@
     "google-protobuf": "^3.19.3",
     "jest": "^27.5.0",
     "ts-node": "^10.5.0",
-    "uvu": "^0.5.3"
+    "uvu": "^0.5.3",
+    "vscode-languageserver": "^7.0.0"
   }
 }

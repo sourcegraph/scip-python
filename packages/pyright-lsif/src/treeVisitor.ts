@@ -4,7 +4,7 @@ import { getFileInfo } from 'pyright-internal/analyzer/analyzerNodeInfo';
 import { ParseTreeWalker } from 'pyright-internal/analyzer/parseTreeWalker';
 import { Program } from 'pyright-internal/analyzer/program';
 import { TypeEvaluator } from 'pyright-internal/analyzer/typeEvaluatorTypes';
-// import { convertOffsetToPosition } from 'pyright-internal/common/positionUtils';
+import { convertOffsetToPosition } from 'pyright-internal/common/positionUtils';
 import {
     ClassNode,
     FunctionNode,
@@ -16,10 +16,11 @@ import {
 // import { UnescapeErrorType } from 'pyright-internal/parser/stringTokenUtils';
 import { Emitter } from './emitter';
 
-import { lib } from './lsif';
+import { Position } from './lsif-typescript/Position';
 
-let Document = lib.codeintel.lsif_typed.Document;
-let Occurence = lib.codeintel.lsif_typed.Occurrence;
+import { lsif_typed } from './main';
+import * as lsif from './lsif';
+import { Range } from './lsif-typescript/Range';
 
 // TODO:
 // - [ ] Emit definitions for all class
@@ -43,26 +44,20 @@ class Scope {
 
 export class TreeVisitor extends ParseTreeWalker {
     private fileInfo: AnalyzerFileInfo | undefined;
-    private uri: string;
 
-    public document;
     public contains: number[];
     private resultSets: Map<number, number>;
 
     private scopeStack: Scope[];
 
     constructor(
-        public emitter: Emitter,
+        public document: lsif.lib.codeintel.lsif_typed.Document,
         private program: Program,
         private evaluator: TypeEvaluator,
         private file: string
     ) {
         super();
 
-        // TODO: Make filepath relative
-        this.document = new Document({ relative_path: this.file, symbols: [], occurrences: [] });
-
-        this.uri = 'file://' + this.file;
         this.contains = [];
         this.scopeStack = [];
         this.resultSets = new Map();
@@ -108,7 +103,7 @@ export class TreeVisitor extends ParseTreeWalker {
         //    Probably can do something like keep track of the moniker -> result, and then emit that
         this.popScopeStack(node);
 
-        this.document.occurrences.push(new Occurence({}));
+        this.document.occurrences.push(new lsif_typed.Occurrence({}));
 
         // let name = node.name;
         // let start = convertOffsetToPosition(name.start, this.fileInfo!!.lines);
@@ -146,10 +141,20 @@ export class TreeVisitor extends ParseTreeWalker {
     override visitFunction(node: FunctionNode): boolean {
         this.popScopeStack(node);
 
-        // let name = node.name;
-        // let start = convertOffsetToPosition(name.start, this.fileInfo!!.lines);
-        // let end = convertOffsetToPosition(name.start + name.length, this.fileInfo!.lines);
-        //
+        let name = node.name;
+        let _start = convertOffsetToPosition(name.start, this.fileInfo!!.lines);
+        let start = new Position(_start.line, _start.character);
+
+        let _end = convertOffsetToPosition(name.start + name.length, this.fileInfo!.lines);
+        let end = new Position(_end.line, _end.character);
+
+        this.document.occurrences.push(new lsif_typed.Occurrence({
+          symbol_roles: lsif_typed.SymbolRole.Definition,
+          symbol: name.value,
+          range: new Range(start, end).toLsif(),
+        }));
+
+
         // let range = this.emitter.EmitRange(start, end);
         // this.contains.push(range);
         //

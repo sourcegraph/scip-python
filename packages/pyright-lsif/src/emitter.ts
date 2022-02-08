@@ -1,5 +1,3 @@
-import { WriteStream } from 'fs';
-
 // TODO: This might need to be threadsafe at some point?
 let _id = 0;
 function nextID(): number {
@@ -8,6 +6,6 @@ function nextID(): number {
 }
 
 export class Emitter {
-    constructor(private writer: WriteStream) {}
+    constructor() {}
 }
 

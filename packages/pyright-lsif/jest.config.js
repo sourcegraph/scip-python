@@ -18,10 +18,11 @@ module.exports = {
     },
     testRegex: '(/__tests__/.*|(\\.|/)(test|spec))\\.tsx?$',
     moduleFileExtensions: ['ts', 'tsx', 'js', 'jsx'],
-    moduleNameMapper: pathsToModuleNameMapper(compilerOptions.paths),
+    moduleNameMapper: pathsToModuleNameMapper(compilerOptions.paths, { prefix: '<rootDir>' }),
     globals: {
         'ts-jest': {
             tsconfig: {
+                baseUrl: '.',
                 target: 'es6',
 
                 // Needed because jest calls tsc in a way that doesn't
