@@ -1,5 +1,4 @@
-import * as ts from 'typescript'
-
+import ts from 'typescript'
 import { Position } from './Position'
 
 export class Range {

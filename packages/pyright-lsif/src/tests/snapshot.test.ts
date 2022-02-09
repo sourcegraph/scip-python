@@ -4,12 +4,10 @@ import * as path from 'path';
 import * as process from 'process';
 
 import * as Diff from 'diff';
-import { test } from 'uvu';
 
 import * as lsif from '../lsif';
 import { Input } from '../lsif-typescript/Input';
-import { Range } from '../lsif-typescript/Range';
-import { index as lsifIndex } from '../main';
+import { formatSnapshot, index as lsifIndex, writeSnapshot } from '../lib';
 
 const lsif_typed = lsif.lib.codeintel.lsif_typed;
 
@@ -28,13 +26,13 @@ if (isUpdate && fs.existsSync(outputDirectory)) {
 
 describe('indexer', () => {
     for (const snapshotDirectory of snapshotDirectories) {
-        it(snapshotDirectory, () => {
-            const index = new lsif.lib.codeintel.lsif_typed.Index();
+        it(`Snapshot for: ${snapshotDirectory}`, () => {
             const projectRoot = join(inputDirectory, snapshotDirectory);
 
+            const index = new lsif.lib.codeintel.lsif_typed.Index();
             lsifIndex({
                 projectRoot,
-                project: './snapshots/input/single_function/',
+                project: path.relative('.', projectRoot),
                 writeIndex: (partialIndex: any): void => {
                     if (partialIndex.metadata) {
                         index.metadata = partialIndex.metadata;
@@ -47,22 +45,16 @@ describe('indexer', () => {
 
             fs.writeFileSync(path.join(projectRoot, 'dump.lsif-typed'), index.serializeBinary());
 
-            for (const document of index.documents) {
-                const inputPath = path.join(projectRoot, document.relative_path);
+            for (const doc of index.documents) {
+                const inputPath = path.join(projectRoot, doc.relative_path);
                 const relativeToInputDirectory = path.relative(inputDirectory, inputPath);
                 const outputPath = path.resolve(outputDirectory, relativeToInputDirectory);
                 const expected: string = fs.existsSync(outputPath) ? fs.readFileSync(outputPath).toString() : '';
                 const input = Input.fromFile(inputPath);
-                const obtained = formatSnapshot(input, document);
+                const obtained = formatSnapshot(input, doc);
                 if (obtained !== expected) {
                     if (isUpdate) {
-                        // eslint-disable-next-line no-sync
-                        fs.mkdirSync(path.dirname(outputPath), {
-                            recursive: true,
-                        });
-                        // eslint-disable-next-line no-sync
-                        fs.writeFileSync(outputPath, obtained);
-                        console.log(`updated snapshot: ${outputPath}`);
+                        writeSnapshot(outputPath, obtained);
                     } else {
                         const patch = Diff.createTwoFilesPatch(
                             outputPath,
@@ -79,53 +71,3 @@ describe('indexer', () => {
         });
     }
 });
-
-function formatSnapshot(input: Input, document: lsif.lib.codeintel.lsif_typed.Document): string {
-    const out: string[] = [];
-    document.occurrences.sort(occurrencesByLine);
-    let occurrenceIndex = 0;
-    for (const [lineNumber, line] of input.lines.entries()) {
-        out.push('');
-        out.push(line);
-        out.push('\n');
-        while (
-            occurrenceIndex < document.occurrences.length &&
-            document.occurrences[occurrenceIndex].range[0] === lineNumber
-        ) {
-            const occurrence = document.occurrences[occurrenceIndex];
-            occurrenceIndex++;
-            if (occurrence.range.length > 3) {
-                // Skip multiline occurrences for now.
-                continue;
-            }
-            const range = Range.fromLsif(occurrence.range);
-            out.push('#');
-            out.push(' '.repeat(range.start.character - 1));
-            const length = range.end.character - range.start.character;
-            if (length < 0) {
-                throw new Error(input.format(range, 'negative length occurrence!'));
-            }
-            out.push('^'.repeat(length));
-            out.push(' ');
-            const isDefinition = (occurrence.symbol_roles & lsif_typed.SymbolRole.Definition) > 0;
-            out.push(isDefinition ? 'definition' : 'reference');
-            out.push(' ');
-            const symbol = occurrence.symbol.startsWith('lsif-node npm ')
-                ? occurrence.symbol.slice('lsif-noode npm'.length)
-                : occurrence.symbol;
-            out.push(symbol);
-            out.push('\n');
-        }
-    }
-    return out.join('');
-}
-
-function occurrencesByLine(
-    a: lsif.lib.codeintel.lsif_typed.Occurrence,
-    b: lsif.lib.codeintel.lsif_typed.Occurrence
-): number {
-    return Range.fromLsif(a.range).compare(Range.fromLsif(b.range));
-}
-
-// test.run();
-//

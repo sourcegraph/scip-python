@@ -19,7 +19,7 @@ module.exports = (_, { mode }) => {
     return {
         context: __dirname,
         entry: {
-            'lsif-pyright': './src/indexer.ts',
+            'lsif-pyright': './src/main.ts',
         },
         target: 'node',
         output: {

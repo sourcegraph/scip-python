@@ -87,6 +87,7 @@ import { Type } from './types';
 import { TypeStubWriter } from './typeStubWriter';
 
 const _maxImportDepth = 256;
+const _isLsifMode = true;
 
 export const MaxWorkspaceIndexFileCount = 2000;
 
@@ -544,7 +545,6 @@ export class Program {
                 }
             }
 
-            console.log("YOOOOO");
             let count = 0;
             for (const sourceFileInfo of this._sourceFileList) {
                 if (!this._isUserCode(sourceFileInfo) || !sourceFileInfo.sourceFile.isIndexingRequired()) {
@@ -554,13 +554,14 @@ export class Program {
                 this._bindFile(sourceFileInfo);
                 const results = sourceFileInfo.sourceFile.index({ indexingForAutoImportMode: false }, token);
                 if (results) {
+                    count++;
                     // TODO(tjdevries): Probably just want to remove this entirely.
-                    if (++count > MaxWorkspaceIndexFileCount) {
-                        this._console.warn(`Workspace indexing has hit its upper limit: 2000 files`);
-
-                        dropParseAndBindInfoCreatedForIndexing(this._sourceFileList, initiallyParsedSet);
-                        return count;
-                    }
+                    // if (++count > MaxWorkspaceIndexFileCount) {
+                    //     this._console.warn(`Workspace indexing has hit its upper limit: 2000 files`);
+                    //
+                    //     dropParseAndBindInfoCreatedForIndexing(this._sourceFileList, initiallyParsedSet);
+                    //     return count;
+                    // }
 
                     callback(sourceFileInfo.sourceFile.getFilePath(), results);
                 }
@@ -2086,6 +2087,11 @@ export class Program {
     }
 
     private _handleMemoryHighUsage() {
+        // Skip this, we wanna keep everything
+        if (_isLsifMode) {
+          return
+        }
+
         const typeCacheSize = this._evaluator!.getTypeCacheSize();
 
         // If the type cache size has exceeded a high-water mark, query the heap usage.

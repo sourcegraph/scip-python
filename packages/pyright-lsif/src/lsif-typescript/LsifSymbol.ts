@@ -1,7 +1,7 @@
 import { Descriptor } from './Descriptor'
 
 export class LsifSymbol {
-  private constructor(public readonly value: string) {}
+  protected constructor(public readonly value: string) {}
   public isEmpty(): boolean {
     return this.value === ''
   }

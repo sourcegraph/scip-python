@@ -1,4 +1,5 @@
-def my_cool_function(a: str, b: int) -> str:
-    return f"a: {a}, b: {b}"
+def my_cool_function(a: str) -> str:
+    return a
 
-my_cool_function("hello", 5)
+if True:
+    my_cool_function("hello")
