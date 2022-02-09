@@ -9,7 +9,7 @@
     "prepack": "npm run clean && shx cp ../../README.md . && shx cp ../../LICENSE.txt . && npm run build",
     "webpack": "webpack --mode development --progress",
     "watch": "webpack --mode development --progress --watch",
-    "test": "jest --forceExit --watch --silent=false"
+    "test": "jest --forceExit --watchAll --silent=false"
   },
   "author": "",
   "license": "MIT",

@@ -51,10 +51,9 @@ export class TreeVisitor extends ParseTreeWalker {
     private scopeStack: Scope[];
 
     constructor(
-        public document: lsif.lib.codeintel.lsif_typed.Document,
         private program: Program,
         private evaluator: TypeEvaluator,
-        private file: string
+        public document: lsif.lib.codeintel.lsif_typed.Document,
     ) {
         super();
 
@@ -147,6 +146,9 @@ export class TreeVisitor extends ParseTreeWalker {
 
         let _end = convertOffsetToPosition(name.start + name.length, this.fileInfo!.lines);
         let end = new Position(_end.line, _end.character);
+
+        // let t = this.evaluator.getmod
+        // this.fileInfo?.moduleName
 
         this.document.occurrences.push(new lsif_typed.Occurrence({
           symbol_roles: lsif_typed.SymbolRole.Definition,

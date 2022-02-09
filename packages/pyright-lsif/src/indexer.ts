@@ -50,13 +50,11 @@ export class Indexer {
 
         while (this.program.analyze()) {}
 
-        let visitors: Map<string, TreeVisitor> = new Map();
         this.program.indexWorkspace(
             (filepath: string, _results: IndexResults) => {
                 const parseResults = this.program.getSourceFile(filepath)?.getParseResults();
                 const tree = parseResults?.parseTree;
                 const typeEvaluator = this.program.evaluator;
-
 
                 let doc = new lsif_typed.Document({ 
                   relative_path: path.relative(
@@ -64,10 +62,10 @@ export class Indexer {
                     filepath
                   ),
                 });
-                let visitor = new TreeVisitor(doc, this.program, typeEvaluator!, filepath);
-                visitor.walk(tree!!);
 
-                visitors.set(filepath, visitor);
+                let visitor = new TreeVisitor(this.program, typeEvaluator!, doc);
+
+                visitor.walk(tree!!);
 
                 this.options.writeIndex(
                   new lsif_typed.Index({
