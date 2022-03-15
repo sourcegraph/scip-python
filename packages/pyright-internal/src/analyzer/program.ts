@@ -556,7 +556,7 @@ export class Program {
             for (const sourceFileInfo of this._sourceFileList) {
                 if (!this._isUserCode(sourceFileInfo) || !sourceFileInfo.sourceFile.isIndexingRequired()) {
                     // TODO(lsif): Probably want some other way to skip files still though... :)
-                    console.log('Skipping', sourceFileInfo.sourceFile.getFilePath());
+                    // console.log('Skipping', sourceFileInfo.sourceFile.getFilePath());
                     continue;
                 }
 
@@ -741,7 +741,7 @@ export class Program {
         return this._importResolver.fileSystem;
     }
 
-    private _getImportNameForFile(filePath: string) {
+    public _getImportNameForFile(filePath: string) {
         const moduleNameAndType = this._importResolver.getModuleNameForImport(
             filePath,
             this._configOptions.getDefaultExecEnvironment()
