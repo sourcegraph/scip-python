@@ -15,7 +15,6 @@ import {
     NameNode,
     ParameterNode,
     ParseNode,
-    ParseNodeBase,
     ParseNodeType,
     TypeAnnotationNode,
 } from 'pyright-internal/parser/parseNodes';
@@ -35,6 +34,7 @@ import { Range } from './lsif-typescript/Range';
 import { lsiftyped } from './lib';
 import {
     getDocString,
+    getEnclosingClass,
     getEnclosingSuite,
     isFromImportModuleName,
     isImportModuleName,
@@ -45,22 +45,11 @@ import { ScopeType } from 'pyright-internal/analyzer/scope';
 import { Counter } from './lsif-typescript/Counter';
 import { TypeStubExtendedWriter } from './TypeStubExtendedWriter';
 import { SourceFile } from 'pyright-internal/analyzer/sourceFile';
+import { extractParameterDocumentation } from 'pyright-internal/analyzer/docStringUtils';
+import { Declaration } from 'pyright-internal/analyzer/declaration';
 
-// TODO:
-// - [ ] Emit definitions for all class
-// - [ ] Emit references for classes
-// - [ ] Emit definitions for all functions
-// - [ ] Emit references for functions
-
-// I think we can do something like,
-//  keep track of where a particular scope would END
-//  when we pass that spot, we pop whatever the last scope was until we're done.
-//
-//  so for a class, we can keep some "state" at the moment of who is where
-//  and then pop that off as we move outside of each scope.
-//
-//  This should let us do a lot more stuff in a "single pass" style, instead
-//  of looking back up the tree as we go the whole time.
+//  Useful functions for later, but haven't gotten far enough yet to use them.
+//      extractParameterDocumentation
 
 function nameNodeToRange(name: NameNode, lines: TextRangeCollection<TextRange>) {
     const _start = convertOffsetToPosition(name.start, lines);
@@ -80,6 +69,10 @@ export class TreeVisitor extends ParseTreeWalker {
 
     private docstringWriter: TypeStubExtendedWriter;
 
+    private _classDepth: number;
+    private _functionDepth: number;
+    private _lastScope: ParseNode[];
+
     constructor(
         public sourceFile: SourceFile,
         private evaluator: TypeEvaluator,
@@ -94,6 +87,28 @@ export class TreeVisitor extends ParseTreeWalker {
 
         this.docstringWriter = new TypeStubExtendedWriter(this.sourceFile, this.evaluator);
         console.log('Visiting:', document.relative_path);
+
+        this._classDepth = 0;
+        this._functionDepth = 0;
+        this._lastScope = [];
+    }
+
+    private getNearestClass(): ClassNode | undefined {
+        for (let i = this._lastScope.length - 1; i >= 0; i--) {
+            if (this._lastScope[i].nodeType == ParseNodeType.Class) {
+                return this._lastScope[i] as ClassNode;
+            }
+        }
+
+        return undefined;
+    }
+
+    private isInsideClass(): boolean {
+        if (this._classDepth == 0) {
+            return false;
+        }
+
+        return this._lastScope[this._lastScope.length - 1].nodeType == ParseNodeType.Class;
     }
 
     override visitModule(node: ModuleNode): boolean {
@@ -102,7 +117,6 @@ export class TreeVisitor extends ParseTreeWalker {
     }
 
     override visitClass(node: ClassNode): boolean {
-        // console.log(node.suite.statements[0])
 
         // This might not even be worth it to be honest...
         this.docstringWriter.visitClass(node);
@@ -119,7 +133,20 @@ export class TreeVisitor extends ParseTreeWalker {
             })
         );
 
-        return true;
+        // Walk what is in the class, but know that we are currently in a class.
+        //  TODO: We could probably further optimize some look ups and traversals if we wanted to based
+        //  on turning this in to a stack or something.
+        this._classDepth++;
+        const scopeLen = this._lastScope.push(node);
+
+        this.walk(node.suite);
+
+        if (scopeLen !== this._lastScope.length) {
+            throw 'Scopes are not matched';
+        }
+        this._lastScope.pop();
+        this._classDepth--;
+        return false;
     }
 
     override visitTypeAnnotation(node: TypeAnnotationNode): boolean {
@@ -128,46 +155,75 @@ export class TreeVisitor extends ParseTreeWalker {
         //  We can revisit this in visitName or perhaps when looking up the lsif symbol
         // console.log("TypeAnnotation", this.evaluator.lookUpSymbolRecursive(node, 'a', false)?.symbol.isClassMember());
 
+        // If we see a type annotation and we are currently inside of a class,
+        // that means that we are describing fields of a class (as far as I can tell),
+        // so we need to push a new symbol
+        if (this.isInsideClass()) {
+            // this.evaluator.
+            this.document.symbols.push(
+                new lsiftyped.SymbolInformation({
+                    symbol: this.getLsifSymbol(node).value,
+                    documentation: ['A Field of a Class'],
+                })
+            );
+        }
+
         return true;
     }
 
     override visitFunction(node: FunctionNode): boolean {
         this.docstringWriter.visitFunction(node);
 
-        // const name = node.name;
-        // const range = nameNodeToRange(name, this.fileInfo!.lines);
-        // const type_ = this.evaluator.getType(node.name)
-
-        const symbol = this.getLsifSymbol(node);
-
         let stubs = this.docstringWriter.docstrings.get(node.id)!;
-        let doc = getDocString(node.suite.statements) || '';
+        let functionDoc = getDocString(node.suite.statements) || '';
 
         this.document.symbols.push(
             new lsiftyped.SymbolInformation({
-                symbol: symbol.value,
-                documentation: [doc, '```python\n' + stubs.join('\n') + '\n```'],
-                // documentation: ['```' + (getDocString(node.suite.statements) || '') + '```'],
+                symbol: this.getLsifSymbol(node).value,
+                documentation: ['```python\n' + stubs.join('\n') + '\n```', functionDoc],
             })
         );
 
-        return true;
+        this._functionDepth++;
+        const scopeLen = this._lastScope.push(node);
+
+        // Walk the parameters individually, with additional information about the function
+        node.parameters.forEach((paramNode: ParameterNode) => {
+            const symbol = this.getLsifSymbol(paramNode);
+
+            // This pulls documentation of various styles from function docstring
+            const paramDocstring = paramNode.name
+                ? extractParameterDocumentation(functionDoc, paramNode.name!.value)
+                : undefined;
+            const paramDocumentation = paramDocstring ? [paramDocstring] : undefined;
+
+            this.document.symbols.push(
+                new lsiftyped.SymbolInformation({
+                    symbol: symbol.value,
+                    documentation: paramDocumentation,
+                })
+            );
+
+            // Walk the parameter child nodes
+            this.walk(paramNode.name!);
+        });
+
+        // Walk the function definition
+        this.walk(node.suite);
+
+        // Assert we have a balanced traversal
+        if (scopeLen !== this._lastScope.length) {
+            throw 'Scopes are not matched';
+        }
+        this._lastScope.pop();
+        this._functionDepth--;
+
+        return false;
     }
 
-    // override visitParameter(node: ParameterNode): boolean {
-    //     const name = node.name!;
-    //     const symbol = this.getLsifSymbol(node);
-    //
-    //     this.document.occurrences.push(
-    //         new lsiftyped.Occurrence({
-    //             symbol_roles: lsiftyped.SymbolRole.Definition,
-    //             symbol: symbol.value,
-    //             range: nameNodeToRange(name, this.fileInfo!.lines).toLsif(),
-    //         })
-    //     );
-    //
-    //     return true;
-    // }
+    override visitParameter(_: ParameterNode): boolean {
+        throw 'Should not visit param nodes directly';
+    }
 
     // `import requests`
     override visitImport(node: ImportNode): boolean {
@@ -246,7 +302,8 @@ export class TreeVisitor extends ParseTreeWalker {
                 return true;
             }
 
-            const symbol = this.getLsifSymbol(dec.node);
+            // TODO: WriteAccess isn't really implemented yet on my side
+            const symbol = this.declarationToSymbol(dec);
             const symbol_roles =
                 dec.node.id == node.id ? lsiftyped.SymbolRole.Definition : lsiftyped.SymbolRole.ReadAccess;
 
@@ -301,9 +358,7 @@ export class TreeVisitor extends ParseTreeWalker {
         const scope = getScopeForNode(node)!;
 
         // not yet right, but good first approximation
-        if (canBeLocal(node) && scope.type != ScopeType.Builtin) {
-            // console.log(node);
-            // const newSymbol = LsifSymbol.global(this.getPackageSymbol(), LsifSymbol.local(this.counter.next())),
+        if (false && canBeLocal(node) && scope.type != ScopeType.Builtin) {
             const newSymbol = LsifSymbol.local(this.counter.next());
             this.symbols.set(node.id, newSymbol);
             return newSymbol;
@@ -315,19 +370,16 @@ export class TreeVisitor extends ParseTreeWalker {
         return newSymbol;
     }
 
-    // private declarationToSymbol(declaration: Declaration): LsifSymbol {
-    //     console.log('declaration path ->', declaration.path, this.program._getImportNameForFile(declaration.path));
-    //     return LsifSymbol.global(LsifSymbol.package(declaration.moduleName, '2.3'), methodDescriptor('get'));
-    // }
+    private declarationToSymbol(declaration: Declaration): LsifSymbol {
+        return this.getLsifSymbol(declaration.node);
+    }
 
     private makeLsifSymbol(node: ParseNode): LsifSymbol {
         switch (node.nodeType) {
             case ParseNodeType.Module:
-                // return LsifSymbol.package('module', '0.0.0');
-                return LsifSymbol.package(this.fileInfo!.moduleName, this.version);
+                return LsifSymbol.package(getFileInfo(node)!.moduleName, this.version);
 
             case ParseNodeType.Parameter:
-                // console.log(node);
                 return LsifSymbol.global(
                     this.getLsifSymbol(node.parent!),
                     parameterDescriptor((node as ParameterNode).name!.value)
@@ -340,6 +392,14 @@ export class TreeVisitor extends ParseTreeWalker {
                 );
 
             case ParseNodeType.Function:
+                let cls = getEnclosingClass(node, false);
+                if (cls) {
+                    return LsifSymbol.global(
+                        this.getLsifSymbol(cls),
+                        methodDescriptor((node as FunctionNode).name!.value)
+                    );
+                }
+
                 return LsifSymbol.global(
                     this.getLsifSymbol(node.parent!),
                     methodDescriptor((node as FunctionNode).name!.value)
@@ -362,13 +422,15 @@ export class TreeVisitor extends ParseTreeWalker {
                 );
 
             case ParseNodeType.TypeAnnotation:
-                throw 'oh no'
-                // console.log(this.evaluator.lookUpSymbolRecursive(node, ))
-                return LsifSymbol.global(
-                    this.getLsifSymbol(getEnclosingSuite(node) || node.parent!),
-                    // Descriptor.term((node as TypeAnnotationNode).typeAnnotation)
-                    termDescriptor('hello')
-                );
+                switch (node.valueExpression.nodeType) {
+                    case ParseNodeType.Name:
+                        return LsifSymbol.global(
+                            this.getLsifSymbol(getEnclosingSuite(node) || node.parent!),
+                            termDescriptor(node.valueExpression.value)
+                        );
+                    default:
+                        throw 'Unhandled type annotation';
+                }
 
             case ParseNodeType.FunctionAnnotation:
                 return LsifSymbol.global(
@@ -388,15 +450,11 @@ export class TreeVisitor extends ParseTreeWalker {
 
             default:
                 throw 'Unhandled: ' + node.nodeType;
-                // console.log('Unhandled', node.nodeType, node);
-                // return LsifSymbol.empty();
         }
     }
 
     // Take a `Type` from pyright and turn that into an LSIF symbol.
     private typeToSymbol(node: NameNode, typeObj: Type): LsifSymbol {
-        // console.log(node, typeObj);
-
         if (isFunction(typeObj)) {
             const decl = typeObj.details.declaration;
             if (!decl) {
@@ -405,15 +463,9 @@ export class TreeVisitor extends ParseTreeWalker {
 
             return LsifSymbol.global(LsifSymbol.package(decl.moduleName, this.version), methodDescriptor(node.value));
         } else if (isClass(typeObj)) {
-            // console.log('SourceFile:', typeObj.details);
-
             let sourceFile = typeObj.details.moduleName;
-            // let module =
-            // let sym = LsifSymbol.global(
-            //     LsifSymbol.sourceFile(this.getPackageSymbol(), sourceFile),
-            //     typeDescriptor(node.value)
-            // );
             const sym = LsifSymbol.global(this.getPackageSymbol(), packageDescriptor(sourceFile));
+
             return sym;
         } else if (isClassInstance(typeObj)) {
             typeObj = typeObj as ClassType;
@@ -438,16 +490,10 @@ export class TreeVisitor extends ParseTreeWalker {
     }
 
     private getPackageSymbol(): LsifSymbol {
-        console.log('Getting package symbol');
         return LsifSymbol.package(this.fileInfo!.moduleName, '0.0');
     }
-
-    // override visitName(node: NameNode): boolean {
-    //   console.log("Visiting Node:", node);
-    //   return true;
-    // }
 }
 
 function canBeLocal(node: ParseNode): boolean {
-    return node.nodeType !== ParseNodeType.Parameter 
+    return node.nodeType !== ParseNodeType.Parameter;
 }
