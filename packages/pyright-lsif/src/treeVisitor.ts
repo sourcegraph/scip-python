@@ -6,7 +6,9 @@ import { convertOffsetToPosition } from 'pyright-internal/common/positionUtils';
 import { TextRange } from 'pyright-internal/common/textRange';
 import { TextRangeCollection } from 'pyright-internal/common/textRangeCollection';
 import {
+    AssignmentNode,
     ClassNode,
+    DecoratorNode,
     ExpressionNode,
     FunctionNode,
     ImportFromNode,
@@ -117,7 +119,6 @@ export class TreeVisitor extends ParseTreeWalker {
     }
 
     override visitClass(node: ClassNode): boolean {
-
         // This might not even be worth it to be honest...
         this.docstringWriter.visitClass(node);
 
@@ -171,6 +172,11 @@ export class TreeVisitor extends ParseTreeWalker {
         return true;
     }
 
+    override visitAssignment(node: AssignmentNode): boolean {
+        node.leftExpression
+        return true;
+    }
+
     override visitFunction(node: FunctionNode): boolean {
         this.docstringWriter.visitFunction(node);
 
@@ -187,6 +193,17 @@ export class TreeVisitor extends ParseTreeWalker {
         this._functionDepth++;
         const scopeLen = this._lastScope.push(node);
 
+        // Since we are manually handling various aspects, we need to make sure that we handle
+        // - decorators
+        // - name
+        // - return type
+        // - parameters
+        node.decorators.forEach((decoratorNode) => this.walk(decoratorNode));
+        this.visitName(node.name);
+        if (node.returnTypeAnnotation) {
+            this.walk(node.returnTypeAnnotation);
+        }
+
         // Walk the parameters individually, with additional information about the function
         node.parameters.forEach((paramNode: ParameterNode) => {
             const symbol = this.getLsifSymbol(paramNode);
@@ -195,6 +212,7 @@ export class TreeVisitor extends ParseTreeWalker {
             const paramDocstring = paramNode.name
                 ? extractParameterDocumentation(functionDoc, paramNode.name!.value)
                 : undefined;
+
             const paramDocumentation = paramDocstring ? [paramDocstring] : undefined;
 
             this.document.symbols.push(
@@ -205,7 +223,8 @@ export class TreeVisitor extends ParseTreeWalker {
             );
 
             // Walk the parameter child nodes
-            this.walk(paramNode.name!);
+            // TODO: Consider calling these individually so we can pass more metadata directly
+            this.walk(paramNode);
         });
 
         // Walk the function definition
@@ -221,9 +240,9 @@ export class TreeVisitor extends ParseTreeWalker {
         return false;
     }
 
-    override visitParameter(_: ParameterNode): boolean {
-        throw 'Should not visit param nodes directly';
-    }
+    // override visitParameter(_: ParameterNode): boolean {
+    //     throw 'Should not visit param nodes directly';
+    // }
 
     // `import requests`
     override visitImport(node: ImportNode): boolean {
@@ -292,13 +311,28 @@ export class TreeVisitor extends ParseTreeWalker {
             // definition node. Probably some util somewhere already for
             // that (need to explore pyright some more)
             if (dec.node.id == node.parent!.id) {
+                let symbol = this.getLsifSymbol(dec.node).value;
+                console.log("Do we hit this definition:", symbol)
                 this.document.occurrences.push(
                     new lsiftyped.Occurrence({
                         symbol_roles: lsiftyped.SymbolRole.Definition,
-                        symbol: this.getLsifSymbol(dec.node).value,
+                        symbol: symbol,
                         range: nameNodeToRange(node, this.fileInfo!.lines).toLsif(),
                     })
                 );
+
+                // TODO: I don't really like putting this here?...
+                //  Unlesss we move other ones to here as well? feels quite spaghetti
+                let parent = node.parent!;
+                if (parent.nodeType === ParseNodeType.Assignment) {
+                    this.document.symbols.push(
+                        new lsiftyped.SymbolInformation({
+                            symbol: symbol,
+                            // documentation: [...stub, doc],
+                        })
+                    );
+                }
+
                 return true;
             }
 
@@ -377,6 +411,8 @@ export class TreeVisitor extends ParseTreeWalker {
     private makeLsifSymbol(node: ParseNode): LsifSymbol {
         switch (node.nodeType) {
             case ParseNodeType.Module:
+                // TODO: When we can get versions for different modules, we
+                // should use that here to get the correction version (of the other module)
                 return LsifSymbol.package(getFileInfo(node)!.moduleName, this.version);
 
             case ParseNodeType.Parameter:
@@ -447,6 +483,18 @@ export class TreeVisitor extends ParseTreeWalker {
 
             case ParseNodeType.If:
                 return LsifSymbol.empty();
+
+            case ParseNodeType.Decorator:
+                throw 'Should not handle decorator directly';
+
+            case ParseNodeType.Assignment:
+                console.log('Assignment:', node.id, this._lastScope.length, LsifSymbol.package(getFileInfo(node)!.moduleName, this.version).value);
+                if (this._lastScope.length === 0) {
+                    return LsifSymbol.package(getFileInfo(node)!.moduleName, this.version);
+                }
+
+                throw 'what'
+                // return LsifSymbol.empty();
 
             default:
                 throw 'Unhandled: ' + node.nodeType;
