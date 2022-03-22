@@ -154,7 +154,6 @@ export class TreeVisitor extends ParseTreeWalker {
         // We are close to being able to look up a symbol, which could give us additional information here.
         //  Perhaps we should be using this for additional information for any given name?
         //  We can revisit this in visitName or perhaps when looking up the lsif symbol
-        // console.log("TypeAnnotation", this.evaluator.lookUpSymbolRecursive(node, 'a', false)?.symbol.isClassMember());
 
         // If we see a type annotation and we are currently inside of a class,
         // that means that we are describing fields of a class (as far as I can tell),
@@ -173,7 +172,24 @@ export class TreeVisitor extends ParseTreeWalker {
     }
 
     override visitAssignment(node: AssignmentNode): boolean {
-        node.leftExpression
+        // Probably not performant, we should figure out if we can tell that
+        // this particular spot is a definition or not, or potentially cache
+        // per file or something?
+        if (node.leftExpression.nodeType == ParseNodeType.Name) {
+            const decls = this.evaluator.getDeclarationsForNameNode(node.leftExpression) || [];
+            if (decls.length > 0) {
+                let dec = decls[0];
+                if (dec.node.parent && dec.node.parent.id == node.id) {
+                    console.log('Found definition');
+                    this.document.symbols.push(
+                        new lsiftyped.SymbolInformation({
+                            symbol: this.getLsifSymbol(dec.node).value,
+                        })
+                    );
+                }
+            }
+        }
+
         return true;
     }
 
@@ -248,12 +264,10 @@ export class TreeVisitor extends ParseTreeWalker {
     override visitImport(node: ImportNode): boolean {
         this.docstringWriter.visitImport(node);
 
-        // console.log('Hitting Import', getImportInfo(node));
         // this.program.addTrackedFiles([], true, true)
 
         // this.evaluator.getImportInfo
 
-        // console.log(node.list[0])
         for (const listNode of node.list) {
             this.document.occurrences.push(
                 new lsiftyped.Occurrence({
@@ -283,7 +297,6 @@ export class TreeVisitor extends ParseTreeWalker {
             const dec = decls[0];
 
             if (!dec.node) {
-                // console.log('Skipping:', node.value, '->', nameNodeToRange(node, this.fileInfo!.lines));
                 return true;
             }
 
@@ -312,7 +325,6 @@ export class TreeVisitor extends ParseTreeWalker {
             // that (need to explore pyright some more)
             if (dec.node.id == node.parent!.id) {
                 let symbol = this.getLsifSymbol(dec.node).value;
-                console.log("Do we hit this definition:", symbol)
                 this.document.occurrences.push(
                     new lsiftyped.Occurrence({
                         symbol_roles: lsiftyped.SymbolRole.Definition,
@@ -320,18 +332,6 @@ export class TreeVisitor extends ParseTreeWalker {
                         range: nameNodeToRange(node, this.fileInfo!.lines).toLsif(),
                     })
                 );
-
-                // TODO: I don't really like putting this here?...
-                //  Unlesss we move other ones to here as well? feels quite spaghetti
-                let parent = node.parent!;
-                if (parent.nodeType === ParseNodeType.Assignment) {
-                    this.document.symbols.push(
-                        new lsiftyped.SymbolInformation({
-                            symbol: symbol,
-                            // documentation: [...stub, doc],
-                        })
-                    );
-                }
 
                 return true;
             }
@@ -488,13 +488,18 @@ export class TreeVisitor extends ParseTreeWalker {
                 throw 'Should not handle decorator directly';
 
             case ParseNodeType.Assignment:
-                console.log('Assignment:', node.id, this._lastScope.length, LsifSymbol.package(getFileInfo(node)!.moduleName, this.version).value);
+                console.log(
+                    'Assignment:',
+                    node.id,
+                    this._lastScope.length,
+                    LsifSymbol.package(getFileInfo(node)!.moduleName, this.version).value
+                );
                 if (this._lastScope.length === 0) {
                     return LsifSymbol.package(getFileInfo(node)!.moduleName, this.version);
                 }
 
-                throw 'what'
-                // return LsifSymbol.empty();
+                throw 'what';
+            // return LsifSymbol.empty();
 
             default:
                 throw 'Unhandled: ' + node.nodeType;
