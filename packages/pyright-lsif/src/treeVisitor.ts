@@ -134,19 +134,10 @@ export class TreeVisitor extends ParseTreeWalker {
             })
         );
 
-        // Walk what is in the class, but know that we are currently in a class.
-        //  TODO: We could probably further optimize some look ups and traversals if we wanted to based
-        //  on turning this in to a stack or something.
-        this._classDepth++;
-        const scopeLen = this._lastScope.push(node);
+        this.withScopeNode(node, () => {
+            this.walk(node.suite);
+        });
 
-        this.walk(node.suite);
-
-        if (scopeLen !== this._lastScope.length) {
-            throw 'Scopes are not matched';
-        }
-        this._lastScope.pop();
-        this._classDepth--;
         return false;
     }
 
@@ -159,11 +150,12 @@ export class TreeVisitor extends ParseTreeWalker {
         // that means that we are describing fields of a class (as far as I can tell),
         // so we need to push a new symbol
         if (this.isInsideClass()) {
-            // this.evaluator.
             this.document.symbols.push(
                 new lsiftyped.SymbolInformation({
                     symbol: this.getLsifSymbol(node).value,
-                    documentation: ['A Field of a Class'],
+
+                    // TODO: Get the documentation for a type annotation
+                    // documentation: ['A Field of a Class'],
                 })
             );
         }
@@ -180,7 +172,6 @@ export class TreeVisitor extends ParseTreeWalker {
             if (decls.length > 0) {
                 let dec = decls[0];
                 if (dec.node.parent && dec.node.parent.id == node.id) {
-                    console.log('Found definition');
                     this.document.symbols.push(
                         new lsiftyped.SymbolInformation({
                             symbol: this.getLsifSymbol(dec.node).value,
@@ -191,6 +182,34 @@ export class TreeVisitor extends ParseTreeWalker {
         }
 
         return true;
+    }
+
+    private withScopeNode(node: ParseNode, f: () => void): void {
+        if (node.nodeType == ParseNodeType.Function) {
+            this._functionDepth++;
+        } else if (node.nodeType == ParseNodeType.Class) {
+            this._classDepth++;
+        } else {
+            throw 'unsupported scope type';
+        }
+
+        const scopeLen = this._lastScope.push(node);
+
+        f();
+
+        // Assert we have a balanced traversal
+        if (scopeLen !== this._lastScope.length) {
+            throw 'Scopes are not matched';
+        }
+        this._lastScope.pop();
+
+        if (node.nodeType == ParseNodeType.Function) {
+            this._functionDepth--;
+        } else if (node.nodeType == ParseNodeType.Class) {
+            this._classDepth--;
+        } else {
+            throw 'unsupported scope type';
+        }
     }
 
     override visitFunction(node: FunctionNode): boolean {
@@ -206,67 +225,51 @@ export class TreeVisitor extends ParseTreeWalker {
             })
         );
 
-        this._functionDepth++;
-        const scopeLen = this._lastScope.push(node);
+        this.withScopeNode(node, () => {
+            // Since we are manually handling various aspects, we need to make sure that we handle
+            // - decorators
+            // - name
+            // - return type
+            // - parameters
+            node.decorators.forEach((decoratorNode) => this.walk(decoratorNode));
+            this.visitName(node.name);
+            if (node.returnTypeAnnotation) {
+                this.walk(node.returnTypeAnnotation);
+            }
 
-        // Since we are manually handling various aspects, we need to make sure that we handle
-        // - decorators
-        // - name
-        // - return type
-        // - parameters
-        node.decorators.forEach((decoratorNode) => this.walk(decoratorNode));
-        this.visitName(node.name);
-        if (node.returnTypeAnnotation) {
-            this.walk(node.returnTypeAnnotation);
-        }
+            // Walk the parameters individually, with additional information about the function
+            node.parameters.forEach((paramNode: ParameterNode) => {
+                const symbol = this.getLsifSymbol(paramNode);
 
-        // Walk the parameters individually, with additional information about the function
-        node.parameters.forEach((paramNode: ParameterNode) => {
-            const symbol = this.getLsifSymbol(paramNode);
+                // This pulls documentation of various styles from function docstring
+                const paramDocstring = paramNode.name
+                    ? extractParameterDocumentation(functionDoc, paramNode.name!.value)
+                    : undefined;
 
-            // This pulls documentation of various styles from function docstring
-            const paramDocstring = paramNode.name
-                ? extractParameterDocumentation(functionDoc, paramNode.name!.value)
-                : undefined;
+                const paramDocumentation = paramDocstring ? [paramDocstring] : undefined;
 
-            const paramDocumentation = paramDocstring ? [paramDocstring] : undefined;
+                this.document.symbols.push(
+                    new lsiftyped.SymbolInformation({
+                        symbol: symbol.value,
+                        documentation: paramDocumentation,
+                    })
+                );
 
-            this.document.symbols.push(
-                new lsiftyped.SymbolInformation({
-                    symbol: symbol.value,
-                    documentation: paramDocumentation,
-                })
-            );
+                // Walk the parameter child nodes
+                // TODO: Consider calling these individually so we can pass more metadata directly
+                this.walk(paramNode);
+            });
 
-            // Walk the parameter child nodes
-            // TODO: Consider calling these individually so we can pass more metadata directly
-            this.walk(paramNode);
+            // Walk the function definition
+            this.walk(node.suite);
         });
-
-        // Walk the function definition
-        this.walk(node.suite);
-
-        // Assert we have a balanced traversal
-        if (scopeLen !== this._lastScope.length) {
-            throw 'Scopes are not matched';
-        }
-        this._lastScope.pop();
-        this._functionDepth--;
 
         return false;
     }
 
-    // override visitParameter(_: ParameterNode): boolean {
-    //     throw 'Should not visit param nodes directly';
-    // }
-
     // `import requests`
     override visitImport(node: ImportNode): boolean {
         this.docstringWriter.visitImport(node);
-
-        // this.program.addTrackedFiles([], true, true)
-
-        // this.evaluator.getImportInfo
 
         for (const listNode of node.list) {
             this.document.occurrences.push(
@@ -494,12 +497,17 @@ export class TreeVisitor extends ParseTreeWalker {
                     this._lastScope.length,
                     LsifSymbol.package(getFileInfo(node)!.moduleName, this.version).value
                 );
+
                 if (this._lastScope.length === 0) {
                     return LsifSymbol.package(getFileInfo(node)!.moduleName, this.version);
                 }
 
-                throw 'what';
-            // return LsifSymbol.empty();
+                // throw 'what';
+                return LsifSymbol.local(this.counter.next());
+
+            // Some nodes, it just makes sense to return whatever their parent is.
+            case ParseNodeType.With:
+                return this.getLsifSymbol(node.parent!);
 
             default:
                 throw 'Unhandled: ' + node.nodeType;
