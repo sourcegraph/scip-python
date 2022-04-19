@@ -9,6 +9,7 @@
  * PEP 634.
  */
 
+import { appendArray } from '../common/collectionUtils';
 import { assert } from '../common/debug';
 import { DiagnosticRule } from '../common/diagnosticRules';
 import { Localizer } from '../localization/localize';
@@ -63,7 +64,7 @@ import {
     specializeTupleClass,
     stripLiteralValue,
 } from './typeUtils';
-import { TypeVarMap } from './typeVarMap';
+import { TypeVarContext } from './typeVarContext';
 
 // PEP 634 indicates that several built-in classes are handled differently
 // when used with class pattern matching.
@@ -83,6 +84,7 @@ const classPatternSpecialCases = [
 
 interface SequencePatternInfo {
     subtype: Type;
+    definiteNoMatch: boolean;
     entryTypes: Type[];
     isIndeterminateLength?: boolean;
     isTuple?: boolean;
@@ -146,18 +148,31 @@ function narrowTypeBasedOnSequencePattern(
     pattern: PatternSequenceNode,
     isPositiveTest: boolean
 ): Type {
-    if (!isPositiveTest) {
-        // Never narrow in negative case.
-        return type;
-    }
-
     let sequenceInfo = getSequencePatternInfo(evaluator, type, pattern.entries.length, pattern.starEntryIndex);
 
     // Further narrow based on pattern entry types.
     sequenceInfo = sequenceInfo.filter((entry) => {
+        if (entry.definiteNoMatch) {
+            if (isPositiveTest) {
+                return false;
+            } else {
+                return true;
+            }
+        }
+
         let isPlausibleMatch = true;
+        let isDefiniteMatch = true;
         const narrowedEntryTypes: Type[] = [];
         let canNarrowTuple = entry.isTuple;
+
+        // If the subject has an indeterminate length but the pattern does not accept
+        // an arbitrary number of entries or accepts at least one non-star entry,
+        // we can't prove that it's a definite match.
+        if (entry.isIndeterminateLength) {
+            if (pattern.entries.length !== 1 || pattern.starEntryIndex !== 0) {
+                isDefiniteMatch = false;
+            }
+        }
 
         pattern.entries.forEach((sequenceEntry, index) => {
             const entryType = getTypeForPatternSequenceEntry(
@@ -171,33 +186,41 @@ function narrowTypeBasedOnSequencePattern(
                 /* isSubjectObject */ false
             );
 
-            const narrowedEntryType = narrowTypeBasedOnPattern(
-                evaluator,
-                entryType,
-                sequenceEntry,
-                /* isPositiveTest */ true
-            );
+            const narrowedEntryType = narrowTypeBasedOnPattern(evaluator, entryType, sequenceEntry, isPositiveTest);
 
-            if (index === pattern.starEntryIndex) {
-                if (
-                    isClassInstance(narrowedEntryType) &&
-                    narrowedEntryType.tupleTypeArguments &&
-                    !isUnboundedTupleClass(narrowedEntryType) &&
-                    narrowedEntryType.tupleTypeArguments
-                ) {
-                    narrowedEntryTypes.push(...narrowedEntryType.tupleTypeArguments.map((t) => t.type));
+            if (isPositiveTest) {
+                if (index === pattern.starEntryIndex) {
+                    if (
+                        isClassInstance(narrowedEntryType) &&
+                        narrowedEntryType.tupleTypeArguments &&
+                        !isUnboundedTupleClass(narrowedEntryType) &&
+                        narrowedEntryType.tupleTypeArguments
+                    ) {
+                        appendArray(
+                            narrowedEntryTypes,
+                            narrowedEntryType.tupleTypeArguments.map((t) => t.type)
+                        );
+                    } else {
+                        narrowedEntryTypes.push(narrowedEntryType);
+                        canNarrowTuple = false;
+                    }
                 } else {
                     narrowedEntryTypes.push(narrowedEntryType);
-                    canNarrowTuple = false;
+
+                    if (isNever(narrowedEntryType)) {
+                        isPlausibleMatch = false;
+                    }
                 }
             } else {
-                narrowedEntryTypes.push(narrowedEntryType);
-
-                if (isNever(narrowedEntryType)) {
-                    isPlausibleMatch = false;
+                if (!isNever(narrowedEntryType) || isAnyOrUnknown(entryType)) {
+                    isDefiniteMatch = false;
                 }
             }
         });
+
+        if (!isPositiveTest) {
+            return !isDefiniteMatch;
+        }
 
         if (isPlausibleMatch) {
             // If this is a tuple, we can narrow it to a specific tuple type.
@@ -438,11 +461,7 @@ function narrowTypeBasedOnClassPattern(
     pattern: PatternClassNode,
     isPositiveTest: boolean
 ): Type {
-    let exprType = evaluator.getTypeOfExpression(
-        pattern.className,
-        /* expectedType */ undefined,
-        EvaluatorFlags.DoNotSpecialize
-    ).type;
+    let exprType = evaluator.getTypeOfExpression(pattern.className, EvaluatorFlags.DoNotSpecialize).type;
 
     // If this is a class (but not a type alias that refers to a class),
     // specialize it with Unknown type arguments.
@@ -488,14 +507,6 @@ function narrowTypeBasedOnClassPattern(
                     if (!ClassType.isFinal(subjectSubtypeExpanded)) {
                         return subjectSubtypeExpanded;
                     }
-                }
-
-                if (
-                    pattern.arguments.length === 1 &&
-                    !pattern.arguments[0].name &&
-                    classPatternSpecialCases.some((className) => classType.details.fullName === className)
-                ) {
-                    return undefined;
                 }
 
                 // Are there any positional arguments? If so, try to get the mappings for
@@ -582,7 +593,7 @@ function narrowTypeBasedOnClassPattern(
                                         ClassType.isSpecialBuiltIn(unexpandedSubtype) ||
                                         unexpandedSubtype.details.typeParameters.length > 0
                                     ) {
-                                        const typeVarMap = new TypeVarMap(getTypeVarScopeId(unexpandedSubtype));
+                                        const typeVarContext = new TypeVarContext(getTypeVarScopeId(unexpandedSubtype));
                                         const unspecializedMatchType = ClassType.cloneForSpecialization(
                                             unexpandedSubtype,
                                             /* typeArguments */ undefined,
@@ -591,16 +602,16 @@ function narrowTypeBasedOnClassPattern(
 
                                         const matchTypeInstance = ClassType.cloneAsInstance(unspecializedMatchType);
                                         if (
-                                            evaluator.populateTypeVarMapBasedOnExpectedType(
+                                            evaluator.populateTypeVarContextBasedOnExpectedType(
                                                 matchTypeInstance,
                                                 subjectSubtypeExpanded,
-                                                typeVarMap,
+                                                typeVarContext,
                                                 []
                                             )
                                         ) {
                                             resultType = applySolvedTypeVars(
                                                 matchTypeInstance,
-                                                typeVarMap,
+                                                typeVarContext,
                                                 /* unknownIfNotFound */ true
                                             ) as ClassType;
                                         }
@@ -853,7 +864,8 @@ function getMappingPatternInfo(evaluator: TypeEvaluator, type: Type): MappingPat
 }
 
 // Returns information about all subtypes that match the definition of a "sequence" as
-// specified in PEP 634. Eliminates sequences that are not of sufficient length.
+// specified in PEP 634. For types that are not sequences or sequences that are not of
+// sufficient length, it sets definiteNoMatch to true.
 function getSequencePatternInfo(
     evaluator: TypeEvaluator,
     type: Type,
@@ -866,12 +878,14 @@ function getSequencePatternInfo(
     doForEachSubtype(type, (subtype) => {
         const concreteSubtype = evaluator.makeTopLevelTypeVarsConcrete(subtype);
         let mroClassToSpecialize: ClassType | undefined;
+        let pushedEntry = false;
 
         if (isAnyOrUnknown(concreteSubtype)) {
             sequenceInfo.push({
                 subtype,
                 entryTypes: [concreteSubtype],
                 isIndeterminateLength: true,
+                definiteNoMatch: false,
             });
             return;
         }
@@ -883,6 +897,7 @@ function getSequencePatternInfo(
                     entryTypes: [convertToInstance(concreteSubtype)],
                     isIndeterminateLength: true,
                     isObject: true,
+                    definiteNoMatch: false,
                 });
                 return;
             }
@@ -923,7 +938,9 @@ function getSequencePatternInfo(
                                 entryTypes: [combineTypes(specializedSequence.tupleTypeArguments.map((t) => t.type))],
                                 isIndeterminateLength: true,
                                 isTuple: true,
+                                definiteNoMatch: false,
                             });
+                            pushedEntry = true;
                         } else {
                             if (
                                 specializedSequence.tupleTypeArguments.length >= minEntryCount &&
@@ -935,7 +952,9 @@ function getSequencePatternInfo(
                                     entryTypes: specializedSequence.tupleTypeArguments.map((t) => t.type),
                                     isIndeterminateLength: false,
                                     isTuple: true,
+                                    definiteNoMatch: false,
                                 });
+                                pushedEntry = true;
                             }
                         }
                     }
@@ -948,9 +967,21 @@ function getSequencePatternInfo(
                                 : UnknownType.create(),
                         ],
                         isIndeterminateLength: true,
+                        definiteNoMatch: false,
                     });
+                    pushedEntry = true;
                 }
             }
+        }
+
+        // Push an entry that indicates that this is definitely not a match.
+        if (!pushedEntry) {
+            sequenceInfo.push({
+                subtype,
+                entryTypes: [],
+                isIndeterminateLength: true,
+                definiteNoMatch: true,
+            });
         }
     });
 
@@ -1034,7 +1065,7 @@ export function assignTypeToPatternTargets(
                 type,
                 pattern.entries.length,
                 pattern.starEntryIndex
-            );
+            ).filter((seqInfo) => !seqInfo.definiteNoMatch);
 
             pattern.entries.forEach((entry, index) => {
                 const entryType = combineTypes(
@@ -1266,11 +1297,7 @@ function wrapTypeInList(evaluator: TypeEvaluator, node: ParseNode, type: Type): 
 }
 
 export function validateClassPattern(evaluator: TypeEvaluator, pattern: PatternClassNode) {
-    const exprType = evaluator.getTypeOfExpression(
-        pattern.className,
-        /* expectedType */ undefined,
-        EvaluatorFlags.DoNotSpecialize
-    ).type;
+    const exprType = evaluator.getTypeOfExpression(pattern.className, EvaluatorFlags.DoNotSpecialize).type;
 
     if (isAnyOrUnknown(exprType)) {
         return;

@@ -27,6 +27,7 @@ import {
     FunctionDeclaration,
     isFunctionDeclaration,
     isIntrinsicDeclaration,
+    isVariableDeclaration,
     VariableDeclaration,
 } from '../analyzer/declaration';
 import { isDefinedInFile } from '../analyzer/declarationUtils';
@@ -76,6 +77,7 @@ import {
     lookUpObjectMember,
 } from '../analyzer/typeUtils';
 import { throwIfCancellationRequested } from '../common/cancellationUtils';
+import { appendArray } from '../common/collectionUtils';
 import { ConfigOptions, ExecutionEnvironment } from '../common/configOptions';
 import * as debug from '../common/debug';
 import { fail } from '../common/debug';
@@ -500,7 +502,7 @@ export class CompletionProvider {
                 // This condition is little different than others since it does its own
                 // tree walk up to find context and let outer tree walk up to proceed if it can't find
                 // one to show completion.
-                const result = this._tryGetNameCompletions(curNode, offset, priorWord);
+                const result = this._tryGetNameCompletions(curNode, offset, priorWord, priorText, postText);
                 if (result || result === undefined) {
                     return result;
                 }
@@ -622,7 +624,13 @@ export class CompletionProvider {
         }
     }
 
-    private _tryGetNameCompletions(curNode: NameNode, offset: number, priorWord: string) {
+    private _tryGetNameCompletions(
+        curNode: NameNode,
+        offset: number,
+        priorWord: string,
+        priorText: string,
+        postText: string
+    ) {
         if (!curNode.parent) {
             return false;
         }
@@ -707,6 +715,33 @@ export class CompletionProvider {
             TextRange.contains(curNode.parent.targetExpression, curNode.start)
         ) {
             return undefined;
+        }
+
+        // For assignments that implicitly declare variables, remove itself (var decl) from completion.
+        if (
+            curNode.parent.nodeType === ParseNodeType.Assignment ||
+            curNode.parent.nodeType === ParseNodeType.AssignmentExpression
+        ) {
+            const leftNode =
+                curNode.parent.nodeType === ParseNodeType.AssignmentExpression
+                    ? curNode.parent.name
+                    : curNode.parent.leftExpression;
+
+            if (leftNode !== curNode || priorWord.length === 0) {
+                return false;
+            }
+
+            const decls = this._evaluator.getDeclarationsForNameNode(curNode);
+            if (decls?.length !== 1 || !isVariableDeclaration(decls[0]) || decls[0].node !== curNode) {
+                return false;
+            }
+
+            const completionList = this._getExpressionCompletions(curNode, priorWord, priorText, postText);
+            if (completionList?.completionMap) {
+                completionList.completionMap.delete(curNode.value);
+            }
+
+            return completionList;
         }
 
         return false;
@@ -1045,7 +1080,7 @@ export class CompletionProvider {
 
                 // Currently, we don't automatically add import if the type used in the annotation is not imported
                 // in current file.
-                const paramTypeAnnotation = this._evaluator.getTypeAnnotationForParameter(node, index);
+                const paramTypeAnnotation = ParseTreeUtils.getTypeAnnotationForParameter(node, index);
                 if (paramTypeAnnotation) {
                     paramString += ': ' + ParseTreeUtils.printExpression(paramTypeAnnotation, printFlags);
                 }
@@ -2036,7 +2071,7 @@ export class CompletionProvider {
         const results: AutoImportResult[] = [];
         const info = this._autoImportMaps.nameMap?.get(priorWord);
         if (info && priorWord.length > 1 && !completionResults.completionMap.has(priorWord)) {
-            results.push(...autoImporter.getAutoImportCandidatesForAbbr(priorWord, info, this._cancellationToken));
+            appendArray(results, autoImporter.getAutoImportCandidatesForAbbr(priorWord, info, this._cancellationToken));
         }
 
         results.push(
@@ -2181,6 +2216,7 @@ export class CompletionProvider {
                 };
                 completionItem.data = completionItemData;
                 completionItem.sortText = this._makeSortText(SortCategory.NamedParameter, argName);
+                completionItem.filterText = argName;
 
                 completionMap.set(completionItem);
             }
@@ -2886,39 +2922,37 @@ export class CompletionMap {
     }
 
     static matchKindAndImportText(
-        existing: CompletionItem | CompletionItem[],
+        completionItemOrItems: CompletionItem | CompletionItem[],
         kind?: CompletionItemKind,
         autoImportText?: string
     ): boolean {
-        if (!existing) {
-            return false;
-        }
-
-        if (!Array.isArray(existing)) {
-            return existing.kind === kind && existing.data?.autoImport === autoImportText;
+        if (!Array.isArray(completionItemOrItems)) {
+            return (
+                completionItemOrItems.kind === kind &&
+                _getCompletionData(completionItemOrItems)?.autoImportText === autoImportText
+            );
         } else {
-            return !!existing.find((c) => c.kind === kind && c.data.autoImport === autoImportText);
+            return !!completionItemOrItems.find(
+                (c) => c.kind === kind && _getCompletionData(c)?.autoImportText === autoImportText
+            );
         }
     }
 
-    static labelOnlyIgnoringAutoImports(
-        existing: CompletionItem | CompletionItem[],
-        _kind?: CompletionItemKind,
-        _autoImportText?: string
-    ): boolean {
-        if (!existing) {
-            return false;
-        }
-
-        if (Array.isArray(existing)) {
-            if (existing.find((c) => !c.data?.autoImport)) {
+    static labelOnlyIgnoringAutoImports(completionItemOrItems: CompletionItem | CompletionItem[]): boolean {
+        if (!Array.isArray(completionItemOrItems)) {
+            if (!_getCompletionData(completionItemOrItems)?.autoImportText) {
                 return true;
             }
         } else {
-            if (!existing.data?.autoImport) {
+            if (completionItemOrItems.find((c) => !_getCompletionData(c)?.autoImportText)) {
                 return true;
             }
         }
+
         return false;
     }
+}
+
+function _getCompletionData(completionItem: CompletionItem): CompletionItemData | undefined {
+    return completionItem.data;
 }

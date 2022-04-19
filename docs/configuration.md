@@ -50,7 +50,7 @@ The following settings control pyright’s diagnostic output (warnings or errors
 
 **strictParameterNoneValue** [boolean]: PEP 484 indicates that when a function parameter is assigned a default value of None, its type should implicitly be Optional even if the explicit type is not. When enabled, this rule requires that parameter type annotations use Optional explicitly in this case. The default value for this setting is 'true'.
 
-**enableTypeIgnoreComments** [boolean]: PEP 484 defines support for "# type: ignore" comments. This switch enables or disables support for these comments. The default value for this setting is 'true'.
+**enableTypeIgnoreComments** [boolean]: PEP 484 defines support for "# type: ignore" comments. This switch enables or disables support for these comments. The default value for this setting is 'true'. This does not affect "# pyright: ignore" comments.
 
 **reportGeneralTypeIssues** [boolean or string, optional]: Generate or suppress diagnostics for general type inconsistencies, unsupported operations, argument/parameter mismatches, etc. This covers all of the basic type-checking rules not covered by other rules. It does not include syntax errors. The default value for this setting is 'error'.
 
@@ -142,7 +142,7 @@ The following settings control pyright’s diagnostic output (warnings or errors
 
 **reportUnnecessaryCast** [boolean or string, optional]: Generate or suppress diagnostics for 'cast' calls that are statically determined to be unnecessary. Such calls are sometimes indicative of a programming error. The default value for this setting is 'none'.
 
-**reportUnnecessaryComparison** [boolean or string, optional]: Generate or suppress diagnostics for '==' or '!=' comparisons that are statically determined to always evaluate to False or True. Such comparisons are sometimes indicative of a programming error. The default value for this setting is 'none'.
+**reportUnnecessaryComparison** [boolean or string, optional]: Generate or suppress diagnostics for '==' or '!=' comparisons or other conditional expressions that are statically determined to always evaluate to False or True. Such comparisons are sometimes indicative of a programming error. The default value for this setting is 'none'.
 
 **reportAssertAlwaysTrue** [boolean or string, optional]: Generate or suppress diagnostics for 'assert' statement that will provably always assert. This can be indicative of a programming error. The default value for this setting is 'warning'.
 
@@ -164,7 +164,9 @@ The following settings control pyright’s diagnostic output (warnings or errors
 
 **reportUnusedCoroutine** [boolean or string, optional]: Generate or suppress diagnostics for call statements whose return value is not used in any way and is a Coroutine. This identifies a common error where an `await` keyword is mistakenly omitted. The default value for this setting is 'error'.
 
-**reportUnnecessaryTypeIgnoreComment** [boolean or string, optional]: Generate or suppress diagnostics for a '# type: ignore' comment that would have no effect if removed. The default value for this setting is 'none'.
+**reportUnusedExpression** [boolean or string, optional]: Generate or suppress diagnostics for simple expressions whose results are not used in any way. The default value for this setting is 'none'.
+
+**reportUnnecessaryTypeIgnoreComment** [boolean or string, optional]: Generate or suppress diagnostics for a '# type: ignore' or '# pyright: ignore' comment that would have no effect if removed. The default value for this setting is 'none'.
 
 **reportMatchNotExhaustive** [boolean or string, optional]: Generate or suppress diagnostics for a 'match' statement that does not provide cases that exhaustively match against all potential types of the target expression. The default value for this setting is 'none'.
 
@@ -281,19 +283,18 @@ The following table lists the default severity levels for each diagnostic rule w
 | strictSetInference                        | false      | false      | true       |
 | strictParameterNoneValue                  | true       | true       | true       |
 | enableTypeIgnoreComments                  | true       | true       | true       |
-| reportGeneralTypeIssues                   | "none"     | "error"    | "error"    |
-| reportPropertyTypeMismatch                | "none"     | "none"     | "none"     |
-| reportFunctionMemberAccess                | "none"     | "none"     | "error"    |
-| reportMissingImports                      | "warning"  | "error"    | "error"    |
 | reportMissingModuleSource                 | "warning"  | "warning"  | "warning"  |
+| reportMissingImports                      | "warning"  | "error"    | "error"    |
+| reportUndefinedVariable                   | "warning"  | "error"    | "error"    |
+| reportAssertAlwaysTrue                    | "none"     | "warning"  | "error"    |
+| reportInvalidStringEscapeSequence         | "none"     | "warning"  | "error"    |
+| reportInvalidTypeVarUse                   | "none"     | "warning"  | "error"    |
 | reportMissingTypeStubs                    | "none"     | "warning"  | "error"    |
-| reportImportCycles                        | "none"     | "none"     | "error"    |
-| reportUnusedImport                        | "none"     | "none"     | "error"    |
-| reportUnusedClass                         | "none"     | "none"     | "error"    |
-| reportUnusedFunction                      | "none"     | "none"     | "error"    |
-| reportUnusedVariable                      | "none"     | "none"     | "error"    |
-| reportDuplicateImport                     | "none"     | "none"     | "error"    |
+| reportSelfClsParameterName                | "none"     | "warning"  | "error"    |
+| reportUnsupportedDunderAll                | "none"     | "warning"  | "error"    |
+| reportUnusedExpression                    | "none"     | "warning"  | "error"    |
 | reportWildcardImportFromLibrary           | "none"     | "warning"  | "error"    |
+| reportGeneralTypeIssues                   | "none"     | "error"    | "error"    |
 | reportOptionalSubscript                   | "none"     | "error"    | "error"    |
 | reportOptionalMemberAccess                | "none"     | "error"    | "error"    |
 | reportOptionalCall                        | "none"     | "error"    | "error"    |
@@ -301,43 +302,43 @@ The following table lists the default severity levels for each diagnostic rule w
 | reportOptionalContextManager              | "none"     | "error"    | "error"    |
 | reportOptionalOperand                     | "none"     | "error"    | "error"    |
 | reportTypedDictNotRequiredAccess          | "none"     | "error"    | "error"    |
-| reportUntypedFunctionDecorator            | "none"     | "none"     | "error"    |
-| reportUntypedClassDecorator               | "none"     | "none"     | "error"    |
-| reportUntypedBaseClass                    | "none"     | "none"     | "error"    |
-| reportUntypedNamedTuple                   | "none"     | "none"     | "error"    |
-| reportPrivateUsage                        | "none"     | "none"     | "error"    |
 | reportPrivateImportUsage                  | "none"     | "error"    | "error"    |
+| reportUnboundVariable                     | "none"     | "error"    | "error"    |
+| reportUnusedCoroutine                     | "none"     | "error"    | "error"    |
 | reportConstantRedefinition                | "none"     | "none"     | "error"    |
+| reportDuplicateImport                     | "none"     | "none"     | "error"    |
+| reportFunctionMemberAccess                | "none"     | "none"     | "error"    |
+| reportImportCycles                        | "none"     | "none"     | "error"    |
 | reportIncompatibleMethodOverride          | "none"     | "none"     | "error"    |
 | reportIncompatibleVariableOverride        | "none"     | "none"     | "error"    |
+| reportIncompleteStub                      | "none"     | "none"     | "error"    |
 | reportInconsistentConstructor             | "none"     | "none"     | "error"    |
-| reportOverlappingOverload                 | "none"     | "none"     | "error"    |
-| reportMissingSuperCall                    | "none"     | "none"     | "none"     |
-| reportUninitializedInstanceVariable       | "none"     | "none"     | "none"     |
-| reportInvalidStringEscapeSequence         | "none"     | "warning"  | "error"    |
-| reportUnknownParameterType                | "none"     | "none"     | "error"    |
-| reportUnknownArgumentType                 | "none"     | "none"     | "error"    |
-| reportUnknownLambdaType                   | "none"     | "none"     | "error"    |
-| reportUnknownVariableType                 | "none"     | "none"     | "error"    |
-| reportUnknownMemberType                   | "none"     | "none"     | "error"    |
+| reportInvalidStubStatement                | "none"     | "none"     | "error"    |
+| reportMatchNotExhaustive                  | "none"     | "none"     | "error"    |
 | reportMissingParameterType                | "none"     | "none"     | "error"    |
 | reportMissingTypeArgument                 | "none"     | "none"     | "error"    |
-| reportInvalidTypeVarUse                   | "none"     | "warning"  | "error"    |
-| reportCallInDefaultInitializer            | "none"     | "none"     | "none"     |
-| reportUnnecessaryIsInstance               | "none"     | "none"     | "error"    |
+| reportOverlappingOverload                 | "none"     | "none"     | "error"    |
+| reportPrivateUsage                        | "none"     | "none"     | "error"    |
+| reportUnknownArgumentType                 | "none"     | "none"     | "error"    |
+| reportUnknownLambdaType                   | "none"     | "none"     | "error"    |
+| reportUnknownMemberType                   | "none"     | "none"     | "error"    |
+| reportUnknownParameterType                | "none"     | "none"     | "error"    |
+| reportUnknownVariableType                 | "none"     | "none"     | "error"    |
 | reportUnnecessaryCast                     | "none"     | "none"     | "error"    |
 | reportUnnecessaryComparison               | "none"     | "none"     | "error"    |
-| reportAssertAlwaysTrue                    | "none"     | "warning"  | "error"    |
-| reportSelfClsParameterName                | "none"     | "warning"  | "error"    |
+| reportUnnecessaryIsInstance               | "none"     | "none"     | "error"    |
+| reportUnusedClass                         | "none"     | "none"     | "error"    |
+| reportUnusedImport                        | "none"     | "none"     | "error"    |
+| reportUnusedFunction                      | "none"     | "none"     | "error"    |
+| reportUnusedVariable                      | "none"     | "none"     | "error"    |
+| reportUntypedBaseClass                    | "none"     | "none"     | "error"    |
+| reportUntypedClassDecorator               | "none"     | "none"     | "error"    |
+| reportUntypedFunctionDecorator            | "none"     | "none"     | "error"    |
+| reportUntypedNamedTuple                   | "none"     | "none"     | "error"    |
+| reportCallInDefaultInitializer            | "none"     | "none"     | "none"     |
 | reportImplicitStringConcatenation         | "none"     | "none"     | "none"     |
-| reportUndefinedVariable                   | "warning"  | "error"    | "error"    |
-| reportUnboundVariable                     | "none"     | "error"    | "error"    |
-| reportInvalidStubStatement                | "none"     | "none"     | "error"    |
-| reportIncompleteStub                      | "none"     | "none"     | "error"    |
-| reportUnsupportedDunderAll                | "none"     | "warning"  | "error"    |
-| reportUnusedCallResult                    | "none"     | "none"     | "none"     |
-| reportUnusedCoroutine                     | "none"     | "error"    | "error"    |
+| reportMissingSuperCall                    | "none"     | "none"     | "none"     |
+| reportPropertyTypeMismatch                | "none"     | "none"     | "none"     |
+| reportUninitializedInstanceVariable       | "none"     | "none"     | "none"     |
 | reportUnnecessaryTypeIgnoreComment        | "none"     | "none"     | "none"     |
-| reportMatchNotExhaustive                  | "none"     | "none"     | "error"    |
-
-
+| reportUnusedCallResult                    | "none"     | "none"     | "none"     |

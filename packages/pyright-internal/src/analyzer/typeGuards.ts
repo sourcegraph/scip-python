@@ -11,6 +11,7 @@
 
 import {
     ArgumentCategory,
+    AssignmentExpressionNode,
     ExpressionNode,
     isExpressionNode,
     NameNode,
@@ -33,7 +34,6 @@ import {
     combineTypes,
     FunctionParameter,
     FunctionType,
-    FunctionTypeFlags,
     isAnyOrUnknown,
     isClass,
     isClassInstance,
@@ -65,10 +65,13 @@ import {
     convertToInstance,
     convertToInstantiable,
     doForEachSubtype,
+    getSpecializedTupleType,
     getTypeCondition,
     getTypeVarScopeId,
     isLiteralType,
     isLiteralTypeOrUnion,
+    isMaybeDescriptorInstance,
+    isProperty,
     isTupleClass,
     isUnboundedTupleClass,
     lookUpClassMember,
@@ -77,7 +80,7 @@ import {
     stripLiteralValue,
     transformPossibleRecursiveTypeAlias,
 } from './typeUtils';
-import { TypeVarMap } from './typeVarMap';
+import { TypeVarContext } from './typeVarContext';
 
 export type TypeNarrowingCallback = (type: Type) => Type | undefined;
 
@@ -92,10 +95,7 @@ export function getTypeNarrowingCallback(
     isPositiveTest: boolean
 ): TypeNarrowingCallback | undefined {
     if (testExpression.nodeType === ParseNodeType.AssignmentExpression) {
-        return (
-            getTypeNarrowingCallback(evaluator, reference, testExpression.rightExpression, isPositiveTest) ??
-            getTypeNarrowingCallback(evaluator, reference, testExpression.name, isPositiveTest)
-        );
+        return getTypeNarrowingCallbackForAssignmentExpression(evaluator, reference, testExpression, isPositiveTest);
     }
 
     if (testExpression.nodeType === ParseNodeType.BinaryOperation) {
@@ -154,7 +154,6 @@ export function getTypeNarrowingCallback(
             if (isOrIsNotOperator && testExpression.leftExpression.nodeType === ParseNodeType.Call) {
                 const callType = evaluator.getTypeOfExpression(
                     testExpression.leftExpression.leftExpression,
-                    /* expectedType */ undefined,
                     EvaluatorFlags.DoNotSpecialize
                 ).type;
 
@@ -294,7 +293,6 @@ export function getTypeNarrowingCallback(
                 if (ParseTreeUtils.isMatchingExpression(reference, arg0Expr)) {
                     const callType = evaluator.getTypeOfExpression(
                         testExpression.leftExpression.leftExpression,
-                        /* expectedType */ undefined,
                         EvaluatorFlags.DoNotSpecialize
                     ).type;
 
@@ -320,7 +318,7 @@ export function getTypeNarrowingCallback(
                 const memberName = testExpression.leftExpression.memberName;
                 if (isClassInstance(rightType) && rightType.literalValue !== undefined) {
                     return (type: Type) => {
-                        return narrowTypeForDiscriminatedFieldComparison(
+                        return narrowTypeForDiscriminatedLiteralFieldComparison(
                             evaluator,
                             type,
                             memberName.value,
@@ -345,7 +343,7 @@ export function getTypeNarrowingCallback(
                     rightType.literalValue !== undefined
                 ) {
                     return (type: Type) => {
-                        return narrowTypeForDiscriminatedFieldComparison(
+                        return narrowTypeForDiscriminatedLiteralFieldComparison(
                             evaluator,
                             type,
                             memberName.value,
@@ -354,6 +352,25 @@ export function getTypeNarrowingCallback(
                         );
                     };
                 }
+            }
+
+            // Look for X.Y is None or X.Y is not None
+            // These are commonly-used patterns used in control flow.
+            if (
+                testExpression.leftExpression.nodeType === ParseNodeType.MemberAccess &&
+                ParseTreeUtils.isMatchingExpression(reference, testExpression.leftExpression.leftExpression) &&
+                testExpression.rightExpression.nodeType === ParseNodeType.Constant &&
+                testExpression.rightExpression.constType === KeywordType.None
+            ) {
+                const memberName = testExpression.leftExpression.memberName;
+                return (type: Type) => {
+                    return narrowTypeForDiscriminatedFieldNoneComparison(
+                        evaluator,
+                        type,
+                        memberName.value,
+                        adjIsPositiveTest
+                    );
+                };
             }
         }
 
@@ -391,7 +408,6 @@ export function getTypeNarrowingCallback(
     if (testExpression.nodeType === ParseNodeType.Call) {
         const callType = evaluator.getTypeOfExpression(
             testExpression.leftExpression,
-            /* expectedType */ undefined,
             EvaluatorFlags.DoNotSpecialize
         ).type;
 
@@ -410,7 +426,6 @@ export function getTypeNarrowingCallback(
             if (ParseTreeUtils.isMatchingExpression(reference, arg0Expr)) {
                 const arg1Type = evaluator.getTypeOfExpression(
                     arg1Expr,
-                    undefined,
                     EvaluatorFlags.EvaluateStringLiteralAsType |
                         EvaluatorFlags.ParamSpecDisallowed |
                         EvaluatorFlags.TypeVarTupleDisallowed
@@ -541,70 +556,91 @@ export function getTypeNarrowingCallback(
 
     // Is this a reference to an aliased conditional expression (a local variable
     // that was assigned a value that can inform type narrowing of the reference expression)?
-    if (
-        testExpression.nodeType === ParseNodeType.Name &&
-        reference.nodeType === ParseNodeType.Name &&
-        testExpression !== reference
-    ) {
-        // Make sure the reference expression is a constant parameter or variable.
-        // If the reference expression is modified within the scope multiple times,
-        // we need to validate that it is not modified between the test expression
-        // evaluation and the conditional check.
-        const testExprDecl = getDeclsForLocalVar(evaluator, testExpression, testExpression);
-        if (testExprDecl && testExprDecl.length === 1 && testExprDecl[0].type === DeclarationType.Variable) {
-            const referenceDecls = getDeclsForLocalVar(evaluator, reference, testExpression);
-
-            if (referenceDecls) {
-                let modifyingDecls: Declaration[] = [];
-
-                if (referenceDecls.length > 1) {
-                    // If there is more than one assignment to the reference variable within
-                    // the local scope, make sure that none of these assignments are done
-                    // after the test expression but before the condition check.
-                    //
-                    // This is OK:
-                    //  val = None
-                    //  is_none = val is None
-                    //  if is_none: ...
-                    //
-                    // This is not OK:
-                    //  val = None
-                    //  is_none = val is None
-                    //  val = 1
-                    //  if is_none: ...
-                    modifyingDecls = referenceDecls.filter((decl) => {
-                        return (
-                            evaluator.isNodeReachable(testExpression, decl.node) &&
-                            evaluator.isNodeReachable(decl.node, testExprDecl[0].node)
-                        );
-                    });
-                }
-
-                if (modifyingDecls.length === 0) {
-                    const initNode = testExprDecl[0].inferredTypeSource;
-
-                    if (
-                        initNode &&
-                        !ParseTreeUtils.isNodeContainedWithin(testExpression, initNode) &&
-                        isExpressionNode(initNode)
-                    ) {
-                        return getTypeNarrowingCallback(evaluator, reference, initNode, isPositiveTest);
-                    }
-                }
-            }
-        }
+    const narrowingCallback = getTypeNarrowingCallbackForAliasedCondition(
+        evaluator,
+        reference,
+        testExpression,
+        isPositiveTest
+    );
+    if (narrowingCallback) {
+        return narrowingCallback;
     }
 
     // We normally won't find a "not" operator here because they are stripped out
     // by the binder when it creates condition flow nodes, but we can find this
     // in the case of local variables type narrowing.
-    if (testExpression.nodeType === ParseNodeType.UnaryOperation) {
-        if (testExpression.operator === OperatorType.Not) {
+    if (reference.nodeType === ParseNodeType.Name) {
+        if (testExpression.nodeType === ParseNodeType.UnaryOperation && testExpression.operator === OperatorType.Not) {
             return getTypeNarrowingCallback(evaluator, reference, testExpression.expression, !isPositiveTest);
         }
     }
 
     return undefined;
+}
+
+function getTypeNarrowingCallbackForAliasedCondition(
+    evaluator: TypeEvaluator,
+    reference: ExpressionNode,
+    testExpression: ExpressionNode,
+    isPositiveTest: boolean
+) {
+    if (
+        testExpression.nodeType !== ParseNodeType.Name ||
+        reference.nodeType !== ParseNodeType.Name ||
+        testExpression === reference
+    ) {
+        return undefined;
+    }
+
+    // Make sure the reference expression is a constant parameter or variable.
+    // If the reference expression is modified within the scope multiple times,
+    // we need to validate that it is not modified between the test expression
+    // evaluation and the conditional check.
+    const testExprDecl = getDeclsForLocalVar(evaluator, testExpression, testExpression);
+    if (!testExprDecl || testExprDecl.length !== 1 || testExprDecl[0].type !== DeclarationType.Variable) {
+        return undefined;
+    }
+
+    const referenceDecls = getDeclsForLocalVar(evaluator, reference, testExpression);
+    if (!referenceDecls) {
+        return undefined;
+    }
+
+    let modifyingDecls: Declaration[] = [];
+    if (referenceDecls.length > 1) {
+        // If there is more than one assignment to the reference variable within
+        // the local scope, make sure that none of these assignments are done
+        // after the test expression but before the condition check.
+        //
+        // This is OK:
+        //  val = None
+        //  is_none = val is None
+        //  if is_none: ...
+        //
+        // This is not OK:
+        //  val = None
+        //  is_none = val is None
+        //  val = 1
+        //  if is_none: ...
+        modifyingDecls = referenceDecls.filter((decl) => {
+            return (
+                evaluator.isNodeReachable(testExpression, decl.node) &&
+                evaluator.isNodeReachable(decl.node, testExprDecl[0].node)
+            );
+        });
+    }
+
+    if (modifyingDecls.length !== 0) {
+        return undefined;
+    }
+
+    const initNode = testExprDecl[0].inferredTypeSource;
+
+    if (!initNode || ParseTreeUtils.isNodeContainedWithin(testExpression, initNode) || !isExpressionNode(initNode)) {
+        return undefined;
+    }
+
+    return getTypeNarrowingCallback(evaluator, reference, initNode, isPositiveTest);
 }
 
 // Determines whether the symbol is a local variable or parameter within
@@ -652,6 +688,18 @@ function getDeclsForLocalVar(
     const reachableDecls = decls.filter((decl) => evaluator.isNodeReachable(reachableFrom, decl.node));
 
     return reachableDecls.length > 0 ? reachableDecls : undefined;
+}
+
+function getTypeNarrowingCallbackForAssignmentExpression(
+    evaluator: TypeEvaluator,
+    reference: ExpressionNode,
+    testExpression: AssignmentExpressionNode,
+    isPositiveTest: boolean
+) {
+    return (
+        getTypeNarrowingCallback(evaluator, reference, testExpression.rightExpression, isPositiveTest) ??
+        getTypeNarrowingCallback(evaluator, reference, testExpression.name, isPositiveTest)
+    );
 }
 
 function narrowTypeForUserDefinedTypeGuard(
@@ -707,24 +755,20 @@ function narrowTypeForTruthiness(evaluator: TypeEvaluator, type: Type, isPositiv
 }
 
 // Handle type narrowing for expressions of the form "a[I] is None" and "a[I] is not None" where
-// I is an integer and a is a union of Tuples with known lengths and entry types.
+// I is an integer and a is a union of Tuples (or subtypes thereof) with known lengths and entry types.
 function narrowTupleTypeForIsNone(evaluator: TypeEvaluator, type: Type, isPositiveTest: boolean, indexValue: number) {
     return evaluator.mapSubtypesExpandTypeVars(type, /* conditionFilter */ undefined, (subtype) => {
-        if (
-            !isClassInstance(subtype) ||
-            !isTupleClass(subtype) ||
-            isUnboundedTupleClass(subtype) ||
-            !subtype.tupleTypeArguments
-        ) {
+        const tupleType = getSpecializedTupleType(subtype);
+        if (!tupleType || isUnboundedTupleClass(tupleType) || !tupleType.tupleTypeArguments) {
             return subtype;
         }
 
-        const tupleLength = subtype.tupleTypeArguments.length;
+        const tupleLength = tupleType.tupleTypeArguments.length;
         if (indexValue < 0 || indexValue >= tupleLength) {
             return subtype;
         }
 
-        const typeOfEntry = evaluator.makeTopLevelTypeVarsConcrete(subtype.tupleTypeArguments[indexValue].type);
+        const typeOfEntry = evaluator.makeTopLevelTypeVarsConcrete(tupleType.tupleTypeArguments[indexValue].type);
 
         if (isPositiveTest) {
             if (!evaluator.canAssignType(typeOfEntry, NoneType.createInstance())) {
@@ -912,7 +956,7 @@ function narrowTypeForIsInstance(
                                 ClassType.isSpecialBuiltIn(filterType) ||
                                 filterType.details.typeParameters.length > 0
                             ) {
-                                const typeVarMap = new TypeVarMap(getTypeVarScopeId(filterType));
+                                const typeVarContext = new TypeVarContext(getTypeVarScopeId(filterType));
                                 const unspecializedFilterType = ClassType.cloneForSpecialization(
                                     filterType,
                                     /* typeArguments */ undefined,
@@ -920,16 +964,16 @@ function narrowTypeForIsInstance(
                                 );
 
                                 if (
-                                    evaluator.populateTypeVarMapBasedOnExpectedType(
+                                    evaluator.populateTypeVarContextBasedOnExpectedType(
                                         unspecializedFilterType,
                                         varType,
-                                        typeVarMap,
+                                        typeVarContext,
                                         /* liveTypeVarScopes */ undefined
                                     )
                                 ) {
                                     specializedFilterType = applySolvedTypeVars(
                                         unspecializedFilterType,
-                                        typeVarMap,
+                                        typeVarContext,
                                         /* unknownIfNotFound */ true
                                     ) as ClassType;
                                 }
@@ -1426,7 +1470,7 @@ function narrowTypeForDiscriminatedTupleComparison(
 // Attempts to narrow a type based on a comparison (equal or not equal)
 // between a discriminating field that has a declared literal type to a
 // literal value.
-function narrowTypeForDiscriminatedFieldComparison(
+function narrowTypeForDiscriminatedLiteralFieldComparison(
     evaluator: TypeEvaluator,
     referenceType: Type,
     memberName: string,
@@ -1457,6 +1501,53 @@ function narrowTypeForDiscriminatedFieldComparison(
     });
 
     return narrowedType;
+}
+
+// Attempts to narrow a type based on a comparison (equal or not equal)
+// between a discriminating field that has a declared None type to a
+// None.
+function narrowTypeForDiscriminatedFieldNoneComparison(
+    evaluator: TypeEvaluator,
+    referenceType: Type,
+    memberName: string,
+    isPositiveTest: boolean
+): Type {
+    return mapSubtypes(referenceType, (subtype) => {
+        let memberInfo: ClassMember | undefined;
+        if (isClassInstance(subtype)) {
+            memberInfo = lookUpObjectMember(subtype, memberName);
+        } else if (isInstantiableClass(subtype)) {
+            memberInfo = lookUpClassMember(subtype, memberName);
+        }
+
+        if (memberInfo && memberInfo.isTypeDeclared) {
+            const memberType = evaluator.makeTopLevelTypeVarsConcrete(evaluator.getTypeOfMember(memberInfo));
+            let canNarrow = true;
+
+            if (isPositiveTest) {
+                doForEachSubtype(memberType, (memberSubtype) => {
+                    memberSubtype = evaluator.makeTopLevelTypeVarsConcrete(memberSubtype);
+
+                    // Don't attempt to narrow if the member is a descriptor or property.
+                    if (isProperty(memberSubtype) || isMaybeDescriptorInstance(memberSubtype)) {
+                        canNarrow = false;
+                    }
+
+                    if (isAnyOrUnknown(memberSubtype) || isNoneInstance(memberSubtype) || isNever(memberSubtype)) {
+                        canNarrow = false;
+                    }
+                });
+            } else {
+                canNarrow = isNoneInstance(memberType);
+            }
+
+            if (canNarrow) {
+                return undefined;
+            }
+        }
+
+        return subtype;
+    });
 }
 
 // Attempts to narrow a type based on a "type(x) is y" or "type(x) is not y" check.
@@ -1625,12 +1716,7 @@ function narrowTypeForCallable(
                         newClassType = addConditionToType(newClassType, subtype.condition) as ClassType;
 
                         // Add a __call__ method to the new class.
-                        const callMethod = FunctionType.createInstance(
-                            '__call__',
-                            '',
-                            '',
-                            FunctionTypeFlags.SynthesizedMethod
-                        );
+                        const callMethod = FunctionType.createSynthesizedInstance('__call__');
                         const selfParam: FunctionParameter = {
                             category: ParameterCategory.Simple,
                             name: 'self',

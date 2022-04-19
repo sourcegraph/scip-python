@@ -219,17 +219,23 @@ export namespace UnboundType {
 
 export interface UnknownType extends TypeBase {
     category: TypeCategory.Unknown;
+    isIncomplete: boolean;
 }
 
 export namespace UnknownType {
     const _instance: UnknownType = {
         category: TypeCategory.Unknown,
         flags: TypeFlags.Instantiable | TypeFlags.Instance,
+        isIncomplete: false,
+    };
+    const _incompleteInstance: UnknownType = {
+        category: TypeCategory.Unknown,
+        flags: TypeFlags.Instantiable | TypeFlags.Instance,
+        isIncomplete: true,
     };
 
-    export function create() {
-        // All Unknown objects are the same, so use a shared instance.
-        return _instance;
+    export function create(isIncomplete = false) {
+        return isIncomplete ? _incompleteInstance : _instance;
     }
 }
 
@@ -410,7 +416,6 @@ export interface DataClassBehaviors {
     keywordOnlyParams: boolean;
     generateEq: boolean;
     generateOrder: boolean;
-    transformDescriptorTypes: boolean;
     fieldDescriptorNames: string[];
 }
 
@@ -705,6 +710,10 @@ export namespace ClassType {
         }
 
         return true;
+    }
+
+    export function derivesFromAnyOrUnknown(classType: ClassType) {
+        return classType.details.mro.some((mroClass) => !isClass(mroClass));
     }
 
     export function supportsAbstractMethods(classType: ClassType) {
@@ -1043,6 +1052,7 @@ interface FunctionDetails {
     declaredReturnType?: Type | undefined;
     declaration?: FunctionDeclaration | undefined;
     typeVarScopeId?: TypeVarScopeId | undefined;
+    constructorTypeVarScopeId?: TypeVarScopeId | undefined;
     builtInName?: string | undefined;
     docString?: string | undefined;
 
@@ -1108,14 +1118,12 @@ export namespace FunctionType {
         return create(name, fullName, moduleName, functionFlags, TypeFlags.Instance, docString);
     }
 
-    export function createInstantiable(
-        name: string,
-        fullName: string,
-        moduleName: string,
-        functionFlags: FunctionTypeFlags,
-        docString?: string
-    ) {
-        return create(name, fullName, moduleName, functionFlags, TypeFlags.Instantiable, docString);
+    export function createInstantiable(functionFlags: FunctionTypeFlags, docString?: string) {
+        return create('', '', '', functionFlags, TypeFlags.Instantiable, docString);
+    }
+
+    export function createSynthesizedInstance(name: string, additionalFlags = FunctionTypeFlags.None) {
+        return create(name, '', '', additionalFlags | FunctionTypeFlags.SynthesizedMethod, TypeFlags.Instance);
     }
 
     function create(
@@ -1259,8 +1267,6 @@ export namespace FunctionType {
             type.details.docString
         );
 
-        newFunction.specializedTypes = type.specializedTypes;
-
         // Make a shallow clone of the details.
         newFunction.details = { ...type.details };
 
@@ -1292,8 +1298,7 @@ export namespace FunctionType {
                     (FunctionTypeFlags.ClassMethod |
                         FunctionTypeFlags.StaticMethod |
                         FunctionTypeFlags.ConstructorMethod |
-                        FunctionTypeFlags.SkipArgsKwargsCompatibilityCheck |
-                        FunctionTypeFlags.ParamSpecValue)) |
+                        FunctionTypeFlags.SkipArgsKwargsCompatibilityCheck)) |
                 FunctionTypeFlags.SynthesizedMethod;
 
             if (FunctionType.isParamSpecValue(type)) {
@@ -1301,7 +1306,11 @@ export namespace FunctionType {
             }
 
             // Update the specialized parameter types as well.
-            if (newFunction.specializedTypes) {
+            if (type.specializedTypes) {
+                newFunction.specializedTypes = {
+                    parameterTypes: [...type.specializedTypes.parameterTypes],
+                    returnType: type.specializedTypes.returnType,
+                };
                 paramSpecValue.parameters.forEach((paramInfo) => {
                     newFunction.specializedTypes!.parameterTypes.push(paramInfo.type);
                 });
@@ -1402,18 +1411,26 @@ export namespace FunctionType {
     }
 
     export function addDefaultParameters(functionType: FunctionType, useUnknown = false) {
-        FunctionType.addParameter(functionType, {
-            category: ParameterCategory.VarArgList,
-            name: 'args',
-            type: useUnknown ? UnknownType.create() : AnyType.create(),
-            hasDeclaredType: !useUnknown,
+        getDefaultParameters(useUnknown).forEach((param) => {
+            FunctionType.addParameter(functionType, param);
         });
-        FunctionType.addParameter(functionType, {
-            category: ParameterCategory.VarArgDictionary,
-            name: 'kwargs',
-            type: useUnknown ? UnknownType.create() : AnyType.create(),
-            hasDeclaredType: !useUnknown,
-        });
+    }
+
+    export function getDefaultParameters(useUnknown = false): FunctionParameter[] {
+        return [
+            {
+                category: ParameterCategory.VarArgList,
+                name: 'args',
+                type: useUnknown ? UnknownType.create() : AnyType.create(),
+                hasDeclaredType: !useUnknown,
+            },
+            {
+                category: ParameterCategory.VarArgDictionary,
+                name: 'kwargs',
+                type: useUnknown ? UnknownType.create() : AnyType.create(),
+                hasDeclaredType: !useUnknown,
+            },
+        ];
     }
 
     // Indicates whether the input signature consists of (*args: Any, **kwargs: Any).
@@ -1740,7 +1757,7 @@ export interface UnionType extends TypeBase {
     category: TypeCategory.Union;
     subtypes: UnionableType[];
     literalStrMap?: Map<string, UnionableType> | undefined;
-    literalIntMap?: Map<bigint | number, UnionableType> | undefined;
+    literalIntMap?: Map<number, UnionableType> | undefined;
     typeAliasSources?: Set<UnionType>;
 }
 
@@ -1773,12 +1790,13 @@ export namespace UnionType {
             isClassInstance(newType) &&
             ClassType.isBuiltIn(newType, 'int') &&
             newType.literalValue !== undefined &&
+            typeof newType.literalValue === 'number' &&
             newType.condition === undefined
         ) {
             if (unionType.literalIntMap === undefined) {
-                unionType.literalIntMap = new Map<bigint | number, UnionableType>();
+                unionType.literalIntMap = new Map<number, UnionableType>();
             }
-            unionType.literalIntMap.set(newType.literalValue as number | bigint, newType);
+            unionType.literalIntMap.set(newType.literalValue as number, newType);
         }
 
         unionType.flags &= newType.flags;
@@ -1798,9 +1816,10 @@ export namespace UnionType {
             } else if (
                 ClassType.isBuiltIn(subtype, 'int') &&
                 subtype.literalValue !== undefined &&
+                typeof subtype.literalValue === 'number' &&
                 unionType.literalIntMap !== undefined
             ) {
-                return unionType.literalIntMap.has(subtype.literalValue as number | bigint);
+                return unionType.literalIntMap.has(subtype.literalValue as number);
             }
         }
 
@@ -2505,6 +2524,10 @@ export function removeUnknownFromUnion(type: Type): Type {
     return removeFromUnion(type, (t: Type) => isUnknown(t));
 }
 
+export function removeIncompleteUnknownFromUnion(type: Type): Type {
+    return removeFromUnion(type, (t: Type) => isUnknown(t) && t.isIncomplete);
+}
+
 // If the type is a union, remove an "unbound" type from the union,
 // returning only the known types.
 export function removeUnbound(type: Type): Type {
@@ -2585,14 +2608,18 @@ export function combineTypes(subtypes: Type[], maxSubtypeCount?: number): Type {
 
     // Expand all union types.
     let expandedTypes: Type[] = [];
-    const typeAliasSources: UnionType[] = [];
+    const typeAliasSources = new Set<UnionType>();
+
     for (const subtype of subtypes) {
         if (isUnion(subtype)) {
-            expandedTypes.push(...subtype.subtypes);
+            expandedTypes = expandedTypes.concat(subtype.subtypes);
+
             if (subtype.typeAliasInfo) {
-                typeAliasSources.push(subtype);
+                typeAliasSources.add(subtype);
             } else if (subtype.typeAliasSources) {
-                typeAliasSources.push(...subtype.typeAliasSources);
+                subtype.typeAliasSources.forEach((subtype) => {
+                    typeAliasSources.add(subtype);
+                });
             }
         } else {
             expandedTypes.push(subtype);
@@ -2629,11 +2656,8 @@ export function combineTypes(subtypes: Type[], maxSubtypeCount?: number): Type {
     }
 
     const newUnionType = UnionType.create();
-    if (typeAliasSources.length > 0) {
-        newUnionType.typeAliasSources = new Set<UnionType>();
-        typeAliasSources.forEach((source) => {
-            newUnionType.typeAliasSources!.add(source);
-        });
+    if (typeAliasSources.size > 0) {
+        newUnionType.typeAliasSources = typeAliasSources;
     }
 
     let hitMaxSubtypeCount = false;
@@ -2703,9 +2727,10 @@ function _addTypeIfUnique(unionType: UnionType, typeToAdd: UnionableType) {
         } else if (
             ClassType.isBuiltIn(typeToAdd, 'int') &&
             typeToAdd.literalValue !== undefined &&
-            unionType.literalIntMap !== undefined
+            unionType.literalIntMap !== undefined &&
+            typeof typeToAdd.literalValue === 'number'
         ) {
-            if (!unionType.literalIntMap.has(typeToAdd.literalValue as number | bigint)) {
+            if (!unionType.literalIntMap.has(typeToAdd.literalValue as number)) {
                 UnionType.addType(unionType, typeToAdd);
             }
             return;

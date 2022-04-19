@@ -305,6 +305,24 @@ test('TypeIgnore5', () => {
     TestUtils.validateResults(analysisResults, 0, 1);
 });
 
+test('PyrightIgnore1', () => {
+    const configOptions = new ConfigOptions('.');
+
+    const analysisResults = TestUtils.typeAnalyzeSampleFiles(['pyrightIgnore1.py'], configOptions);
+    TestUtils.validateResults(analysisResults, 1);
+});
+
+test('PyrightIgnore2', () => {
+    const configOptions = new ConfigOptions('.');
+
+    let analysisResults = TestUtils.typeAnalyzeSampleFiles(['pyrightIgnore2.py'], configOptions);
+    TestUtils.validateResults(analysisResults, 2);
+
+    configOptions.diagnosticRuleSet.reportUnnecessaryTypeIgnoreComment = 'warning';
+    analysisResults = TestUtils.typeAnalyzeSampleFiles(['pyrightIgnore2.py'], configOptions);
+    TestUtils.validateResults(analysisResults, 2, 3);
+});
+
 test('DuplicateImports1', () => {
     const configOptions = new ConfigOptions('.');
 
@@ -376,6 +394,24 @@ test('Strings1', () => {
     configOptions.diagnosticRuleSet.reportImplicitStringConcatenation = 'error';
     const analysisResults2 = TestUtils.typeAnalyzeSampleFiles(['strings1.py'], configOptions);
     TestUtils.validateResults(analysisResults2, 2);
+});
+
+test('UnusedExpression1', () => {
+    const configOptions = new ConfigOptions('.');
+
+    // By default, this is a warning.
+    let analysisResults = TestUtils.typeAnalyzeSampleFiles(['unusedExpression1.py'], configOptions);
+    TestUtils.validateResults(analysisResults, 0, 10);
+
+    // Disable it.
+    configOptions.diagnosticRuleSet.reportUnusedExpression = 'none';
+    analysisResults = TestUtils.typeAnalyzeSampleFiles(['unusedExpression1.py'], configOptions);
+    TestUtils.validateResults(analysisResults, 0);
+
+    // Enable it as an error.
+    configOptions.diagnosticRuleSet.reportUnusedExpression = 'error';
+    analysisResults = TestUtils.typeAnalyzeSampleFiles(['unusedExpression1.py'], configOptions);
+    TestUtils.validateResults(analysisResults, 10);
 });
 
 // For now, this functionality is disabled.

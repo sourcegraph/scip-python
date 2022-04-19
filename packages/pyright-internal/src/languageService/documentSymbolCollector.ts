@@ -11,19 +11,30 @@
 import { CancellationToken } from 'vscode-languageserver';
 
 import * as AnalyzerNodeInfo from '../analyzer/analyzerNodeInfo';
-import { AliasDeclaration, Declaration, DeclarationType, isAliasDeclaration } from '../analyzer/declaration';
+import {
+    AliasDeclaration,
+    Declaration,
+    DeclarationType,
+    FunctionDeclaration,
+    isAliasDeclaration,
+    isFunctionDeclaration,
+} from '../analyzer/declaration';
 import {
     areDeclarationsSame,
     createSynthesizedAliasDeclaration,
     getDeclarationsWithUsesLocalNameRemoved,
 } from '../analyzer/declarationUtils';
 import { getModuleNode, getStringNodeValueRange } from '../analyzer/parseTreeUtils';
+import * as ParseTreeUtils from '../analyzer/parseTreeUtils';
 import { ParseTreeWalker } from '../analyzer/parseTreeWalker';
 import * as ScopeUtils from '../analyzer/scopeUtils';
 import { isStubFile, SourceMapper } from '../analyzer/sourceMapper';
 import { TypeEvaluator } from '../analyzer/typeEvaluatorTypes';
-import { TypeCategory } from '../analyzer/types';
+import { isInstantiableClass, TypeCategory } from '../analyzer/types';
+import { ClassMemberLookupFlags, lookUpClassMember } from '../analyzer/typeUtils';
 import { throwIfCancellationRequested } from '../common/cancellationUtils';
+import { appendArray } from '../common/collectionUtils';
+import { assert } from '../common/debug';
 import { TextRange } from '../common/textRange';
 import { ImportAsNode, NameNode, ParseNode, ParseNodeType, StringNode } from '../parser/parseNodes';
 
@@ -275,47 +286,92 @@ export class DocumentSymbolCollector extends ParseTreeWalker {
         evaluator: TypeEvaluator,
         skipUnreachableCode = true
     ): Declaration[] {
-        // This can handle symbols brought in by wildcard as long as declarations symbol collector
-        // compare against point to actual alias declaration, not one that use local name (ex, import alias)
+        // This can handle symbols brought in by wildcard (import *) as long as the declarations that the symbol collector
+        // compares against point to the actual alias declaration, not one that uses local name (ex, import alias)
         if (node.parent?.nodeType !== ParseNodeType.ModuleName) {
-            let decls = evaluator.getDeclarationsForNameNode(node, skipUnreachableCode) || [];
-
-            if (node.parent?.nodeType === ParseNodeType.ImportFromAs) {
-                // Make sure we get the decl for this specific from import statement
-                decls = decls.filter((d) => d.node === node.parent);
-            }
-
-            // If we can't get decl, see whether we can get type from the node.
-            // Some might have synthesized type for the node such as subModule in import X.Y statement.
-            if (decls.length === 0) {
-                const type = evaluator.getType(node);
-                if (type?.category === TypeCategory.Module) {
-                    // Synthesize decl for the module.
-                    return [createSynthesizedAliasDeclaration(type.filePath)];
-                }
-            }
-
-            // We would like to make X in import X and import X.Y as Y to match, but path for
-            // X in import X and one in import X.Y as Y might not match since path in X.Y will point
-            // to X.Y rather than X if import statement has an alias.
-            // so, for such case, we put synthesized one so we can treat X in both statement same.
-            for (const aliasDecl of decls.filter((d) => isAliasDeclaration(d) && !d.loadSymbolsFromPath)) {
-                const node = (aliasDecl as AliasDeclaration).node;
-                if (node.nodeType === ParseNodeType.ImportFromAs) {
-                    // from ... import X case, decl in the submodule fallback has the path.
-                    continue;
-                }
-
-                decls.push(
-                    ...(evaluator.getDeclarationsForNameNode(node.module.nameParts[0], skipUnreachableCode) || [])
-                );
-            }
-
-            return decls;
+            return this._getDeclarationsForNonModuleNameNode(node, evaluator, skipUnreachableCode);
         }
 
-        // We treat module name special in find all references. so symbol highlight or rename on multiple files
-        // works even if it is not actually a symbol defined in the file.
+        return this._getDeclarationsForModuleNameNode(node, evaluator);
+    }
+
+    private static _getDeclarationsForNonModuleNameNode(
+        node: NameNode,
+        evaluator: TypeEvaluator,
+        skipUnreachableCode = true
+    ): Declaration[] {
+        assert(node.parent?.nodeType !== ParseNodeType.ModuleName);
+
+        let decls = evaluator.getDeclarationsForNameNode(node, skipUnreachableCode) || [];
+        if (node.parent?.nodeType === ParseNodeType.ImportFromAs) {
+            // Make sure we get the decl for this specific "from import" statement
+            decls = decls.filter((d) => d.node === node.parent);
+        }
+
+        // If we can't get decl, see whether we can get type from the node.
+        // Some might have synthesized type for the node such as subModule in import X.Y statement.
+        if (decls.length === 0) {
+            const type = evaluator.getType(node);
+            if (type?.category === TypeCategory.Module) {
+                // Synthesize decl for the module.
+                return [createSynthesizedAliasDeclaration(type.filePath)];
+            }
+        }
+
+        // We would like to make X in import X and import X.Y as Y to match, but path for
+        // X in import X and one in import X.Y as Y might not match since path in X.Y will point
+        // to X.Y rather than X if import statement has an alias.
+        // so, for such case, we put synthesized one so we can treat X in both statement same.
+        for (const aliasDecl of decls.filter((d) => isAliasDeclaration(d) && !d.loadSymbolsFromPath)) {
+            const node = (aliasDecl as AliasDeclaration).node;
+            if (node.nodeType === ParseNodeType.ImportFromAs) {
+                // from ... import X case, decl in the submodule fallback has the path.
+                continue;
+            }
+
+            decls.push(...(evaluator.getDeclarationsForNameNode(node.module.nameParts[0], skipUnreachableCode) || []));
+        }
+
+        // For now, we only support function overriding.
+        for (const decl of decls.filter(
+            (d) => isFunctionDeclaration(d) && d.isMethod && d.node.name.value.length > 0
+        )) {
+            const methodDecl = decl as FunctionDeclaration;
+            const enclosingClass = ParseTreeUtils.getEnclosingClass(methodDecl.node);
+            const classResults = enclosingClass ? evaluator.getTypeOfClass(enclosingClass) : undefined;
+            if (!classResults) {
+                continue;
+            }
+
+            for (const mroClass of classResults.classType.details.mro) {
+                if (isInstantiableClass(mroClass)) {
+                    const currentMember = lookUpClassMember(mroClass, methodDecl.node.name.value);
+                    const baseMember = lookUpClassMember(
+                        mroClass,
+                        methodDecl.node.name.value,
+                        ClassMemberLookupFlags.SkipOriginalClass
+                    );
+                    if (currentMember && !baseMember) {
+                        // Found base decl of the overridden method. Hold onto the decls.
+                        currentMember.symbol
+                            .getDeclarations()
+                            .filter((d) => isFunctionDeclaration(d) && d.isMethod)
+                            .forEach((d) => this._addIfUnique(decls, d));
+                    }
+                }
+            }
+        }
+
+        return decls;
+    }
+
+    private static _getDeclarationsForModuleNameNode(node: NameNode, evaluator: TypeEvaluator): Declaration[] {
+        assert(node.parent?.nodeType === ParseNodeType.ModuleName);
+
+        // We don't have symbols corresponding to ModuleName in our system since those
+        // are not referenceable. but in "find all reference", we want to match those
+        // if it refers to the same module file. Code below handles different kind of
+        // ModuleName cases.
         const moduleName = node.parent;
         if (
             moduleName.parent?.nodeType === ParseNodeType.ImportAs ||
@@ -326,7 +382,19 @@ export class DocumentSymbolCollector extends ParseTreeWalker {
             // Special case, first module name part.
             if (index === 0) {
                 // 1. import X or from X import ...
-                let decls: Declaration[] = [];
+                const decls: Declaration[] = [];
+
+                // First, we need to put decls for module names type evaluator synthesized so that
+                // we can match both "import X" and "from X import ..."
+                decls.push(
+                    ...(evaluator
+                        .getDeclarationsForNameNode(moduleName.nameParts[0])
+                        ?.filter((d) => isAliasDeclaration(d)) || [])
+                );
+
+                if (decls.length === 0) {
+                    return decls;
+                }
 
                 // ex, import X as x
                 const isImportAsWithAlias =
@@ -339,16 +407,21 @@ export class DocumentSymbolCollector extends ParseTreeWalker {
                     ? (moduleName.parent as ImportAsNode).alias!.value
                     : moduleName.nameParts[0].value;
 
-                // First, we need to re-use "decls for X" binder has created
+                // And we also need to re-use "decls for X" binder has created
                 // so that it matches with decls type evaluator returns for "references for X".
                 // ex) import X or from .X import ... in init file and etc.
                 const symbolWithScope = ScopeUtils.getScopeForNode(node)?.lookUpSymbolRecursive(importName);
                 if (symbolWithScope && moduleName.nameParts.length === 1) {
-                    decls.push(...symbolWithScope.symbol.getDeclarations().filter((d) => isAliasDeclaration(d)));
+                    let declsFromSymbol: Declaration[] = [];
+
+                    appendArray(
+                        declsFromSymbol,
+                        symbolWithScope.symbol.getDeclarations().filter((d) => isAliasDeclaration(d))
+                    );
 
                     // If symbols are re-used, then find one that belong to this import statement.
-                    if (decls.length > 1) {
-                        decls = decls.filter((d) => {
+                    if (declsFromSymbol.length > 1) {
+                        declsFromSymbol = declsFromSymbol.filter((d) => {
                             d = d as AliasDeclaration;
 
                             if (d.firstNamePart !== undefined) {
@@ -366,17 +439,11 @@ export class DocumentSymbolCollector extends ParseTreeWalker {
                     // ex, import X as x
                     // We have decls for the alias "x" not the module name "X". Convert decls for the "X"
                     if (isImportAsWithAlias) {
-                        decls = getDeclarationsWithUsesLocalNameRemoved(decls);
+                        declsFromSymbol = getDeclarationsWithUsesLocalNameRemoved(declsFromSymbol);
                     }
-                }
 
-                // But, also, we need to put decls for module names type evaluator synthesized so that
-                // we can match both "import X" and "from X import ..."
-                decls.push(
-                    ...(evaluator
-                        .getDeclarationsForNameNode(moduleName.nameParts[0])
-                        ?.filter((d) => isAliasDeclaration(d)) || [])
-                );
+                    decls.push(...declsFromSymbol);
+                }
 
                 return decls;
             }

@@ -197,11 +197,11 @@ export function directoryExists(fs: FileSystem, path: string): boolean {
     return fileSystemEntryExists(fs, path, FileSystemEntryKind.Directory);
 }
 
-const invalidSeparator = path.sep === '/' ? '\\' : '/';
-export function normalizeSlashes(pathString: string): string {
-    if (pathString.includes(invalidSeparator)) {
+const getInvalidSeparator = (sep: string) => (sep === '/' ? '\\' : '/');
+export function normalizeSlashes(pathString: string, sep = path.sep): string {
+    if (pathString.includes(getInvalidSeparator(sep))) {
         const separatorRegExp = /[\\/]/g;
-        return pathString.replace(separatorRegExp, path.sep);
+        return pathString.replace(separatorRegExp, sep);
     }
 
     return pathString;
@@ -621,7 +621,7 @@ export function getFileSystemEntriesFromDirEntries(
 // that can be used for matching against.
 export function getWildcardRegexPattern(rootPath: string, fileSpec: string): string {
     let absolutePath = normalizePath(combinePaths(rootPath, fileSpec));
-    if (!absolutePath.endsWith('.py') && !absolutePath.endsWith('.pyi')) {
+    if (!hasPythonExtension(absolutePath)) {
         absolutePath = ensureTrailingDirectorySeparator(absolutePath);
     }
 
@@ -668,7 +668,7 @@ export function getWildcardRegexPattern(rootPath: string, fileSpec: string): str
 // Returns the topmost path that contains no wildcard characters.
 export function getWildcardRoot(rootPath: string, fileSpec: string): string {
     let absolutePath = normalizePath(combinePaths(rootPath, fileSpec));
-    if (!absolutePath.endsWith('.py') && !absolutePath.endsWith('.pyi')) {
+    if (!hasPythonExtension(absolutePath)) {
         absolutePath = ensureTrailingDirectorySeparator(absolutePath);
     }
 
@@ -706,12 +706,16 @@ export function getWildcardRoot(rootPath: string, fileSpec: string): string {
     return wildcardRoot;
 }
 
-export function getFileSpec(rootPath: string, fileSpec: string): FileSpec {
+export function hasPythonExtension(path: string) {
+    return path.endsWith('.py') || path.endsWith('.pyi');
+}
+
+export function getFileSpec(fs: FileSystem, rootPath: string, fileSpec: string): FileSpec {
     let regExPattern = getWildcardRegexPattern(rootPath, fileSpec);
     const escapedSeparator = getRegexEscapedSeparator();
     regExPattern = `^(${regExPattern})($|${escapedSeparator})`;
 
-    const regExp = new RegExp(regExPattern);
+    const regExp = new RegExp(regExPattern, isFileSystemCaseSensitive(fs) ? undefined : 'i');
     const wildcardRoot = getWildcardRoot(rootPath, fileSpec);
 
     return {

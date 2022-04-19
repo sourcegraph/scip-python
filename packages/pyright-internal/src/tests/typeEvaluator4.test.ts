@@ -272,7 +272,7 @@ test('Overload6', () => {
 
 test('Overload7', () => {
     const analysisResults = TestUtils.typeAnalyzeSampleFiles(['overload7.py']);
-    TestUtils.validateResults(analysisResults, 5);
+    TestUtils.validateResults(analysisResults, 6);
 });
 
 test('Overload8', () => {
@@ -561,6 +561,12 @@ test('DataClass18', () => {
     TestUtils.validateResults(analysisResults, 2);
 });
 
+test('DataClass19', () => {
+    const analysisResults = TestUtils.typeAnalyzeSampleFiles(['dataclass19.py']);
+
+    TestUtils.validateResults(analysisResults, 1);
+});
+
 test('DataClassPostInit1', () => {
     const analysisResults = TestUtils.typeAnalyzeSampleFiles(['dataclassPostInit1.py']);
 
@@ -627,7 +633,7 @@ test('Unions1', () => {
     // Analyze with Python 3.9 settings. This will generate errors.
     configOptions.defaultPythonVersion = PythonVersion.V3_9;
     const analysisResults3_9 = TestUtils.typeAnalyzeSampleFiles(['unions1.py'], configOptions);
-    TestUtils.validateResults(analysisResults3_9, 7);
+    TestUtils.validateResults(analysisResults3_9, 11);
 
     // Analyze with Python 3.10 settings.
     configOptions.defaultPythonVersion = PythonVersion.V3_10;
@@ -775,7 +781,7 @@ test('ParamSpec13', () => {
 
     configOptions.defaultPythonVersion = PythonVersion.V3_10;
     const results = TestUtils.typeAnalyzeSampleFiles(['paramSpec13.py'], configOptions);
-    TestUtils.validateResults(results, 5);
+    TestUtils.validateResults(results, 6);
 });
 
 test('ParamSpec14', () => {
@@ -912,6 +918,46 @@ test('ParamSpec30', () => {
     configOptions.defaultPythonVersion = PythonVersion.V3_10;
     const results = TestUtils.typeAnalyzeSampleFiles(['paramSpec30.py'], configOptions);
     TestUtils.validateResults(results, 0);
+});
+
+test('ParamSpec31', () => {
+    const configOptions = new ConfigOptions('.');
+
+    configOptions.defaultPythonVersion = PythonVersion.V3_10;
+    const results = TestUtils.typeAnalyzeSampleFiles(['paramSpec31.py'], configOptions);
+    TestUtils.validateResults(results, 0);
+});
+
+test('ParamSpec32', () => {
+    const configOptions = new ConfigOptions('.');
+
+    configOptions.defaultPythonVersion = PythonVersion.V3_10;
+    const results = TestUtils.typeAnalyzeSampleFiles(['paramSpec32.py'], configOptions);
+    TestUtils.validateResults(results, 4);
+});
+
+test('ParamSpec33', () => {
+    const configOptions = new ConfigOptions('.');
+
+    configOptions.defaultPythonVersion = PythonVersion.V3_10;
+    const results = TestUtils.typeAnalyzeSampleFiles(['paramSpec33.py'], configOptions);
+    TestUtils.validateResults(results, 4);
+});
+
+test('ParamSpec34', () => {
+    const configOptions = new ConfigOptions('.');
+
+    configOptions.defaultPythonVersion = PythonVersion.V3_10;
+    const results = TestUtils.typeAnalyzeSampleFiles(['paramSpec34.py'], configOptions);
+    TestUtils.validateResults(results, 0);
+});
+
+test('ParamSpec35', () => {
+    const configOptions = new ConfigOptions('.');
+
+    configOptions.defaultPythonVersion = PythonVersion.V3_10;
+    const results = TestUtils.typeAnalyzeSampleFiles(['paramSpec35.py'], configOptions);
+    TestUtils.validateResults(results, 1);
 });
 
 test('ClassVar1', () => {

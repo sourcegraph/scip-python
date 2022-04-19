@@ -1,6 +1,6 @@
 import sys
-from typing import Any, Callable, ClassVar, Iterable, Iterator, Mapping, Optional, Protocol, Union
-from typing_extensions import final
+from typing import Any, Callable, ClassVar, Iterable, Iterator, Mapping, Protocol, Union
+from typing_extensions import TypeAlias, final
 
 if sys.version_info >= (3, 8):
     __all__ = [
@@ -189,7 +189,7 @@ if sys.version_info >= (3, 8):
         def __init__(self, buffer: Any) -> None: ...
         def raw(self) -> memoryview: ...
         def release(self) -> None: ...
-    _BufferCallback = Optional[Callable[[PickleBuffer], Any]]
+    _BufferCallback: TypeAlias = Callable[[PickleBuffer], Any] | None
     def dump(
         obj: Any,
         file: _WritableFileobj,
@@ -223,12 +223,12 @@ class PickleError(Exception): ...
 class PicklingError(PickleError): ...
 class UnpicklingError(PickleError): ...
 
-_reducedtype = Union[
+_reducedtype: TypeAlias = Union[
     str,
     tuple[Callable[..., Any], tuple[Any, ...]],
     tuple[Callable[..., Any], tuple[Any, ...], Any],
-    tuple[Callable[..., Any], tuple[Any, ...], Any, Optional[Iterator[Any]]],
-    tuple[Callable[..., Any], tuple[Any, ...], Any, Optional[Iterator[Any]], Optional[Iterator[Any]]],
+    tuple[Callable[..., Any], tuple[Any, ...], Any, Iterator[Any] | None],
+    tuple[Callable[..., Any], tuple[Any, ...], Any, Iterator[Any] | None, Iterator[Any] | None],
 ]
 
 class Pickler:

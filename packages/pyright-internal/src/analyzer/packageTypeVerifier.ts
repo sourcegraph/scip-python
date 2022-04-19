@@ -35,7 +35,9 @@ import { isDunderName, isPrivateOrProtectedName } from './symbolNameUtils';
 import {
     ClassType,
     FunctionType,
+    FunctionTypeFlags,
     isClass,
+    isFunction,
     isInstantiableClass,
     isModule,
     isTypeSame,
@@ -45,7 +47,13 @@ import {
     TypeBase,
     TypeCategory,
 } from './types';
-import { doForEachSubtype, getFullNameOfType, isEllipsisType, isPartlyUnknown } from './typeUtils';
+import {
+    doForEachSubtype,
+    getFullNameOfType,
+    isDescriptorInstance,
+    isEllipsisType,
+    isPartlyUnknown,
+} from './typeUtils';
 
 type PublicSymbolMap = Map<string, string>;
 
@@ -487,7 +495,11 @@ export class PackageTypeVerifier {
                         // not the same type as the inferred type, mark it as ambiguous because
                         // different type checkers will get different results.
                         if (TypeBase.isAmbiguous(childSymbolType) || !isTypeSame(baseSymbolType, childSymbolType)) {
-                            usesAmbiguousOverride = true;
+                            // If the base type is known to be a descriptor with a setter,
+                            // assume that the child class is simply writing to the base class's setter.
+                            if (!isDescriptorInstance(baseSymbolType, /* requireSetter */ true)) {
+                                usesAmbiguousOverride = true;
+                            }
                         }
 
                         symbolType = baseSymbolType;
@@ -529,6 +541,7 @@ export class PackageTypeVerifier {
                         typeKnownStatus: TypeKnownStatus.Known,
                         referenceCount: 1,
                         diagnostics: [],
+                        scopeType,
                     };
 
                     this._addSymbol(report, symbolInfo);
@@ -728,10 +741,21 @@ export class PackageTypeVerifier {
 
                     accessors.forEach((accessorName) => {
                         const accessSymbol = propertyClass.details.fields.get(accessorName);
-                        const accessType = accessSymbol ? this._program.getTypeForSymbol(accessSymbol) : undefined;
+                        let accessType = accessSymbol ? this._program.getTypeForSymbol(accessSymbol) : undefined;
 
                         if (!accessType) {
                             return;
+                        }
+
+                        if (isFunction(accessType)) {
+                            // The processing for fget, fset and fdel mark the methods as "static" so they
+                            // work properly when accessed directly from the property object. We need
+                            // to remove this flag here so the method is seen as an instance method rather than
+                            // static. Otherwise we'll incorrectly report that "self" is not annotated.
+                            accessType = FunctionType.cloneWithNewFlags(
+                                accessType,
+                                accessType.details.flags & ~FunctionTypeFlags.StaticMethod
+                            );
                         }
 
                         knownStatus = this._updateKnownStatusIfWorse(
@@ -836,6 +860,7 @@ export class PackageTypeVerifier {
                     // we're able to synthesize these.
                     const isSynthesized =
                         index === 0 &&
+                        symbolInfo?.scopeType === ScopeType.Class &&
                         (FunctionType.isClassMethod(type) ||
                             FunctionType.isInstanceMethod(type) ||
                             FunctionType.isConstructorMethod(type));
@@ -1025,6 +1050,7 @@ export class PackageTypeVerifier {
             typeKnownStatus: TypeKnownStatus.Known,
             referenceCount: 1,
             diagnostics: [],
+            scopeType: ScopeType.Class,
         };
 
         this._addSymbol(report, symbolInfo);
@@ -1162,6 +1188,7 @@ export class PackageTypeVerifier {
             typeKnownStatus: TypeKnownStatus.Known,
             referenceCount: 1,
             diagnostics: [],
+            scopeType: ScopeType.Module,
         };
 
         this._addSymbol(report, symbolInfo);

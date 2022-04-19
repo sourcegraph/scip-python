@@ -49,17 +49,17 @@ import {
 } from './types';
 import {
     applySolvedTypeVars,
-    buildTypeVarMapFromSpecializedClass,
+    buildTypeVarContextFromSpecializedClass,
     convertToInstance,
     getTypeVarScopeId,
     isLiteralType,
     lookUpObjectMember,
-    populateTypeVarMapForSelfType,
+    populateTypeVarContextForSelfType,
     requiresSpecialization,
     specializeTupleClass,
     synthesizeTypeVarForSelfCls,
 } from './typeUtils';
-import { TypeVarMap } from './typeVarMap';
+import { TypeVarContext } from './typeVarContext';
 
 // Validates fields for compatibility with a dataclass and synthesizes
 // an appropriate __new__ and __init__ methods plus __dataclass_fields__
@@ -75,13 +75,8 @@ export function synthesizeDataClassMethods(
     assert(ClassType.isDataClass(classType));
 
     const classTypeVar = synthesizeTypeVarForSelfCls(classType, /* isClsParam */ true);
-    const newType = FunctionType.createInstance(
-        '__new__',
-        '',
-        '',
-        FunctionTypeFlags.ConstructorMethod | FunctionTypeFlags.SynthesizedMethod
-    );
-    const initType = FunctionType.createInstance('__init__', '', '', FunctionTypeFlags.SynthesizedMethod);
+    const newType = FunctionType.createSynthesizedInstance('__new__', FunctionTypeFlags.ConstructorMethod);
+    const initType = FunctionType.createSynthesizedInstance('__init__');
 
     FunctionType.addParameter(newType, {
         category: ParameterCategory.Simple,
@@ -116,8 +111,8 @@ export function synthesizeDataClassMethods(
     }
 
     // Maintain a list of "type evaluators".
-    type TypeEvaluator = () => Type;
-    const localEntryTypeEvaluator: { entry: DataClassEntry; evaluator: TypeEvaluator }[] = [];
+    type EntryTypeEvaluator = () => Type;
+    const localEntryTypeEvaluator: { entry: DataClassEntry; evaluator: EntryTypeEvaluator }[] = [];
     let sawKeywordOnlySeparator = false;
 
     node.suite.statements.forEach((statementList) => {
@@ -125,7 +120,7 @@ export function synthesizeDataClassMethods(
             statementList.statements.forEach((statement) => {
                 let variableNameNode: NameNode | undefined;
                 let aliasName: string | undefined;
-                let variableTypeEvaluator: TypeEvaluator | undefined;
+                let variableTypeEvaluator: EntryTypeEvaluator | undefined;
                 let hasDefaultValue = false;
                 let isKeywordOnly = ClassType.isDataClassKeywordOnlyParams(classType) || sawKeywordOnlySeparator;
                 let defaultValueExpression: ExpressionNode | undefined;
@@ -156,7 +151,6 @@ export function synthesizeDataClassMethods(
                     if (statement.rightExpression.nodeType === ParseNodeType.Call) {
                         const callType = evaluator.getTypeOfExpression(
                             statement.rightExpression.leftExpression,
-                            /* expectedType */ undefined,
                             EvaluatorFlags.DoNotSpecialize
                         ).type;
                         if (
@@ -396,14 +390,14 @@ export function synthesizeDataClassMethods(
                 // transform it to refer to the Self of this subclass.
                 let effectiveType = entry.type;
                 if (entry.classType !== classType && requiresSpecialization(effectiveType)) {
-                    const typeVarMap = new TypeVarMap(getTypeVarScopeId(entry.classType));
-                    populateTypeVarMapForSelfType(typeVarMap, entry.classType, classType);
-                    effectiveType = applySolvedTypeVars(effectiveType, typeVarMap);
+                    const typeVarContext = new TypeVarContext(getTypeVarScopeId(entry.classType));
+                    populateTypeVarContextForSelfType(typeVarContext, entry.classType, classType);
+                    effectiveType = applySolvedTypeVars(effectiveType, typeVarContext);
                 }
 
-                if (classType.details.dataClassBehaviors?.transformDescriptorTypes) {
-                    effectiveType = transformDescriptorType(evaluator, effectiveType);
-                }
+                // Is the field type a descriptor object? If so, we need to extract the corresponding
+                // type of the __init__ method parameter from the __set__ method.
+                effectiveType = transformDescriptorType(evaluator, effectiveType);
 
                 const functionParam: FunctionParameter = {
                     category: ParameterCategory.Simple,
@@ -461,7 +455,7 @@ export function synthesizeDataClassMethods(
     }
 
     const synthesizeComparisonMethod = (operator: string, paramType: Type) => {
-        const operatorMethod = FunctionType.createInstance(operator, '', '', FunctionTypeFlags.SynthesizedMethod);
+        const operatorMethod = FunctionType.createSynthesizedInstance(operator);
         FunctionType.addParameter(operatorMethod, selfParam);
         FunctionType.addParameter(operatorMethod, {
             category: ParameterCategory.Simple,
@@ -501,7 +495,7 @@ export function synthesizeDataClassMethods(
     }
 
     if (synthesizeHashFunction) {
-        const hashMethod = FunctionType.createInstance('__hash__', '', '', FunctionTypeFlags.SynthesizedMethod);
+        const hashMethod = FunctionType.createSynthesizedInstance('__hash__');
         FunctionType.addParameter(hashMethod, selfParam);
         hashMethod.details.declaredReturnType = evaluator.getBuiltInObject(node, 'int');
         symbolTable.set('__hash__', Symbol.createWithType(SymbolFlags.ClassMember, hashMethod));
@@ -572,7 +566,7 @@ function addInheritedDataClassEntries(classType: ClassType, entries: DataClassEn
         const mroClass = classType.details.mro[i];
 
         if (isInstantiableClass(mroClass)) {
-            const typeVarMap = buildTypeVarMapFromSpecializedClass(mroClass, /* makeConcrete */ false);
+            const typeVarContext = buildTypeVarContextFromSpecializedClass(mroClass, /* makeConcrete */ false);
             const dataClassEntries = ClassType.getDataClassEntries(mroClass);
 
             // Add the entries to the end of the list, replacing same-named
@@ -583,7 +577,7 @@ function addInheritedDataClassEntries(classType: ClassType, entries: DataClassEn
                 // If the type from the parent class is generic, we need to convert
                 // to the type parameter namespace of child class.
                 const updatedEntry = { ...entry };
-                updatedEntry.type = applySolvedTypeVars(updatedEntry.type, typeVarMap);
+                updatedEntry.type = applySolvedTypeVars(updatedEntry.type, typeVarContext);
 
                 if (entry.isClassVar) {
                     // If this entry is a class variable, it overrides an existing
@@ -631,7 +625,6 @@ export function validateDataClassTransformDecorator(
         keywordOnlyParams: false,
         generateEq: true,
         generateOrder: false,
-        transformDescriptorTypes: false,
         fieldDescriptorNames: [],
     };
 
@@ -687,20 +680,6 @@ export function validateDataClassTransformDecorator(
                 break;
             }
 
-            case 'transform_descriptor_types': {
-                const value = evaluateStaticBoolExpression(arg.valueExpression, fileInfo.executionEnvironment);
-                if (value === undefined) {
-                    evaluator.addError(
-                        Localizer.Diagnostic.dataClassTransformExpectedBoolLiteral(),
-                        arg.valueExpression
-                    );
-                    return;
-                }
-
-                behaviors.transformDescriptorTypes = value;
-                break;
-            }
-
             case 'field_descriptors': {
                 const valueType = evaluator.getTypeOfExpression(arg.valueExpression).type;
                 if (
@@ -753,7 +732,13 @@ export function getDataclassDecoratorBehaviors(type: Type): DataClassBehaviors |
     if (isFunction(type)) {
         functionType = type;
     } else if (isOverloadedFunction(type)) {
-        functionType = type.overloads[0];
+        // Find the first overload or implementation that contains a
+        // dataclass_transform decorator. If more than one have such a decorator,
+        // only the first one will be honored, as per PEP 681.
+        functionType =
+            type.overloads.find((overload) => {
+                overload.details.decoratorDataClassBehaviors !== undefined;
+            }) ?? type.overloads[0];
     }
 
     if (!functionType) {
@@ -770,7 +755,6 @@ export function getDataclassDecoratorBehaviors(type: Type): DataClassBehaviors |
             keywordOnlyParams: false,
             generateEq: true,
             generateOrder: false,
-            transformDescriptorTypes: false,
             fieldDescriptorNames: ['dataclasses.field', 'dataclasses.Field'],
         };
     }

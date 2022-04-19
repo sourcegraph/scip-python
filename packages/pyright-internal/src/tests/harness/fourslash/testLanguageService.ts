@@ -33,7 +33,7 @@ import { HostSpecificFeatures } from './testState';
 
 export class TestFeatures implements HostSpecificFeatures {
     importResolverFactory: ImportResolverFactory = AnalyzerService.createImportResolver;
-    runIndexer(workspace: WorkspaceServiceInstance, noStdLib: boolean): void {
+    runIndexer(workspace: WorkspaceServiceInstance, noStdLib: boolean, options?: string): void {
         /* empty */
     }
     getCodeActionsForPosition(
@@ -73,6 +73,7 @@ export class TestLanguageService implements LanguageServerInterface {
             disableLanguageServices: false,
             disableOrganizeImports: false,
             isInitialized: createDeferred<boolean>(),
+            searchPathsToWatch: [],
         };
     }
     decodeTextDocumentUri(uriString: string): string {

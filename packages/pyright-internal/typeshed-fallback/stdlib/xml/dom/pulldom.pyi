@@ -1,7 +1,7 @@
 import sys
 from _typeshed import SupportsRead
-from typing import Any, Sequence, Union
-from typing_extensions import Literal
+from typing import Any, Sequence
+from typing_extensions import Literal, TypeAlias
 from xml.dom.minidom import Document, DOMImplementation, Element, Text
 from xml.sax.handler import ContentHandler
 from xml.sax.xmlreader import XMLReader
@@ -15,10 +15,10 @@ PROCESSING_INSTRUCTION: Literal["PROCESSING_INSTRUCTION"]
 IGNORABLE_WHITESPACE: Literal["IGNORABLE_WHITESPACE"]
 CHARACTERS: Literal["CHARACTERS"]
 
-_DocumentFactory = Union[DOMImplementation, None]
-_Node = Union[Document, Element, Text]
+_DocumentFactory: TypeAlias = DOMImplementation | None
+_Node: TypeAlias = Document | Element | Text
 
-_Event = tuple[
+_Event: TypeAlias = tuple[
     Literal[
         Literal["START_ELEMENT"],
         Literal["END_ELEMENT"],

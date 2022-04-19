@@ -17,6 +17,7 @@
  */
 
 import { Commands } from '../commands/commands';
+import { appendArray } from '../common/collectionUtils';
 import { DiagnosticLevel } from '../common/configOptions';
 import { assert, assertNever, fail } from '../common/debug';
 import { CreateTypeStubFileAction, Diagnostic } from '../common/diagnostic';
@@ -78,7 +79,7 @@ import {
     YieldNode,
 } from '../parser/parseNodes';
 import { KeywordType, OperatorType } from '../parser/tokenizerTypes';
-import { AnalyzerFileInfo, ImportLookupResult } from './analyzerFileInfo';
+import { AnalyzerFileInfo, ImportLookupResult, isAnnotationEvaluationPostponed } from './analyzerFileInfo';
 import * as AnalyzerNodeInfo from './analyzerNodeInfo';
 import {
     CodeFlowReferenceExpressionNode,
@@ -227,7 +228,7 @@ export class Binder extends ParseTreeWalker {
 
     // Estimates the overall complexity of the code flow graph for
     // the current function.
-    private _functionCodeFlowComplexity = 0;
+    private _codeFlowComplexity = 0;
 
     constructor(fileInfo: AnalyzerFileInfo, private _moduleSymbolOnly = false) {
         super();
@@ -267,10 +268,11 @@ export class Binder extends ParseTreeWalker {
 
                 this._walkStatementsAndReportUnreachable(node.statements);
 
-                AnalyzerNodeInfo.setCodeFlowExpressions(node, this._currentScopeCodeFlowExpressions!);
-
                 // Associate the code flow node at the end of the module with the module.
                 AnalyzerNodeInfo.setAfterFlowNode(node, this._currentFlowNode);
+
+                AnalyzerNodeInfo.setCodeFlowExpressions(node, this._currentScopeCodeFlowExpressions!);
+                AnalyzerNodeInfo.setCodeFlowComplexity(node, this._codeFlowComplexity);
             }
         );
 
@@ -330,7 +332,7 @@ export class Binder extends ParseTreeWalker {
         const importResult = AnalyzerNodeInfo.getImportInfo(node);
         assert(importResult !== undefined);
 
-        if (!importResult || importResult.isNativeLib) {
+        if (importResult.isNativeLib) {
             return true;
         }
 
@@ -363,26 +365,6 @@ export class Binder extends ParseTreeWalker {
                     moduleName: importResult.importName,
                 };
                 diagnostic.addAction(createTypeStubAction);
-            }
-        }
-
-        // Type stub found, but source is missing.
-        if (
-            importResult.isStubFile &&
-            importResult.importType !== ImportType.BuiltIn &&
-            importResult.nonStubImportResult &&
-            !importResult.nonStubImportResult.isImportFound
-        ) {
-            // Don't report this for stub files.
-            if (!this._fileInfo.isStubFile) {
-                this._addDiagnostic(
-                    this._fileInfo.diagnosticRuleSet.reportMissingModuleSource,
-                    DiagnosticRule.reportMissingModuleSource,
-                    Localizer.Diagnostic.importSourceResolveFailure().format({
-                        importName: importResult.importName,
-                    }),
-                    node
-                );
             }
         }
 
@@ -495,7 +477,7 @@ export class Binder extends ParseTreeWalker {
             this._deferBinding(() => {
                 // Create a start node for the function.
                 this._currentFlowNode = this._createStartFlowNode();
-                this._functionCodeFlowComplexity = 0;
+                this._codeFlowComplexity = 0;
 
                 node.parameters.forEach((paramNode) => {
                     if (paramNode.name) {
@@ -541,7 +523,7 @@ export class Binder extends ParseTreeWalker {
                 AnalyzerNodeInfo.setAfterFlowNode(node, returnFlowNode);
 
                 AnalyzerNodeInfo.setCodeFlowExpressions(node, this._currentScopeCodeFlowExpressions!);
-                AnalyzerNodeInfo.setCodeFlowComplexity(node, this._functionCodeFlowComplexity);
+                AnalyzerNodeInfo.setCodeFlowComplexity(node, this._codeFlowComplexity);
             });
         });
 
@@ -709,6 +691,20 @@ export class Binder extends ParseTreeWalker {
             this._addTypeDeclarationForVariable(node.leftExpression, node.typeAnnotationComment);
         }
 
+        // If there is a type annotation associated with the assignment and annotation evaluations are
+        // not deferred, the Python interpreter creates an entry in the local symbol table (presumably
+        // to store the __annotation__ attribute) before it evaluates the RHS of the assignment. This
+        // can affect the evaluation of the RHS if the name of the symbol is the same as a name that
+        // is defined in an outer scope.
+        let createdAssignmentTargetFlowNodes = false;
+        if (
+            node.leftExpression.nodeType === ParseNodeType.TypeAnnotation &&
+            !isAnnotationEvaluationPostponed(this._fileInfo)
+        ) {
+            this._createAssignmentTargetFlowNodes(node.leftExpression, /* walkTargets */ true, /* unbound */ false);
+            createdAssignmentTargetFlowNodes = true;
+        }
+
         this.walk(node.rightExpression);
 
         let isPossibleTypeAlias = true;
@@ -728,7 +724,10 @@ export class Binder extends ParseTreeWalker {
 
         this._addInferredTypeAssignmentForVariable(node.leftExpression, node.rightExpression, isPossibleTypeAlias);
 
-        this._createAssignmentTargetFlowNodes(node.leftExpression, /* walkTargets */ true, /* unbound */ false);
+        // If we didn't create assignment target flow nodes above, do so now.
+        if (!createdAssignmentTargetFlowNodes) {
+            this._createAssignmentTargetFlowNodes(node.leftExpression, /* walkTargets */ true, /* unbound */ false);
+        }
 
         // Is this an assignment to dunder all?
         if (this._currentScope.type === ScopeType.Module) {
@@ -1386,9 +1385,6 @@ export class Binder extends ParseTreeWalker {
             this._currentFlowNode = isAfterElseAndExceptsReachable ? postFinallyNode : Binder._unreachableFlowNode;
         }
 
-        // Try blocks are expensive to analyze, so add to the complexity metric.
-        this._functionCodeFlowComplexity += 4;
-
         return false;
     }
 
@@ -2039,12 +2035,12 @@ export class Binder extends ParseTreeWalker {
         // statements are matched.
         if (isSubjectNarrowable) {
             this._createFlowNarrowForPattern(node.subjectExpression, node);
+        }
 
-            // Create an "implied else" to conditionally gate code flow based on
-            // whether the narrowed type of the subject expression is Never at this point.
-            if (!foundIrrefutableCase) {
-                this._createFlowExhaustedMatch(node);
-            }
+        // Create an "implied else" to conditionally gate code flow based on
+        // whether the narrowed type of the subject expression is Never at this point.
+        if (!foundIrrefutableCase) {
+            this._createFlowExhaustedMatch(node);
         }
 
         this._addAntecedent(postMatchLabel, this._currentFlowNode!);
@@ -2264,99 +2260,114 @@ export class Binder extends ParseTreeWalker {
     ) {
         const firstNamePartValue = node.module.nameParts[0].value;
 
+        // See if there's already a matching alias declaration for this import.
+        // if so, we'll update it rather than creating a new one. This is required
+        // to handle cases where multiple import statements target the same
+        // starting symbol such as "import a.b.c" and "import a.d". In this case,
+        // we'll build a single declaration that describes the combined actions
+        // of both import statements, thus reflecting the behavior of the
+        // python module loader.
+        const existingDecl = symbol
+            .getDeclarations()
+            .find((decl) => decl.type === DeclarationType.Alias && decl.firstNamePart === firstNamePartValue);
+        let newDecl: AliasDeclaration;
+        let pathOfLastSubmodule: string;
         if (importInfo && importInfo.isImportFound && !importInfo.isNativeLib && importInfo.resolvedPaths.length > 0) {
-            // See if there's already a matching alias declaration for this import.
-            // if so, we'll update it rather than creating a new one. This is required
-            // to handle cases where multiple import statements target the same
-            // starting symbol such as "import a.b.c" and "import a.d". In this case,
-            // we'll build a single declaration that describes the combined actions
-            // of both import statements, thus reflecting the behavior of the
-            // python module loader.
-            const existingDecl = symbol
-                .getDeclarations()
-                .find((decl) => decl.type === DeclarationType.Alias && decl.firstNamePart === firstNamePartValue);
+            pathOfLastSubmodule = importInfo.resolvedPaths[importInfo.resolvedPaths.length - 1];
+        } else {
+            pathOfLastSubmodule = '*** unresolved ***';
+        }
 
-            let newDecl: AliasDeclaration;
-            if (existingDecl) {
-                newDecl = existingDecl as AliasDeclaration;
-            } else {
-                newDecl = {
-                    type: DeclarationType.Alias,
-                    node,
-                    path: importInfo.resolvedPaths[importInfo.resolvedPaths.length - 1],
-                    loadSymbolsFromPath: false,
-                    moduleName: importInfo.importName,
-                    isInExceptSuite: this._isInExceptSuite,
-                    range: getEmptyRange(),
-                    firstNamePart: firstNamePartValue,
-                    usesLocalName: !!importAlias,
-                };
-            }
+        const isResolved =
+            importInfo && importInfo.isImportFound && !importInfo.isNativeLib && importInfo.resolvedPaths.length > 0;
 
-            // Add the implicit imports for this module if it's the last
-            // name part we're resolving.
-            if (importAlias || node.module.nameParts.length === 1) {
-                newDecl.path = importInfo.resolvedPaths[importInfo.resolvedPaths.length - 1];
-                newDecl.loadSymbolsFromPath = true;
-                this._addImplicitImportsToLoaderActions(importInfo, newDecl);
-            } else {
-                // Fill in the remaining name parts.
-                let curLoaderActions: ModuleLoaderActions = newDecl;
-
-                for (let i = 1; i < node.module.nameParts.length; i++) {
-                    if (i >= importInfo.resolvedPaths.length) {
-                        break;
-                    }
-
-                    const namePartValue = node.module.nameParts[i].value;
-
-                    // Is there an existing loader action for this name?
-                    let loaderActions = curLoaderActions.implicitImports
-                        ? curLoaderActions.implicitImports.get(namePartValue)
-                        : undefined;
-                    if (!loaderActions) {
-                        // Allocate a new loader action.
-                        loaderActions = {
-                            path: importInfo.resolvedPaths[i],
-                            loadSymbolsFromPath: false,
-                            implicitImports: new Map<string, ModuleLoaderActions>(),
-                        };
-                        if (!curLoaderActions.implicitImports) {
-                            curLoaderActions.implicitImports = new Map<string, ModuleLoaderActions>();
-                        }
-                        curLoaderActions.implicitImports.set(namePartValue, loaderActions);
-                    }
-
-                    // If this is the last name part we're resolving, add in the
-                    // implicit imports as well.
-                    if (i === node.module.nameParts.length - 1) {
-                        loaderActions.path = importInfo.resolvedPaths[i];
-                        loaderActions.loadSymbolsFromPath = true;
-                        this._addImplicitImportsToLoaderActions(importInfo, loaderActions);
-                    }
-
-                    curLoaderActions = loaderActions;
-                }
-            }
-
-            if (!existingDecl) {
-                symbol.addDeclaration(newDecl);
-            }
+        if (existingDecl) {
+            newDecl = existingDecl as AliasDeclaration;
+        } else if (isResolved) {
+            newDecl = {
+                type: DeclarationType.Alias,
+                node,
+                path: pathOfLastSubmodule,
+                loadSymbolsFromPath: false,
+                range: getEmptyRange(),
+                usesLocalName: !!importAlias,
+                moduleName: importInfo.importName,
+                firstNamePart: firstNamePartValue,
+                isInExceptSuite: this._isInExceptSuite,
+            };
         } else {
             // If we couldn't resolve the import, create a dummy declaration with a
             // bogus path so it gets an unknown type (rather than an unbound type) at
             // analysis time.
-            const newDecl: AliasDeclaration = {
+            newDecl = {
                 type: DeclarationType.Alias,
                 node,
-                path: '*** unresolved ***',
+                path: pathOfLastSubmodule,
                 loadSymbolsFromPath: true,
                 range: getEmptyRange(),
                 usesLocalName: !!importAlias,
-                moduleName: '',
+                moduleName: importInfo?.importName ?? '',
+                firstNamePart: firstNamePartValue,
                 isUnresolved: true,
                 isInExceptSuite: this._isInExceptSuite,
             };
+        }
+
+        // Add the implicit imports for this module if it's the last
+        // name part we're resolving.
+        if (importAlias || node.module.nameParts.length === 1) {
+            newDecl.path = pathOfLastSubmodule;
+            newDecl.loadSymbolsFromPath = true;
+            newDecl.isUnresolved = false;
+
+            if (importInfo) {
+                this._addImplicitImportsToLoaderActions(importInfo, newDecl);
+            }
+        } else {
+            // Fill in the remaining name parts.
+            let curLoaderActions: ModuleLoaderActions = newDecl;
+
+            for (let i = 1; i < node.module.nameParts.length; i++) {
+                const namePartValue = node.module.nameParts[i].value;
+
+                // Is there an existing loader action for this name?
+                let loaderActions = curLoaderActions.implicitImports
+                    ? curLoaderActions.implicitImports.get(namePartValue)
+                    : undefined;
+                if (!loaderActions) {
+                    const loaderActionPath =
+                        importInfo && i < importInfo.resolvedPaths.length
+                            ? importInfo.resolvedPaths[i]
+                            : '*** unresolved ***';
+
+                    // Allocate a new loader action.
+                    loaderActions = {
+                        path: loaderActionPath,
+                        loadSymbolsFromPath: false,
+                        implicitImports: new Map<string, ModuleLoaderActions>(),
+                        isUnresolved: !isResolved,
+                    };
+                    if (!curLoaderActions.implicitImports) {
+                        curLoaderActions.implicitImports = new Map<string, ModuleLoaderActions>();
+                    }
+                    curLoaderActions.implicitImports.set(namePartValue, loaderActions);
+                }
+
+                // If this is the last name part we're resolving, add in the
+                // implicit imports as well.
+                if (i === node.module.nameParts.length - 1) {
+                    if (importInfo && i < importInfo.resolvedPaths.length) {
+                        loaderActions.path = importInfo.resolvedPaths[i];
+                        loaderActions.loadSymbolsFromPath = true;
+                        this._addImplicitImportsToLoaderActions(importInfo, loaderActions);
+                    }
+                }
+
+                curLoaderActions = loaderActions;
+            }
+        }
+
+        if (!existingDecl) {
             symbol.addDeclaration(newDecl);
         }
     }
@@ -2370,7 +2381,7 @@ export class Binder extends ParseTreeWalker {
                 return lookupInfo.dunderAllNames;
             }
 
-            namesToImport.push(...lookupInfo.dunderAllNames);
+            appendArray(namesToImport, lookupInfo.dunderAllNames);
         }
 
         lookupInfo.symbolTable.forEach((symbol, name) => {
@@ -2484,8 +2495,10 @@ export class Binder extends ParseTreeWalker {
             return node.antecedents[0];
         }
 
-        // Add one to the code flow complexity for each antecedent.
-        this._functionCodeFlowComplexity += node.antecedents.length;
+        // The cyclomatic complexity is the number of edges minus the
+        // number of nodes in the graph. Add n-1 where n is the number
+        // of antecedents (edges) and 1 represents the label node.
+        this._codeFlowComplexity += node.antecedents.length - 1;
 
         return node;
     }
@@ -3023,7 +3036,7 @@ export class Binder extends ParseTreeWalker {
             this._currentFlowNode = flowNode;
         }
 
-        AnalyzerNodeInfo.setFlowNode(node, this._currentFlowNode!);
+        AnalyzerNodeInfo.setAfterFlowNode(node, this._currentFlowNode!);
     }
 
     private _isCodeUnreachable() {
@@ -3061,21 +3074,14 @@ export class Binder extends ParseTreeWalker {
     private _bindLoopStatement(preLoopLabel: FlowLabel, postLoopLabel: FlowLabel, callback: () => void) {
         const savedContinueTarget = this._currentContinueTarget;
         const savedBreakTarget = this._currentBreakTarget;
-        const savedCodeFlowComplexity = this._functionCodeFlowComplexity;
 
         this._currentContinueTarget = preLoopLabel;
         this._currentBreakTarget = postLoopLabel;
-        this._functionCodeFlowComplexity = 1;
 
         preLoopLabel.affectedExpressions = this._trackCodeFlowExpressions(callback);
 
         this._currentContinueTarget = savedContinueTarget;
         this._currentBreakTarget = savedBreakTarget;
-
-        // For each loop, double the complexity of the complexity of the
-        // contained code flow. This reflects the fact that nested loops
-        // are very expensive to analyze.
-        this._functionCodeFlowComplexity = this._functionCodeFlowComplexity * 2 + savedCodeFlowComplexity;
     }
 
     private _addAntecedent(label: FlowLabel, antecedent: FlowNode) {

@@ -2,17 +2,17 @@ import enum
 import socket
 import sys
 from _typeshed import ReadableBuffer, Self, StrOrBytesPath, WriteableBuffer
-from typing import Any, Callable, ClassVar, Iterable, NamedTuple, Optional, Union, overload
-from typing_extensions import Literal, TypedDict, final
+from typing import Any, Callable, Iterable, NamedTuple, Union, overload
+from typing_extensions import Literal, TypeAlias, TypedDict, final
 
-_PCTRTT = tuple[tuple[str, str], ...]
-_PCTRTTT = tuple[_PCTRTT, ...]
-_PeerCertRetDictType = dict[str, Union[str, _PCTRTTT, _PCTRTT]]
-_PeerCertRetType = Union[_PeerCertRetDictType, bytes, None]
-_EnumRetType = list[tuple[bytes, str, Union[set[str], bool]]]
-_PasswordType = Union[Callable[[], Union[str, bytes]], str, bytes]
+_PCTRTT: TypeAlias = tuple[tuple[str, str], ...]
+_PCTRTTT: TypeAlias = tuple[_PCTRTT, ...]
+_PeerCertRetDictType: TypeAlias = dict[str, str | _PCTRTTT | _PCTRTT]
+_PeerCertRetType: TypeAlias = _PeerCertRetDictType | bytes | None
+_EnumRetType: TypeAlias = list[tuple[bytes, str, set[str] | bool]]
+_PasswordType: TypeAlias = Union[Callable[[], str | bytes], str, bytes]
 
-_SrvnmeCbType = Callable[[Union[SSLSocket, SSLObject], Optional[str], SSLSocket], Optional[int]]
+_SrvnmeCbType: TypeAlias = Callable[[SSLSocket | SSLObject, str | None, SSLSocket], int | None]
 
 class _Cipher(TypedDict):
     aead: bool
@@ -393,8 +393,11 @@ class SSLContext:
         maximum_version: TLSVersion
         minimum_version: TLSVersion
         sni_callback: Callable[[SSLObject, str, SSLContext], None | int] | None
-        sslobject_class: ClassVar[type[SSLObject]]
-        sslsocket_class: ClassVar[type[SSLSocket]]
+        # The following two attributes have class-level defaults.
+        # However, the docs explicitly state that it's OK to override these attributes on instances,
+        # so making these ClassVars wouldn't be appropriate
+        sslobject_class: type[SSLObject]
+        sslsocket_class: type[SSLSocket]
     if sys.version_info >= (3, 8):
         keylog_filename: str
         post_handshake_auth: bool

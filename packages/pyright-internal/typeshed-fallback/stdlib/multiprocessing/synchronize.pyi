@@ -2,11 +2,13 @@ import sys
 import threading
 from contextlib import AbstractContextManager
 from multiprocessing.context import BaseContext
-from typing import Any, Callable, Union
+from types import TracebackType
+from typing import Any, Callable
+from typing_extensions import TypeAlias
 
 __all__ = ["Lock", "RLock", "Semaphore", "BoundedSemaphore", "Condition", "Event"]
 
-_LockLike = Union[Lock, RLock]
+_LockLike: TypeAlias = Lock | RLock
 
 class Barrier(threading.Barrier):
     def __init__(
@@ -28,8 +30,11 @@ class Condition(AbstractContextManager[bool]):
     def wait_for(self, predicate: Callable[[], bool], timeout: float | None = ...) -> bool: ...
     def acquire(self, block: bool = ..., timeout: float | None = ...) -> bool: ...
     def release(self) -> None: ...
+    def __exit__(
+        self, __exc_type: type[BaseException] | None, __exc_val: BaseException | None, __exc_tb: TracebackType | None
+    ) -> None: ...
 
-class Event(AbstractContextManager[bool]):
+class Event:
     def __init__(self, lock: _LockLike | None = ..., *, ctx: BaseContext) -> None: ...
     def is_set(self) -> bool: ...
     def set(self) -> None: ...
@@ -49,3 +54,6 @@ class Semaphore(SemLock):
 class SemLock(AbstractContextManager[bool]):
     def acquire(self, block: bool = ..., timeout: float | None = ...) -> bool: ...
     def release(self) -> None: ...
+    def __exit__(
+        self, __exc_type: type[BaseException] | None, __exc_val: BaseException | None, __exc_tb: TracebackType | None
+    ) -> None: ...

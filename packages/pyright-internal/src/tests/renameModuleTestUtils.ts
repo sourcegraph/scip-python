@@ -9,11 +9,11 @@
 import assert from 'assert';
 import { CancellationToken } from 'vscode-languageserver';
 
-import { createMapFromItems } from '../common/collectionUtils';
+import { appendArray, createMapFromItems } from '../common/collectionUtils';
 import { assertNever } from '../common/debug';
 import { Diagnostic } from '../common/diagnostic';
 import { DiagnosticRule } from '../common/diagnosticRules';
-import { FileEditAction, FileEditActions, FileOperations } from '../common/editAction';
+import { FileEditAction, FileEditActions } from '../common/editAction';
 import { getDirectoryPath, isFile } from '../common/pathUtils';
 import { convertRangeToTextRange } from '../common/positionUtils';
 import { Position, rangesAreEqual, TextRange } from '../common/textRange';
@@ -33,9 +33,12 @@ export function testMoveSymbolAtPosition(
 
     const ranges: Range[] = [];
     if (text !== undefined) {
-        ranges.push(...state.getRangesByText().get(text)!);
+        appendArray(ranges, state.getRangesByText().get(text)!);
     } else {
-        ranges.push(...state.getRanges().filter((r) => !!r.marker?.data));
+        appendArray(
+            ranges,
+            state.getRanges().filter((r) => !!r.marker?.data)
+        );
     }
 
     assert.strictEqual(actions.edits.length, ranges.length);
@@ -50,23 +53,25 @@ export function testRenameModule(
     text?: string,
     replacementText?: string
 ) {
-    const edits = state.program.renameModule(filePath, newFilePath, CancellationToken.None);
-    assert(edits);
+    const editActions = state.program.renameModule(filePath, newFilePath, CancellationToken.None);
+    assert(editActions);
 
     const ranges: Range[] = [];
     if (text !== undefined) {
-        ranges.push(...state.getRangesByText().get(text)!);
+        appendArray(ranges, state.getRangesByText().get(text)!);
     } else {
-        ranges.push(...state.getRanges().filter((r) => !!r.marker?.data));
+        appendArray(
+            ranges,
+            state.getRanges().filter((r) => !!r.marker?.data)
+        );
     }
 
-    assert.strictEqual(edits.length, ranges.length);
+    assert.strictEqual(editActions.edits.length, ranges.length);
 
-    const fileOperations: FileOperations[] = [];
-    fileOperations.push({ kind: 'rename', oldFilePath: filePath, newFilePath });
+    editActions.fileOperations.push({ kind: 'rename', oldFilePath: filePath, newFilePath });
 
     // Make sure we don't have missing imports on the original state.
-    _verifyFileOperations(state, { edits, fileOperations }, ranges, replacementText);
+    _verifyFileOperations(state, editActions, ranges, replacementText);
 }
 
 function _verifyFileOperations(

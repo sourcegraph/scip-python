@@ -5,7 +5,8 @@ import sys
 import types
 from _typeshed import Self, WriteableBuffer
 from socket import socket
-from typing import IO, Any, BinaryIO, Callable, Iterable, Iterator, Mapping, Protocol, TypeVar, Union, overload
+from typing import IO, Any, BinaryIO, Callable, Iterable, Iterator, Mapping, Protocol, TypeVar, overload
+from typing_extensions import TypeAlias
 
 __all__ = [
     "HTTPResponse",
@@ -29,7 +30,7 @@ __all__ = [
     "HTTPSConnection",
 ]
 
-_DataType = Union[bytes, IO[Any], Iterable[bytes], str]
+_DataType: TypeAlias = bytes | IO[Any] | Iterable[bytes] | str
 _T = TypeVar("_T")
 
 HTTP_PORT: int
@@ -100,7 +101,7 @@ class HTTPMessage(email.message.Message):
 
 def parse_headers(fp: io.BufferedIOBase, _class: Callable[[], email.message.Message] = ...) -> HTTPMessage: ...
 
-class HTTPResponse(io.BufferedIOBase, BinaryIO):  # type: ignore # argument disparities between base classes
+class HTTPResponse(io.BufferedIOBase, BinaryIO):
     msg: HTTPMessage
     headers: HTTPMessage
     version: int
@@ -130,7 +131,7 @@ class HTTPResponse(io.BufferedIOBase, BinaryIO):  # type: ignore # argument disp
     def __enter__(self: Self) -> Self: ...
     def __exit__(
         self, exc_type: type[BaseException] | None, exc_val: BaseException | None, exc_tb: types.TracebackType | None
-    ) -> bool | None: ...
+    ) -> None: ...
     def info(self) -> email.message.Message: ...
     def geturl(self) -> str: ...
     def getcode(self) -> int: ...

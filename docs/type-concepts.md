@@ -171,6 +171,7 @@ In addition to assignment-based type narrowing, Pyright supports the following t
 * `type(x) is T` and `type(x) is not T`
 * `x is E` and `x is not E` (where E is a literal enum or bool)
 * `x == L` and `x != L` (where L is a literal expression)
+* `x.y is None` and `x.y is not None` (where x is a type that is distinguished by a field with a None)
 * `x.y is E` and `x.y is not E` (where E is a literal enum or bool and x is a type that is distinguished by a field with a literal type)
 * `x.y == L` and `x.y != L` (where L is a literal expression and x is a type that is distinguished by a field with a literal type)
 * `x[K] == V` and `x[K] != V` (where K and V are literal expressions and x is a type that is distinguished by a TypedDict field with a literal type)
@@ -186,7 +187,7 @@ In addition to assignment-based type narrowing, Pyright supports the following t
 * `bool(x)` (where x is any expression that is statically verifiable to be truthy or falsy in all cases).
 * `x` (where x is any expression that is statically verifiable to be truthy or falsy in all cases)
 
-Expressions supported for type guards include simple names, member access chains (e.g. `a.b.c.d`), the unary `not` operator, the binary `and` and `or` operators, subscripts that are constant numbers (e.g. `a[2]`), and call expressions. Other operators (such as arithmetic operators or other subscripts) are not supported.
+Expressions supported for type guards include simple names, member access chains (e.g. `a.b.c.d`), the unary `not` operator, the binary `and` and `or` operators, subscripts that are integer literals (e.g. `a[2]` or `a[-1]`), and call expressions. Other operators (such as arithmetic operators or other subscripts) are not supported.
 
 Some type guards are able to narrow in both the positive and negative cases. Positive cases are used in `if` statements, and negative cases are used in `else` statements. (Positive and negative cases are flipped if the type guard expression is preceded by a `not` operator.) In some cases, the type can be narrowed only in the positive or negative case but not both. Consider the following examples:
 

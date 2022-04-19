@@ -23,6 +23,7 @@ import { SourceFileInfo } from '../analyzer/program';
 import { Symbol } from '../analyzer/symbol';
 import * as SymbolNameUtils from '../analyzer/symbolNameUtils';
 import { throwIfCancellationRequested } from '../common/cancellationUtils';
+import { appendArray } from '../common/collectionUtils';
 import { ExecutionEnvironment } from '../common/configOptions';
 import { TextEditAction } from '../common/editAction';
 import { combinePaths, getDirectoryPath, getFileName, stripFileExtension } from '../common/pathUtils';
@@ -215,7 +216,7 @@ export class AutoImporter {
         const results: AutoImportResult[] = [];
         const map = this._getCandidates(word, similarityLimit, abbrFromUsers, token);
 
-        map.forEach((v) => results.push(...v));
+        map.forEach((v) => appendArray(results, v));
         return results;
     }
 
@@ -661,6 +662,7 @@ export class AutoImporter {
     private _shouldExclude(name: string) {
         return this._excludes.has(name, CompletionMap.labelOnlyIgnoringAutoImports);
     }
+
     private _containsName(name: string, source: string | undefined, results: AutoImportResultMap) {
         if (this._shouldExclude(name)) {
             return true;

@@ -11,6 +11,7 @@ import { isAbsolute } from 'path';
 
 import { getPathsFromPthFiles } from '../analyzer/pythonPathUtils';
 import * as pathConsts from '../common/pathConsts';
+import { appendArray } from './collectionUtils';
 import { DiagnosticSeverityOverridesMap } from './commandLineOptions';
 import { ConsoleInterface } from './console';
 import { DiagnosticRule } from './diagnosticRules';
@@ -278,8 +279,11 @@ export interface DiagnosticRuleSet {
     // and is not used in any way.
     reportUnusedCoroutine: DiagnosticLevel;
 
-    // Report cases where the removal of a "# type: ignore" comment would
-    // have no effect.
+    // Report cases where a simple expression result is not used in any way.
+    reportUnusedExpression: DiagnosticLevel;
+
+    // Report cases where the removal of a "# type: ignore" or "# pyright: ignore"
+    // comment would have no effect.
     reportUnnecessaryTypeIgnoreComment: DiagnosticLevel;
 
     // Report cases where the a "match" statement is not exhaustive in
@@ -372,6 +376,7 @@ export function getDiagLevelDiagnosticRules() {
         DiagnosticRule.reportUnsupportedDunderAll,
         DiagnosticRule.reportUnusedCallResult,
         DiagnosticRule.reportUnusedCoroutine,
+        DiagnosticRule.reportUnusedExpression,
         DiagnosticRule.reportUnnecessaryTypeIgnoreComment,
         DiagnosticRule.reportMatchNotExhaustive,
     ];
@@ -451,6 +456,7 @@ export function getOffDiagnosticRuleSet(): DiagnosticRuleSet {
         reportUnsupportedDunderAll: 'none',
         reportUnusedCallResult: 'none',
         reportUnusedCoroutine: 'none',
+        reportUnusedExpression: 'none',
         reportUnnecessaryTypeIgnoreComment: 'none',
         reportMatchNotExhaustive: 'none',
     };
@@ -526,6 +532,7 @@ export function getBasicDiagnosticRuleSet(): DiagnosticRuleSet {
         reportUnsupportedDunderAll: 'warning',
         reportUnusedCallResult: 'none',
         reportUnusedCoroutine: 'error',
+        reportUnusedExpression: 'warning',
         reportUnnecessaryTypeIgnoreComment: 'none',
         reportMatchNotExhaustive: 'none',
     };
@@ -601,6 +608,7 @@ export function getStrictDiagnosticRuleSet(): DiagnosticRuleSet {
         reportUnsupportedDunderAll: 'error',
         reportUnusedCallResult: 'none',
         reportUnusedCoroutine: 'error',
+        reportUnusedExpression: 'error',
         reportUnnecessaryTypeIgnoreComment: 'none',
         reportMatchNotExhaustive: 'error',
     };
@@ -779,6 +787,7 @@ export class ConfigOptions {
         configObj: any,
         typeCheckingMode: string | undefined,
         console: ConsoleInterface,
+        fs: FileSystem,
         host: Host,
         diagnosticOverrides?: DiagnosticSeverityOverridesMap,
         skipIncludeSection = false
@@ -799,7 +808,7 @@ export class ConfigOptions {
                         } else if (isAbsolute(fileSpec)) {
                             console.error(`Ignoring path "${fileSpec}" in "include" array because it is not relative.`);
                         } else {
-                            this.include.push(getFileSpec(this.projectRoot, fileSpec));
+                            this.include.push(getFileSpec(fs, this.projectRoot, fileSpec));
                         }
                     });
                 }
@@ -819,7 +828,7 @@ export class ConfigOptions {
                     } else if (isAbsolute(fileSpec)) {
                         console.error(`Ignoring path "${fileSpec}" in "exclude" array because it is not relative.`);
                     } else {
-                        this.exclude.push(getFileSpec(this.projectRoot, fileSpec));
+                        this.exclude.push(getFileSpec(fs, this.projectRoot, fileSpec));
                     }
                 });
             }
@@ -838,7 +847,7 @@ export class ConfigOptions {
                     } else if (isAbsolute(fileSpec)) {
                         console.error(`Ignoring path "${fileSpec}" in "ignore" array because it is not relative.`);
                     } else {
-                        this.ignore.push(getFileSpec(this.projectRoot, fileSpec));
+                        this.ignore.push(getFileSpec(fs, this.projectRoot, fileSpec));
                     }
                 });
             }
@@ -857,7 +866,7 @@ export class ConfigOptions {
                     } else if (isAbsolute(fileSpec)) {
                         console.error(`Ignoring path "${fileSpec}" in "strict" array because it is not relative.`);
                     } else {
-                        this.strict.push(getFileSpec(this.projectRoot, fileSpec));
+                        this.strict.push(getFileSpec(fs, this.projectRoot, fileSpec));
                     }
                 });
             }
@@ -1130,7 +1139,7 @@ export class ConfigOptions {
                 const path = resolvePaths(this.projectRoot, p);
                 paths.push(path);
                 if (isDirectory(fs, path)) {
-                    paths.push(...getPathsFromPthFiles(fs, path));
+                    appendArray(paths, getPathsFromPthFiles(fs, path));
                 }
             }
         }

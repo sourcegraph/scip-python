@@ -3,11 +3,12 @@ from abc import abstractmethod
 from reprlib import Repr
 from types import MethodType, ModuleType, TracebackType
 from typing import IO, Any, AnyStr, Callable, Container, Mapping, MutableMapping, NoReturn, TypeVar
+from typing_extensions import TypeAlias
 
 __all__ = ["help"]
 
 # the return type of sys.exc_info(), used by ErrorDuringImport.__init__
-_Exc_Info = tuple[type[BaseException] | None, BaseException | None, TracebackType | None]
+_Exc_Info: TypeAlias = tuple[type[BaseException] | None, BaseException | None, TracebackType | None]
 
 _T = TypeVar("_T")
 
@@ -75,8 +76,9 @@ class HTMLRepr(Repr):
     def repr_unicode(self, x: AnyStr, level: complex) -> str: ...
 
 class HTMLDoc(Doc):
-    repr: Callable[[object], str]
-    escape: Callable[[str], str]
+    _repr_instance: HTMLRepr = ...
+    repr = _repr_instance.repr
+    escape = _repr_instance.escape
     def page(self, title: str, contents: str) -> str: ...
     def heading(self, title: str, fgcol: str, bgcol: str, extras: str = ...) -> str: ...
     def section(
@@ -149,7 +151,8 @@ class TextRepr(Repr):
     def repr_instance(self, x: object, level: complex) -> str: ...
 
 class TextDoc(Doc):
-    repr: Callable[[object], str]
+    _repr_instance: TextRepr = ...
+    repr = _repr_instance.repr
     def bold(self, text: str) -> str: ...
     def indent(self, text: str, prefix: str = ...) -> str: ...
     def section(self, title: str, contents: str) -> str: ...

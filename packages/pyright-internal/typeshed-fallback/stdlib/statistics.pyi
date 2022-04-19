@@ -2,7 +2,8 @@ import sys
 from _typeshed import Self, SupportsRichComparisonT
 from decimal import Decimal
 from fractions import Fraction
-from typing import Any, Hashable, Iterable, NamedTuple, Sequence, SupportsFloat, TypeVar, Union
+from typing import Any, Hashable, Iterable, NamedTuple, Sequence, SupportsFloat, TypeVar
+from typing_extensions import Literal, TypeAlias
 
 if sys.version_info >= (3, 10):
     __all__ = [
@@ -64,7 +65,7 @@ else:
     ]
 
 # Most functions in this module accept homogeneous collections of one of these types
-_Number = Union[float, Decimal, Fraction]
+_Number: TypeAlias = float | Decimal | Fraction
 _NumberT = TypeVar("_NumberT", float, Decimal, Fraction)
 
 # Used in mode, multimode
@@ -102,7 +103,9 @@ def pstdev(data: Iterable[_NumberT], mu: _NumberT | None = ...) -> _NumberT: ...
 def pvariance(data: Iterable[_NumberT], mu: _NumberT | None = ...) -> _NumberT: ...
 
 if sys.version_info >= (3, 8):
-    def quantiles(data: Iterable[_NumberT], *, n: int = ..., method: str = ...) -> list[_NumberT]: ...
+    def quantiles(
+        data: Iterable[_NumberT], *, n: int = ..., method: Literal["inclusive", "exclusive"] = ...
+    ) -> list[_NumberT]: ...
 
 def stdev(data: Iterable[_NumberT], xbar: _NumberT | None = ...) -> _NumberT: ...
 def variance(data: Iterable[_NumberT], xbar: _NumberT | None = ...) -> _NumberT: ...

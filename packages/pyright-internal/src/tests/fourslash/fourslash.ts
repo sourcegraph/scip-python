@@ -251,7 +251,9 @@ declare namespace _ {
         verifyDiagnostics(map?: { [marker: string]: { category: string; message: string } }): void;
         verifyCodeActions(
             map: {
-                [marker: string]: { codeActions: { title: string; kind: string; command: Command }[] };
+                [marker: string]: {
+                    codeActions: { title: string; kind: string; command?: Command; edit?: WorkspaceEdit }[];
+                };
             },
             verifyCodeActionCount?: boolean
         ): Promise<any>;
@@ -262,7 +264,7 @@ declare namespace _ {
             },
             verifyCodeActionCount?: boolean
         ): Promise<any>;
-        verifyHover(kind: string, map: { [marker: string]: string }): void;
+        verifyHover(kind: string, map: { [marker: string]: string | null }): void;
         verifyCompletion(
             verifyMode: FourSlashCompletionVerificationMode,
             docFormat: MarkupKind,

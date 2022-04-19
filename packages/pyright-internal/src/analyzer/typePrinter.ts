@@ -339,7 +339,11 @@ export function printType(
                     );
 
                     if (printTypeFlags & PrintTypeFlags.PEP604) {
-                        return optionalType + ' | None';
+                        const unionString = optionalType + ' | None';
+                        if (parenthesizeUnion) {
+                            return `(${unionString})`;
+                        }
+                        return unionString;
                     }
 
                     return 'Optional[' + optionalType + ']';
@@ -488,9 +492,16 @@ export function printLiteralValue(type: ClassType, quotation = "'"): string {
     if (typeof literalValue === 'string') {
         const prefix = type.details.name === 'bytes' ? 'b' : '';
 
+        // Limit the length of the string literal.
+        let effectiveLiteralValue = literalValue;
+        const maxLiteralStringLength = 50;
+        if (literalValue.length > maxLiteralStringLength) {
+            effectiveLiteralValue = literalValue.substring(0, maxLiteralStringLength) + '…';
+        }
+
         // JSON.stringify will perform proper escaping for " case.
         // So, we only need to do our own escaping for ' case.
-        literalStr = JSON.stringify(literalValue).toString();
+        literalStr = JSON.stringify(effectiveLiteralValue).toString();
         if (quotation !== '"') {
             literalStr = `'${literalStr
                 .substring(1, literalStr.length - 1)

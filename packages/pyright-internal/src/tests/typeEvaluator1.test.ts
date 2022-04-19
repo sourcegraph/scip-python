@@ -302,6 +302,12 @@ test('TypeNarrowingIsNoneTuple1', () => {
     TestUtils.validateResults(analysisResults, 0);
 });
 
+test('TypeNarrowingIsNoneTuple2', () => {
+    const analysisResults = TestUtils.typeAnalyzeSampleFiles(['typeNarrowingIsNoneTuple2.py']);
+
+    TestUtils.validateResults(analysisResults, 0);
+});
+
 test('TypeNarrowingLiteral1', () => {
     const analysisResults = TestUtils.typeAnalyzeSampleFiles(['typeNarrowingLiteral1.py']);
 
@@ -376,6 +382,12 @@ test('TypeNarrowingIn1', () => {
 
 test('TypeNarrowingLiteralMember1', () => {
     const analysisResults = TestUtils.typeAnalyzeSampleFiles(['typeNarrowingLiteralMember1.py']);
+
+    TestUtils.validateResults(analysisResults, 0);
+});
+
+test('TypeNarrowingNoneMember1', () => {
+    const analysisResults = TestUtils.typeAnalyzeSampleFiles(['typeNarrowingNoneMember1.py']);
 
     TestUtils.validateResults(analysisResults, 0);
 });
@@ -713,7 +725,7 @@ test('FunctionMember2', () => {
 test('Annotations1', () => {
     const analysisResults = TestUtils.typeAnalyzeSampleFiles(['annotations1.py']);
 
-    TestUtils.validateResults(analysisResults, 6);
+    TestUtils.validateResults(analysisResults, 7);
 });
 
 test('Annotations2', () => {
@@ -1144,6 +1156,12 @@ test('Slots2', () => {
     TestUtils.validateResults(analysisResults, 3);
 });
 
+test('Slots3', () => {
+    const analysisResults = TestUtils.typeAnalyzeSampleFiles(['slots3.py']);
+
+    TestUtils.validateResults(analysisResults, 0);
+});
+
 test('Parameters1', () => {
     const configOptions = new ConfigOptions('.');
 
@@ -1240,6 +1258,14 @@ test('TupleUnpack2', () => {
     TestUtils.validateResults(analysisResults2, 5);
 });
 
+test('TupleUnpack3', () => {
+    const configOptions = new ConfigOptions('.');
+
+    configOptions.defaultPythonVersion = PythonVersion.V3_11;
+    const analysisResults1 = TestUtils.typeAnalyzeSampleFiles(['tupleUnpack3.py'], configOptions);
+    TestUtils.validateResults(analysisResults1, 1);
+});
+
 test('PseudoGeneric1', () => {
     const analysisResults = TestUtils.typeAnalyzeSampleFiles(['pseudoGeneric1.py']);
 
@@ -1254,6 +1280,30 @@ test('LiteralString1', () => {
 
 test('ParamInference1', () => {
     const analysisResults = TestUtils.typeAnalyzeSampleFiles(['paramInference1.py']);
+
+    TestUtils.validateResults(analysisResults, 0);
+});
+
+test('Dictionary1', () => {
+    const analysisResults = TestUtils.typeAnalyzeSampleFiles(['dictionary1.py']);
+
+    TestUtils.validateResults(analysisResults, 3);
+});
+
+test('Dictionary2', () => {
+    const analysisResults = TestUtils.typeAnalyzeSampleFiles(['dictionary2.py']);
+
+    TestUtils.validateResults(analysisResults, 1);
+});
+
+test('Dictionary3', () => {
+    const analysisResults = TestUtils.typeAnalyzeSampleFiles(['dictionary3.py']);
+
+    TestUtils.validateResults(analysisResults, 1);
+});
+
+test('Dictionary4', () => {
+    const analysisResults = TestUtils.typeAnalyzeSampleFiles(['dictionary4.py']);
 
     TestUtils.validateResults(analysisResults, 0);
 });

@@ -1,7 +1,8 @@
 import os
 import sys
 from _typeshed import BytesPath, StrOrBytesPath, StrPath, SupportsRead, SupportsWrite
-from typing import Any, AnyStr, Callable, Iterable, NamedTuple, Sequence, TypeVar, Union, overload
+from typing import Any, AnyStr, Callable, Iterable, NamedTuple, Sequence, TypeVar, overload
+from typing_extensions import TypeAlias
 
 __all__ = [
     "copyfileobj",
@@ -82,7 +83,7 @@ else:
 
 def rmtree(path: StrOrBytesPath, ignore_errors: bool = ..., onerror: Callable[[Any, Any, Any], Any] | None = ...) -> None: ...
 
-_CopyFn = Union[Callable[[str, str], None], Callable[[StrPath, StrPath], None]]
+_CopyFn: TypeAlias = Callable[[str, str], None] | Callable[[StrPath, StrPath], None]
 
 # N.B. shutil.move appears to take bytes arguments, however,
 # this does not work when dst is (or is within) an existing directory.
@@ -100,6 +101,10 @@ class _ntuple_diskusage(NamedTuple):
     free: int
 
 def disk_usage(path: int | StrOrBytesPath) -> _ntuple_diskusage: ...
+
+# While chown can be imported on Windows, it doesn't actually work;
+# see https://bugs.python.org/issue33140. We keep it here because it's
+# in __all__.
 @overload
 def chown(path: StrOrBytesPath, user: str | int, group: None = ...) -> None: ...
 @overload

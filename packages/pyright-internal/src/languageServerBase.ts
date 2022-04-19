@@ -42,17 +42,20 @@ import {
     DidChangeWatchedFilesParams,
     DidCloseTextDocumentParams,
     DidOpenTextDocumentParams,
+    Disposable,
     DocumentHighlight,
     DocumentHighlightParams,
     DocumentSymbol,
     DocumentSymbolParams,
     ExecuteCommandParams,
+    FileSystemWatcher,
     HoverParams,
     InitializeParams,
     InitializeResult,
     Location,
     MarkupKind,
     ParameterInformation,
+    PrepareRenameParams,
     PublishDiagnosticsParams,
     ReferenceParams,
     RemoteWindow,
@@ -80,7 +83,7 @@ import { AnalyzerService, configFileNames } from './analyzer/service';
 import type { BackgroundAnalysisBase } from './backgroundAnalysisBase';
 import { CommandResult } from './commands/commandResult';
 import { CancelAfter, CancellationProvider } from './common/cancellationUtils';
-import { getNestedProperty } from './common/collectionUtils';
+import { appendArray, getNestedProperty } from './common/collectionUtils';
 import {
     DiagnosticSeverityOverrides,
     DiagnosticSeverityOverridesMap,
@@ -95,11 +98,11 @@ import { FileDiagnostics } from './common/diagnosticSink';
 import { LanguageServiceExtension } from './common/extensibility';
 import { FileSystem, FileWatcherEventType, FileWatcherProvider } from './common/fileSystem';
 import { Host } from './common/host';
-import { convertPathToUri } from './common/pathUtils';
+import { convertPathToUri, normalizeSlashes } from './common/pathUtils';
 import { ProgressReporter, ProgressReportTracker } from './common/progressReporter';
-import { DocumentRange, Position } from './common/textRange';
+import { DocumentRange, Position, Range } from './common/textRange';
 import { UriParser } from './common/uriParser';
-import { convertWorkspaceEdits } from './common/workspaceEditUtils';
+import { convertWorkspaceDocumentEdits } from './common/workspaceEditUtils';
 import { AnalyzerServiceExecutor } from './languageService/analyzerServiceExecutor';
 import { CompletionItemData, CompletionOptions, CompletionResultsList } from './languageService/completionProvider';
 import { DefinitionFilter } from './languageService/definitionProvider';
@@ -142,6 +145,7 @@ export interface WorkspaceServiceInstance {
     disableOrganizeImports: boolean;
     disableWorkspaceSymbol?: boolean;
     isInitialized: Deferred<boolean>;
+    searchPathsToWatch: string[];
 }
 
 export interface MessageAction {
@@ -227,6 +231,8 @@ export abstract class LanguageServerBase implements LanguageServerInterface {
     private _progressReporter: ProgressReporter;
 
     private _lastTriggerKind: CompletionTriggerKind | undefined = CompletionTriggerKind.Invoked;
+
+    private _lastFileWatcherRegistration: Disposable | undefined;
 
     // Global root path - the basis for all global settings.
     rootPath = '';
@@ -336,6 +342,10 @@ export abstract class LanguageServerBase implements LanguageServerInterface {
 
     protected isOpenFilesOnly(diagnosticMode: string): boolean {
         return diagnosticMode !== 'workspace';
+    }
+
+    protected get allowModuleRename() {
+        return false;
     }
 
     protected getSeverityOverrides(value: string): DiagnosticSeverityOverrides | undefined {
@@ -465,6 +475,7 @@ export abstract class LanguageServerBase implements LanguageServerInterface {
 
         this._connection.onCompletionResolve(async (params, token) => this.onCompletionResolve(params, token));
 
+        this._connection.onPrepareRename(async (params, token) => this.onPrepareRenameRequest(params, token));
         this._connection.onRenameRequest(async (params, token) => this.onRenameRequest(params, token));
 
         const callHierarchy = this._connection.languages.callHierarchy;
@@ -552,7 +563,7 @@ export abstract class LanguageServerBase implements LanguageServerInterface {
                 workspaceSymbolProvider: { workDoneProgress: true },
                 hoverProvider: { workDoneProgress: true },
                 documentHighlightProvider: { workDoneProgress: true },
-                renameProvider: { workDoneProgress: true },
+                renameProvider: { prepareProvider: true, workDoneProgress: true },
                 completionProvider: {
                     triggerCharacters: this.client.hasVisualStudioExtensionsCapability ? ['.', '[', '@'] : ['.', '['],
                     resolveProvider: true,
@@ -592,25 +603,47 @@ export abstract class LanguageServerBase implements LanguageServerInterface {
                     await this.updateSettingsForWorkspace(newWorkspace);
                 });
             });
+
+            this._setupFileWatcher();
+        }
+    }
+
+    private _setupFileWatcher() {
+        if (!this.client.hasWatchFileCapability) {
+            return;
         }
 
-        // Set up our file watchers.
-        if (this.client.hasWatchFileCapability) {
-            this._connection.client.register(DidChangeWatchedFilesNotification.type, {
-                watchers: [
-                    ...configFileNames.map((fileName) => {
-                        return {
-                            globPattern: `**/${fileName}`,
-                            kind: WatchKind.Create | WatchKind.Change | WatchKind.Delete,
-                        };
-                    }),
-                    {
-                        globPattern: '**',
-                        kind: WatchKind.Create | WatchKind.Change | WatchKind.Delete,
-                    },
-                ],
+        // Set default (config files and all workspace files) first.
+        const watchers: FileSystemWatcher[] = [
+            ...configFileNames.map((fileName) => {
+                return {
+                    globPattern: `**/${fileName}`,
+                    kind: WatchKind.Create | WatchKind.Change | WatchKind.Delete,
+                };
+            }),
+            {
+                globPattern: '**',
+                kind: WatchKind.Create | WatchKind.Change | WatchKind.Delete,
+            },
+        ];
+
+        // Add all python search paths to watch list
+        for (const workspace of this._workspaceMap.getNonDefaultWorkspaces()) {
+            workspace.searchPathsToWatch.forEach((p) => {
+                watchers.push({
+                    globPattern: `${normalizeSlashes(this.fs.realCasePath(p), '/')}/**`,
+                    kind: WatchKind.Create | WatchKind.Change | WatchKind.Delete,
+                });
             });
         }
+
+        this._connection.client.register(DidChangeWatchedFilesNotification.type, { watchers }).then((d) => {
+            if (this._lastFileWatcherRegistration) {
+                this._lastFileWatcherRegistration.dispose();
+            }
+
+            this._lastFileWatcherRegistration = d;
+        });
     }
 
     protected onDidChangeConfiguration(params: DidChangeConfigurationParams) {
@@ -729,7 +762,7 @@ export abstract class LanguageServerBase implements LanguageServerInterface {
             const locations: Location[] = [];
             const reporter: ReferenceCallback = resultReporter
                 ? (locs) => resultReporter.report(convert(locs))
-                : (locs) => locations.push(...convert(locs));
+                : (locs) => appendArray(locations, convert(locs));
 
             workspace.serviceInstance.reportReferencesForPosition(
                 filePath,
@@ -777,7 +810,7 @@ export abstract class LanguageServerBase implements LanguageServerInterface {
 
         const reporter: WorkspaceSymbolCallback = resultReporter
             ? (symbols) => resultReporter.report(symbols)
-            : (symbols) => symbolList.push(...symbols);
+            : (symbols) => appendArray(symbolList, symbols);
 
         for (const workspace of this._workspaceMap.values()) {
             await workspace.isInitialized.promise;
@@ -970,6 +1003,28 @@ export abstract class LanguageServerBase implements LanguageServerInterface {
         return params;
     }
 
+    protected async onPrepareRenameRequest(
+        params: PrepareRenameParams,
+        token: CancellationToken
+    ): Promise<Range | { range: Range; placeholder: string } | null> {
+        const { filePath, position } = this._uriParser.decodeTextDocumentPosition(params.textDocument, params.position);
+
+        const workspace = await this.getWorkspaceForFile(filePath);
+        if (workspace.disableLanguageServices) {
+            return null;
+        }
+
+        const range = workspace.serviceInstance.canRenameSymbolAtPosition(
+            filePath,
+            position,
+            workspace.rootPath === '',
+            this.allowModuleRename,
+            token
+        );
+
+        return range ?? null;
+    }
+
     protected async onRenameRequest(
         params: RenameParams,
         token: CancellationToken
@@ -986,6 +1041,7 @@ export abstract class LanguageServerBase implements LanguageServerInterface {
             position,
             params.newName,
             workspace.rootPath === '',
+            this.allowModuleRename,
             token
         );
 
@@ -993,7 +1049,7 @@ export abstract class LanguageServerBase implements LanguageServerInterface {
             return undefined;
         }
 
-        return convertWorkspaceEdits(this.fs, editActions);
+        return convertWorkspaceDocumentEdits(this.fs, editActions);
     }
 
     protected async onPrepare(
@@ -1071,7 +1127,7 @@ export abstract class LanguageServerBase implements LanguageServerInterface {
         return callItems;
     }
 
-    protected async onDidOpenTextDocument(params: DidOpenTextDocumentParams) {
+    protected async onDidOpenTextDocument(params: DidOpenTextDocumentParams, ipythonMode = false) {
         const filePath = this._uriParser.decodeTextDocumentUri(params.textDocument.uri);
 
         if (!(this.fs as PyrightFileSystem).addUriMap(params.textDocument.uri, filePath)) {
@@ -1080,10 +1136,15 @@ export abstract class LanguageServerBase implements LanguageServerInterface {
         }
 
         const workspace = await this.getWorkspaceForFile(filePath);
-        workspace.serviceInstance.setFileOpened(filePath, params.textDocument.version, params.textDocument.text);
+        workspace.serviceInstance.setFileOpened(
+            filePath,
+            params.textDocument.version,
+            params.textDocument.text,
+            ipythonMode
+        );
     }
 
-    protected async onDidChangeTextDocument(params: DidChangeTextDocumentParams) {
+    protected async onDidChangeTextDocument(params: DidChangeTextDocumentParams, ipythonMode = false) {
         this.recordUserInteractionTime();
 
         const filePath = this._uriParser.decodeTextDocumentUri(params.textDocument.uri);
@@ -1093,7 +1154,12 @@ export abstract class LanguageServerBase implements LanguageServerInterface {
         }
 
         const workspace = await this.getWorkspaceForFile(filePath);
-        workspace.serviceInstance.updateOpenFileContents(filePath, params.textDocument.version, params.contentChanges);
+        workspace.serviceInstance.updateOpenFileContents(
+            filePath,
+            params.textDocument.version,
+            params.contentChanges,
+            ipythonMode
+        );
     }
 
     protected async onDidCloseTextDocument(params: DidCloseTextDocumentParams) {
@@ -1109,7 +1175,7 @@ export abstract class LanguageServerBase implements LanguageServerInterface {
 
     protected onDidChangeWatchedFiles(params: DidChangeWatchedFilesParams) {
         params.changes.forEach((change) => {
-            const filePath = this._uriParser.decodeTextDocumentUri(change.uri);
+            const filePath = this.fs.realCasePath(this._uriParser.decodeTextDocumentUri(change.uri));
             const eventType: FileWatcherEventType = change.type === 1 ? 'add' : 'change';
             this._fileWatcherProvider.onFileChange(eventType, filePath);
         });
@@ -1194,6 +1260,8 @@ export abstract class LanguageServerBase implements LanguageServerInterface {
         this._workspaceMap.forEach((workspace) => {
             this.updateSettingsForWorkspace(workspace).ignoreErrors();
         });
+
+        this._setupFileWatcher();
     }
 
     protected getCompletionOptions(params?: CompletionParams) {
@@ -1218,6 +1286,7 @@ export abstract class LanguageServerBase implements LanguageServerInterface {
             disableOrganizeImports: false,
             disableWorkspaceSymbol: false,
             isInitialized: createDeferred<boolean>(),
+            searchPathsToWatch: [],
         };
     }
 
@@ -1290,6 +1359,7 @@ export abstract class LanguageServerBase implements LanguageServerInterface {
         typeStubTargetImportName?: string
     ) {
         AnalyzerServiceExecutor.runWithOptions(this.rootPath, workspace, serverSettings, typeStubTargetImportName);
+        workspace.searchPathsToWatch = workspace.serviceInstance.librarySearchPathsToWatch ?? [];
     }
 
     protected convertLogLevel(logLevelValue?: string): LogLevel {

@@ -239,6 +239,54 @@ test('Loops15', () => {
     TestUtils.validateResults(analysisResults, 0);
 });
 
+test('Loops16', () => {
+    const analysisResults = TestUtils.typeAnalyzeSampleFiles(['loops16.py']);
+
+    TestUtils.validateResults(analysisResults, 0);
+});
+
+test('Loops17', () => {
+    const analysisResults = TestUtils.typeAnalyzeSampleFiles(['loops17.py']);
+
+    TestUtils.validateResults(analysisResults, 0);
+});
+
+test('Loops18', () => {
+    const analysisResults = TestUtils.typeAnalyzeSampleFiles(['loops18.py']);
+
+    TestUtils.validateResults(analysisResults, 0);
+});
+
+test('Loops19', () => {
+    const analysisResults = TestUtils.typeAnalyzeSampleFiles(['loops19.py']);
+
+    TestUtils.validateResults(analysisResults, 0);
+});
+
+test('Loops20', () => {
+    const analysisResults = TestUtils.typeAnalyzeSampleFiles(['loops20.py']);
+
+    TestUtils.validateResults(analysisResults, 0);
+});
+
+test('Loops21', () => {
+    const analysisResults = TestUtils.typeAnalyzeSampleFiles(['loops21.py']);
+
+    TestUtils.validateResults(analysisResults, 0);
+});
+
+test('Loops22', () => {
+    const analysisResults = TestUtils.typeAnalyzeSampleFiles(['loops22.py']);
+
+    TestUtils.validateResults(analysisResults, 0);
+});
+
+test('Loops23', () => {
+    const analysisResults = TestUtils.typeAnalyzeSampleFiles(['loops23.py']);
+
+    TestUtils.validateResults(analysisResults, 0);
+});
+
 test('ForLoop1', () => {
     const analysisResults = TestUtils.typeAnalyzeSampleFiles(['forLoop1.py']);
 
@@ -425,6 +473,18 @@ test('TypeAlias12', () => {
     TestUtils.validateResults(analysisResults, 0);
 });
 
+test('TypeAlias13', () => {
+    const analysisResults = TestUtils.typeAnalyzeSampleFiles(['typeAlias13.py']);
+
+    TestUtils.validateResults(analysisResults, 0);
+});
+
+test('TypeAlias14', () => {
+    const analysisResults = TestUtils.typeAnalyzeSampleFiles(['typeAlias14.py']);
+
+    TestUtils.validateResults(analysisResults, 0);
+});
+
 test('RecursiveTypeAlias1', () => {
     const analysisResults = TestUtils.typeAnalyzeSampleFiles(['recursiveTypeAlias1.py']);
 
@@ -482,35 +542,10 @@ test('RecursiveTypeAlias9', () => {
     TestUtils.validateResults(analysisResults, 0);
 });
 
-test('Dictionary1', () => {
-    const analysisResults = TestUtils.typeAnalyzeSampleFiles(['dictionary1.py']);
-
-    TestUtils.validateResults(analysisResults, 3);
-});
-
-test('Dictionary2', () => {
-    const analysisResults = TestUtils.typeAnalyzeSampleFiles(['dictionary2.py']);
-
-    TestUtils.validateResults(analysisResults, 1);
-});
-
 test('Classes1', () => {
     const analysisResults = TestUtils.typeAnalyzeSampleFiles(['classes1.py']);
 
     TestUtils.validateResults(analysisResults, 1);
-});
-
-test('Classes2', () => {
-    const configOptions = new ConfigOptions('.');
-
-    // By default, optional diagnostics are ignored.
-    let analysisResults = TestUtils.typeAnalyzeSampleFiles(['classes2.py'], configOptions);
-    TestUtils.validateResults(analysisResults, 0);
-
-    // Turn on errors.
-    configOptions.diagnosticRuleSet.reportIncompatibleMethodOverride = 'error';
-    analysisResults = TestUtils.typeAnalyzeSampleFiles(['classes2.py'], configOptions);
-    TestUtils.validateResults(analysisResults, 22);
 });
 
 test('Classes3', () => {
@@ -532,10 +567,10 @@ test('Classes5', () => {
     let analysisResults = TestUtils.typeAnalyzeSampleFiles(['classes5.py'], configOptions);
     TestUtils.validateResults(analysisResults, 11);
 
-    // Turn on errors.
+    // Turn on reportIncompatibleVariableOverride.
     configOptions.diagnosticRuleSet.reportIncompatibleVariableOverride = 'error';
     analysisResults = TestUtils.typeAnalyzeSampleFiles(['classes5.py'], configOptions);
-    TestUtils.validateResults(analysisResults, 24);
+    TestUtils.validateResults(analysisResults, 28);
 });
 
 test('Classes6', () => {
@@ -556,16 +591,42 @@ test('Classes8', () => {
     TestUtils.validateResults(analysisResults, 0);
 });
 
-test('Classes9', () => {
+test('MethodOverride1', () => {
     const configOptions = new ConfigOptions('.');
 
     // By default, optional diagnostics are ignored.
-    let analysisResults = TestUtils.typeAnalyzeSampleFiles(['classes9.py'], configOptions);
+    let analysisResults = TestUtils.typeAnalyzeSampleFiles(['methodOverride1.py'], configOptions);
     TestUtils.validateResults(analysisResults, 0);
 
     // Turn on errors.
     configOptions.diagnosticRuleSet.reportIncompatibleMethodOverride = 'error';
-    analysisResults = TestUtils.typeAnalyzeSampleFiles(['classes9.py'], configOptions);
+    analysisResults = TestUtils.typeAnalyzeSampleFiles(['methodOverride1.py'], configOptions);
+    TestUtils.validateResults(analysisResults, 25);
+});
+
+test('MethodOverride2', () => {
+    const configOptions = new ConfigOptions('.');
+
+    // By default, optional diagnostics are ignored.
+    let analysisResults = TestUtils.typeAnalyzeSampleFiles(['methodOverride2.py'], configOptions);
+    TestUtils.validateResults(analysisResults, 0);
+
+    // Turn on errors.
+    configOptions.diagnosticRuleSet.reportIncompatibleMethodOverride = 'error';
+    analysisResults = TestUtils.typeAnalyzeSampleFiles(['methodOverride2.py'], configOptions);
+    TestUtils.validateResults(analysisResults, 5);
+});
+
+test('MethodOverride3', () => {
+    const configOptions = new ConfigOptions('.');
+
+    // By default, optional diagnostics are ignored.
+    let analysisResults = TestUtils.typeAnalyzeSampleFiles(['methodOverride3.py'], configOptions);
+    TestUtils.validateResults(analysisResults, 0);
+
+    // Turn on errors.
+    configOptions.diagnosticRuleSet.reportIncompatibleMethodOverride = 'error';
+    analysisResults = TestUtils.typeAnalyzeSampleFiles(['methodOverride3.py'], configOptions);
     TestUtils.validateResults(analysisResults, 3);
 });
 
@@ -663,6 +724,12 @@ test('ProtocolModule2', () => {
     const analysisResults = TestUtils.typeAnalyzeSampleFiles(['protocolModule2.py']);
 
     TestUtils.validateResults(analysisResults, 3);
+});
+
+test('ProtocolModule4', () => {
+    const analysisResults = TestUtils.typeAnalyzeSampleFiles(['protocolModule4.py']);
+
+    TestUtils.validateResults(analysisResults, 1);
 });
 
 test('VariadicTypeVar1', () => {
@@ -875,7 +942,18 @@ test('Comparison1', () => {
 
     configOptions.diagnosticRuleSet.reportUnnecessaryComparison = 'error';
     const analysisResults2 = TestUtils.typeAnalyzeSampleFiles(['comparison1.py'], configOptions);
-    TestUtils.validateResults(analysisResults2, 6);
+    TestUtils.validateResults(analysisResults2, 7);
+});
+
+test('Comparison2', () => {
+    const configOptions = new ConfigOptions('.');
+
+    const analysisResults1 = TestUtils.typeAnalyzeSampleFiles(['comparison2.py'], configOptions);
+    TestUtils.validateResults(analysisResults1, 0);
+
+    configOptions.diagnosticRuleSet.reportUnnecessaryComparison = 'error';
+    const analysisResults2 = TestUtils.typeAnalyzeSampleFiles(['comparison2.py'], configOptions);
+    TestUtils.validateResults(analysisResults2, 7);
 });
 
 test('EmptyContainers1', () => {
@@ -975,6 +1053,12 @@ test('Constructor11', () => {
 
 test('Constructor12', () => {
     const analysisResults = TestUtils.typeAnalyzeSampleFiles(['constructor12.py']);
+
+    TestUtils.validateResults(analysisResults, 0);
+});
+
+test('Constructor13', () => {
+    const analysisResults = TestUtils.typeAnalyzeSampleFiles(['constructor13.py']);
 
     TestUtils.validateResults(analysisResults, 0);
 });
@@ -1132,12 +1216,6 @@ test('DataclassTransform3', () => {
 
 test('DataclassTransform4', () => {
     const analysisResults = TestUtils.typeAnalyzeSampleFiles(['dataclassTransform4.py']);
-
-    TestUtils.validateResults(analysisResults, 1);
-});
-
-test('DataclassTransform5', () => {
-    const analysisResults = TestUtils.typeAnalyzeSampleFiles(['dataclassTransform5.py']);
 
     TestUtils.validateResults(analysisResults, 1);
 });

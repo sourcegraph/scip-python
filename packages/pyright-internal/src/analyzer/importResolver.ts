@@ -10,7 +10,7 @@
 
 import type { Dirent } from 'fs';
 
-import { flatten, getMapValues, getOrAdd } from '../common/collectionUtils';
+import { appendArray, flatten, getMapValues, getOrAdd } from '../common/collectionUtils';
 import { ConfigOptions, ExecutionEnvironment } from '../common/configOptions';
 import { FileSystem } from '../common/fileSystem';
 import { Host } from '../common/host';
@@ -64,9 +64,23 @@ export interface ModuleNameAndType {
 }
 
 export function createImportedModuleDescriptor(moduleName: string): ImportedModuleDescriptor {
+    if (moduleName.length === 0) {
+        return { leadingDots: 0, nameParts: [], importedSymbols: [] };
+    }
+
+    let startIndex = 0;
+    let leadingDots = 0;
+    for (; startIndex < moduleName.length; startIndex++) {
+        if (moduleName[startIndex] !== '.') {
+            break;
+        }
+
+        leadingDots++;
+    }
+
     return {
-        leadingDots: 0,
-        nameParts: moduleName.split('.'),
+        leadingDots,
+        nameParts: moduleName.slice(startIndex).split('.'),
         importedSymbols: [],
     };
 }
@@ -324,6 +338,10 @@ export class ImportResolver {
         }
 
         return suggestions;
+    }
+
+    getConfigOption() {
+        return this._configOptions;
     }
 
     private _getCompletionSuggestionsStrict(
@@ -638,7 +656,7 @@ export class ImportResolver {
             roots.push(execEnv.root);
         }
 
-        roots.push(...execEnv.extraPaths);
+        appendArray(roots, execEnv.extraPaths);
 
         if (this._configOptions.stubPath) {
             roots.push(this._configOptions.stubPath);
@@ -654,7 +672,7 @@ export class ImportResolver {
             }
         } else {
             const thirdPartyPaths = this._getThirdPartyTypeshedPackageRoots(execEnv, importFailureInfo);
-            roots.push(...thirdPartyPaths);
+            appendArray(roots, thirdPartyPaths);
         }
 
         const typeshedPathEx = this.getTypeshedPathEx(execEnv, importFailureInfo);
@@ -664,7 +682,7 @@ export class ImportResolver {
 
         const pythonSearchPaths = this.getPythonSearchPaths(importFailureInfo);
         if (pythonSearchPaths.length > 0) {
-            roots.push(...pythonSearchPaths);
+            appendArray(roots, pythonSearchPaths);
         }
 
         return roots;
@@ -947,7 +965,7 @@ export class ImportResolver {
                         foundInit = true;
                     }
 
-                    if (foundInit && !pyTypedInfo && lookForPyTyped) {
+                    if (!pyTypedInfo && lookForPyTyped) {
                         if (this.fileExistsCached(combinePaths(dirPath, 'py.typed'))) {
                             pyTypedInfo = getPyTypedInfo(this.fileSystem, dirPath);
                         }
@@ -1213,7 +1231,20 @@ export class ImportResolver {
                 // We will treat typings files as "local" rather than "third party".
                 typingsImport.importType = ImportType.Local;
                 typingsImport.isLocalTypingsFile = true;
-                return typingsImport;
+
+                // If it's a namespace package that didn't resolve to a file, make sure that
+                // the imported symbols are present in the implicit imports. If not, we'll
+                // skip the typings import and continue searching.
+                if (
+                    typingsImport.isNamespacePackage &&
+                    !typingsImport.resolvedPaths[typingsImport.resolvedPaths.length - 1]
+                ) {
+                    if (this._isNamespacePackageResolved(moduleDescriptor, typingsImport.implicitImports)) {
+                        return typingsImport;
+                    }
+                } else {
+                    return typingsImport;
+                }
             }
         }
 
@@ -1534,9 +1565,8 @@ export class ImportResolver {
             });
         }
 
-        this._cachedTypeshedThirdPartyPackageRoots = [
-            ...new Set(...this._cachedTypeshedThirdPartyPackagePaths.values()),
-        ].sort();
+        const flattenPaths = [...this._cachedTypeshedThirdPartyPackagePaths.values()].flatMap((v) => v);
+        this._cachedTypeshedThirdPartyPackageRoots = [...new Set(flattenPaths)].sort();
     }
 
     private _getCompletionSuggestionsTypeshedPath(
@@ -1826,6 +1856,39 @@ export class ImportResolver {
             /* allowPartial */ false,
             /* allowNativeLib */ true
         );
+
+        if (absImport && absImport.isStubFile) {
+            // If we found a stub for a relative import, only search
+            // the same folder for the real module. Otherwise, it will
+            // error out on runtime.
+            absImport.nonStubImportResult = this.resolveAbsoluteImport(
+                directory,
+                execEnv,
+                moduleDescriptor,
+                importName,
+                importFailureInfo,
+                /* allowPartial */ false,
+                /* allowNativeLib */ true,
+                /* useStubPackage */ false,
+                /* allowPyi */ false
+            ) || {
+                importName,
+                isRelative: true,
+                isImportFound: false,
+                isPartlyResolved: false,
+                isNamespacePackage: false,
+                isStubPackage: false,
+                importFailureInfo,
+                resolvedPaths: [],
+                importType: ImportType.Local,
+                isStubFile: false,
+                isNativeLib: false,
+                implicitImports: [],
+                filteredImplicitImports: [],
+                nonStubImportResult: undefined,
+            };
+        }
+
         return this.filterImplicitImports(absImport, moduleDescriptor.importedSymbols);
     }
 

@@ -25,13 +25,17 @@ In many existing type stubs (such as those found in typeshed), default parameter
 ## Library Interface
 [PEP 561](https://www.python.org/dev/peps/pep-0561/) indicates that a “py.typed” marker file must be included in the package if the author wishes to support type checking of their code.
 
-If a “py.typed” module is present, a type checker will treat all modules within that package (i.e. all files that end in “.py” or “.pyi”) as importable unless the file name begins with an underscore. These modules comprise the supported interface for the library.
+If a “py.typed” module is present, a type checker will treat all modules within that package (i.e. all files that end in “.py” or “.pyi”) as importable unless the module is marked private. There are two ways to mark a module private: (1) the module's filename begins with an underscore; (2) the module in inside a sub-package marked private. For example:
+
+* foo._bar (_bar is private)
+* foo._bar.baz (_bar and baz are private)
+* foo._bar.baz.bop (_bar, baz, and bop are private)
 
 Each module exposes a set of symbols. Some of these symbols are considered “private” — implementation details that are not part of the library’s interface. Type checkers like pyright use the following rules to determine which symbols are visible outside of the package.
 
 * Symbols whose names begin with an underscore (but are not dunder names) are considered private.
 * Imported symbols are considered private by default. If they use the “import A as A” (a redundant module alias), “from X import A as A” (a redundant symbol alias), or “from . import A” forms, symbol “A” is not private unless the name begins with an underscore. If a file `__init__.py` uses the form “from .A import X”, symbol “A” is not private unless the name begins with an underscore (but “X” is still private). If a wildcard import (of the form “from X import *”) is used, all symbols referenced by the wildcard are not private.
-* A module can expose an `__all__` symbol at the module level that provides a list of names that are considered part of the interface. This overrides all other rules above, allowing imported symbols or symbols whose names begin with an underscore to be included in the interface.
+* A module can expose an `__all__` symbol at the module level that provides a list of names that are considered part of the interface. The `__all__` symbol indicates which symbols are included in a wildcard import. All symbols included in the `__all__` list are considered public even if the other rules above would otherwise indicate that they were private. For example, this allows symbols whose names begin with an underscore to be included in the interface.
 * Local variables within a function (including nested functions) are always considered private.
 
 The following idioms are supported for defining the values contained within `__all__`. These restrictions allow type checkers to statically determine the value of `__all__`.
@@ -245,6 +249,17 @@ If a function or method is intended to take parameters that are specified only b
 
 ```python
 def create_user(age: int, *, dob: Optional[date] = None):
+    ...
+```
+
+### Positional-only Parameters
+If a function or method is intended to take parameters that are specified only by position, use the positional-only separator ("/") as documented in [PEP 570](https://peps.python.org/pep-0570/). If your library needs to run on versions of Python prior to 3.8, you can alternatively name the positional-only parameters with an identifier that begins with a double underscore.
+
+```python
+def compare_values(value1: T, value2: T, /) -> bool:
+    ...
+
+def compare_values(__value1: T, __value2: T) -> bool:
     ...
 ```
 

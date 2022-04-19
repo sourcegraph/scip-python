@@ -26,7 +26,14 @@ class ClassA(object):
 
 a = ClassA()
 
+ClassA.read_only_prop.fget(ClassA())
+ClassA.read_write_prop.fset(ClassA(), "")
+ClassA.deletable_prop.fdel(ClassA())
+
 val = a.read_only_prop
+
+reveal_type(ClassA.read_only_prop, expected_text="property")
+reveal_type(ClassA.read_only_prop.__doc__, expected_text="str | None")
 
 # This should generate an error because this
 # property has no setter.

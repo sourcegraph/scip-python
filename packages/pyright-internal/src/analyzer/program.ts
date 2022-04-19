@@ -8,6 +8,7 @@
  * and all of their recursive imports.
  */
 
+import { getHeapStatistics } from 'v8';
 import { CancellationToken, CompletionItem, DocumentSymbol } from 'vscode-languageserver';
 import { TextDocumentContentChangeEvent } from 'vscode-languageserver-textdocument';
 import {
@@ -20,10 +21,10 @@ import {
 } from 'vscode-languageserver-types';
 
 import { OperationCanceledException, throwIfCancellationRequested } from '../common/cancellationUtils';
-import { removeArrayElements } from '../common/collectionUtils';
+import { appendArray } from '../common/collectionUtils';
 import { ConfigOptions, ExecutionEnvironment } from '../common/configOptions';
 import { ConsoleInterface, StandardConsole } from '../common/console';
-import { assert } from '../common/debug';
+import { assert, assertNever } from '../common/debug';
 import { Diagnostic } from '../common/diagnostic';
 import { FileDiagnostics } from '../common/diagnosticSink';
 import { FileEditAction, FileEditActions, TextEditAction } from '../common/editAction';
@@ -40,7 +41,7 @@ import {
     normalizePathCase,
     stripFileExtension,
 } from '../common/pathUtils';
-import { convertPositionToOffset, convertRangeToTextRange } from '../common/positionUtils';
+import { convertPositionToOffset, convertRangeToTextRange, convertTextRangeToRange } from '../common/positionUtils';
 import { computeCompletionSimilarity } from '../common/stringUtils';
 import { DocumentRange, doesRangeContain, doRangesIntersect, Position, Range } from '../common/textRange';
 import { Duration, timingStats } from '../common/timing';
@@ -69,14 +70,14 @@ import { ParseResults } from '../parser/parser';
 import { AbsoluteModuleDescriptor, ImportLookupResult } from './analyzerFileInfo';
 import * as AnalyzerNodeInfo from './analyzerNodeInfo';
 import { CircularDependency } from './circularDependency';
-import { isAliasDeclaration } from './declaration';
+import { Declaration } from './declaration';
 import { ImportResolver } from './importResolver';
 import { ImportResult, ImportType } from './importResult';
 import { findNodeByOffset, getDocString } from './parseTreeUtils';
 import { Scope } from './scope';
 import { getScopeForNode } from './scopeUtils';
 import { SourceFile } from './sourceFile';
-import { SourceMapper } from './sourceMapper';
+import { isStubFile, SourceMapper } from './sourceMapper';
 import { Symbol } from './symbol';
 import { isPrivateOrProtectedName } from './symbolNameUtils';
 import { createTracePrinter } from './tracePrinter';
@@ -453,6 +454,11 @@ export class Program {
         return this._configOptions.checkOnlyOpenFiles || false;
     }
 
+    containsSourceFileIn(folder: string): boolean {
+        const normalized = normalizePathCase(this._fs, folder);
+        return this._sourceFileList.some((i) => i.sourceFile.getFilePath().startsWith(normalized));
+    }
+
     getSourceFile(filePath: string): SourceFile | undefined {
         const sourceFileInfo = this._getSourceFileInfoFromPath(filePath);
         if (!sourceFileInfo) {
@@ -789,6 +795,13 @@ export class Program {
     }
 
     private _createNewEvaluator() {
+        if (this._evaluator) {
+            // We shouldn't need to call this, but there appears to be a bug
+            // in the v8 garbage collector where it's unable to resolve orphaned
+            // objects without us giving it some assistance.
+            this._evaluator.disposeEvaluator();
+        }
+
         this._evaluator = createTypeEvaluatorWithTracker(
             this._lookUpImport,
             {
@@ -1007,7 +1020,7 @@ export class Program {
             }
 
             if (!this._disableChecker) {
-                fileToCheck.sourceFile.check(this._evaluator!);
+                fileToCheck.sourceFile.check(this._importResolver, this._evaluator!);
             }
 
             // For very large programs, we may need to discard the evaluator and
@@ -1237,7 +1250,7 @@ export class Program {
                 const info = nameMap?.get(writtenWord);
                 if (info) {
                     // No scope filter is needed since we only do exact match.
-                    results.push(...autoImporter.getAutoImportCandidatesForAbbr(writtenWord, info, token));
+                    appendArray(results, autoImporter.getAutoImportCandidatesForAbbr(writtenWord, info, token));
                 }
 
                 results.push(
@@ -1476,6 +1489,7 @@ export class Program {
             const content = sourceFileInfo.sourceFile.getFileContent() ?? '';
             if (
                 options.indexingForAutoImportMode &&
+                !options.forceIndexing &&
                 !sourceFileInfo.sourceFile.isStubFile() &&
                 !sourceFileInfo.sourceFile.isThirdPartyPyTypedPresent()
             ) {
@@ -1723,7 +1737,7 @@ export class Program {
         });
     }
 
-    renameModule(path: string, newPath: string, token: CancellationToken): FileEditAction[] | undefined {
+    renameModule(path: string, newPath: string, token: CancellationToken): FileEditActions | undefined {
         return this._runEvaluatorWithCancellationToken(token, () => {
             if (isFile(this._fs, path)) {
                 const fileInfo = this._getSourceFileInfoFromPath(path);
@@ -1745,7 +1759,7 @@ export class Program {
             }
 
             this._processModuleReferences(renameModuleProvider, renameModuleProvider.lastModuleName, path);
-            return renameModuleProvider.getEdits();
+            return { edits: renameModuleProvider.getEdits(), fileOperations: [] };
         });
     }
 
@@ -1809,13 +1823,57 @@ export class Program {
         });
     }
 
+    canRenameSymbolAtPosition(
+        filePath: string,
+        position: Position,
+        isDefaultWorkspace: boolean,
+        allowModuleRename: boolean,
+        token: CancellationToken
+    ): Range | undefined {
+        return this._runEvaluatorWithCancellationToken(token, () => {
+            const sourceFileInfo = this._getSourceFileInfoFromPath(filePath);
+            if (!sourceFileInfo) {
+                return undefined;
+            }
+
+            this._bindFile(sourceFileInfo);
+            const referencesResult = this._getReferenceResult(
+                sourceFileInfo,
+                filePath,
+                position,
+                allowModuleRename,
+                token
+            );
+            if (!referencesResult) {
+                return undefined;
+            }
+
+            if (
+                referencesResult.containsOnlyImportDecls &&
+                !this._supportRenameModule(referencesResult.declarations, isDefaultWorkspace)
+            ) {
+                return undefined;
+            }
+
+            const renameMode = this._getRenameSymbolMode(sourceFileInfo, referencesResult, isDefaultWorkspace);
+            if (renameMode === 'none') {
+                return undefined;
+            }
+
+            // Return the range of the symbol.
+            const parseResult = sourceFileInfo.sourceFile.getParseResults()!;
+            return convertTextRangeToRange(referencesResult.nodeAtOffset, parseResult.tokenizerOutput.lines);
+        });
+    }
+
     renameSymbolAtPosition(
         filePath: string,
         position: Position,
         newName: string,
         isDefaultWorkspace: boolean,
+        allowModuleRename: boolean,
         token: CancellationToken
-    ): FileEditAction[] | undefined {
+    ): FileEditActions | undefined {
         return this._runEvaluatorWithCancellationToken(token, () => {
             const sourceFileInfo = this._getSourceFileInfoFromPath(filePath);
             if (!sourceFileInfo) {
@@ -1824,87 +1882,110 @@ export class Program {
 
             this._bindFile(sourceFileInfo);
 
-            const execEnv = this._configOptions.findExecEnvironment(filePath);
-            const referencesResult = sourceFileInfo.sourceFile.getDeclarationForPosition(
-                this._createSourceMapper(execEnv),
+            const referencesResult = this._getReferenceResult(
+                sourceFileInfo,
+                filePath,
                 position,
-                this._evaluator!,
-                undefined,
+                allowModuleRename,
                 token
             );
-
             if (!referencesResult) {
                 return undefined;
             }
 
-            // We only allow renaming module alias, filter out any other alias decls.
-            removeArrayElements(referencesResult.declarations, (d) => {
-                if (!isAliasDeclaration(d)) {
-                    return false;
+            if (referencesResult.containsOnlyImportDecls) {
+                // All decls must be on a user file.
+                if (!this._supportRenameModule(referencesResult.declarations, isDefaultWorkspace)) {
+                    return undefined;
                 }
 
-                // We must have alias and decl node that point to import statement.
-                if (!d.usesLocalName || !d.node) {
-                    return true;
+                const moduleInfo = RenameModuleProvider.getRenameModulePathInfo(
+                    RenameModuleProvider.getRenameModulePath(referencesResult.declarations),
+                    newName
+                );
+                if (!moduleInfo) {
+                    // Can't figure out module to rename.
+                    return undefined;
                 }
 
-                // d.node can't be ImportFrom if usesLocalName is true.
-                // but we are doing this for type checker.
-                if (d.node.nodeType === ParseNodeType.ImportFrom) {
-                    return true;
-                }
+                const editActions = this.renameModule(moduleInfo.filePath, moduleInfo.newFilePath, token);
 
-                // Check alias and what we are renaming is same thing.
-                if (d.node.alias?.value !== referencesResult.symbolName) {
-                    return true;
-                }
+                // Add file system rename.
+                editActions?.fileOperations.push({
+                    kind: 'rename',
+                    oldFilePath: moduleInfo.filePath,
+                    newFilePath: moduleInfo.newFilePath,
+                });
 
-                return false;
-            });
+                if (isStubFile(moduleInfo.filePath)) {
+                    const matchingFiles = this._importResolver.getSourceFilesFromStub(
+                        moduleInfo.filePath,
+                        this._configOptions.findExecEnvironment(filePath),
+                        /* mapCompiled */ false
+                    );
 
-            if (referencesResult.declarations.length === 0) {
-                // There is no symbol we can rename.
-                return undefined;
-            }
-
-            if (
-                !isDefaultWorkspace &&
-                referencesResult.declarations.some((d) => !this._isUserCode(this._getSourceFileInfoFromPath(d.path)))
-            ) {
-                // Some declarations come from non-user code, so do not allow rename.
-                return undefined;
-            }
-
-            // Do we need to do a global search as well?
-            if (referencesResult.requiresGlobalSearch && !isDefaultWorkspace) {
-                for (const curSourceFileInfo of this._sourceFileList) {
-                    // Make sure we only add user code to the references to prevent us
-                    // from accidentally changing third party library or type stub.
-                    if (this._isUserCode(curSourceFileInfo)) {
-                        this._bindFile(curSourceFileInfo);
-
-                        curSourceFileInfo.sourceFile.addReferences(referencesResult, true, this._evaluator!, token);
+                    for (const matchingFile of matchingFiles) {
+                        const matchingFileInfo = RenameModuleProvider.getRenameModulePathInfo(matchingFile, newName);
+                        if (matchingFileInfo) {
+                            editActions?.fileOperations.push({
+                                kind: 'rename',
+                                oldFilePath: matchingFileInfo.filePath,
+                                newFilePath: matchingFileInfo.newFilePath,
+                            });
+                        }
                     }
-
-                    // This operation can consume significant memory, so check
-                    // for situations where we need to discard the type cache.
-                    this._handleMemoryHighUsage();
                 }
-            } else if (isDefaultWorkspace || this._isUserCode(sourceFileInfo)) {
-                sourceFileInfo.sourceFile.addReferences(referencesResult, true, this._evaluator!, token);
+
+                return editActions;
             }
 
-            const editActions: FileEditAction[] = [];
+            const renameMode = this._getRenameSymbolMode(sourceFileInfo, referencesResult, isDefaultWorkspace);
+            switch (renameMode) {
+                case 'singleFileMode':
+                    sourceFileInfo.sourceFile.addReferences(referencesResult, true, this._evaluator!, token);
+                    break;
 
+                case 'multiFileMode': {
+                    for (const curSourceFileInfo of this._sourceFileList) {
+                        // Make sure we only add user code to the references to prevent us
+                        // from accidentally changing third party library or type stub.
+                        if (this._isUserCode(curSourceFileInfo)) {
+                            // Make sure searching symbol name exists in the file.
+                            const content = curSourceFileInfo.sourceFile.getFileContent() ?? '';
+                            if (content.indexOf(referencesResult.symbolName) < 0) {
+                                continue;
+                            }
+
+                            this._bindFile(curSourceFileInfo, content);
+                            curSourceFileInfo.sourceFile.addReferences(referencesResult, true, this._evaluator!, token);
+                        }
+
+                        // This operation can consume significant memory, so check
+                        // for situations where we need to discard the type cache.
+                        this._handleMemoryHighUsage();
+                    }
+                    break;
+                }
+
+                case 'none':
+                    // Rename is not allowed.
+                    // ex) rename symbols from libraries.
+                    return undefined;
+
+                default:
+                    assertNever(renameMode);
+            }
+
+            const edits: FileEditAction[] = [];
             referencesResult.locations.forEach((loc) => {
-                editActions.push({
+                edits.push({
                     filePath: loc.path,
                     range: loc.range,
                     replacementText: newName,
                 });
             });
 
-            return editActions;
+            return { edits, fileOperations: [] };
         });
     }
 
@@ -2053,6 +2134,84 @@ export class Program {
         return this._createSourceMapper(execEnv, /*mapCompiled*/ false);
     }
 
+    private _getRenameSymbolMode(
+        sourceFileInfo: SourceFileInfo,
+        referencesResult: ReferencesResult,
+        isDefaultWorkspace: boolean
+    ) {
+        // We have 2 different cases
+        // Single file mode.
+        // 1. rename on default workspace (ex, standalone file mode).
+        // 2. rename local symbols.
+        // 3. rename symbols defined in the non user open file.
+        //
+        // and Multi file mode.
+        // 1. rename public symbols defined in user files on regular workspace (ex, open folder mode).
+        const userFile = this._isUserCode(sourceFileInfo);
+        if (
+            isDefaultWorkspace ||
+            (userFile && !referencesResult.requiresGlobalSearch) ||
+            (!userFile &&
+                sourceFileInfo.isOpenByClient &&
+                referencesResult.declarations.every((d) => this._getSourceFileInfoFromPath(d.path) === sourceFileInfo))
+        ) {
+            return 'singleFileMode';
+        }
+
+        if (referencesResult.declarations.every((d) => this._isUserCode(this._getSourceFileInfoFromPath(d.path)))) {
+            return 'multiFileMode';
+        }
+
+        // Rename is not allowed.
+        // ex) rename symbols from libraries.
+        return 'none';
+    }
+
+    private _supportRenameModule(declarations: Declaration[], isDefaultWorkspace: boolean) {
+        // Rename module is not supported for standalone file and all decls must be on a user file.
+        return (
+            !isDefaultWorkspace && declarations.every((d) => this._isUserCode(this._getSourceFileInfoFromPath(d.path)))
+        );
+    }
+
+    private _getReferenceResult(
+        sourceFileInfo: SourceFileInfo,
+        filePath: string,
+        position: Position,
+        allowModuleRename: boolean,
+        token: CancellationToken
+    ) {
+        const execEnv = this._configOptions.findExecEnvironment(filePath);
+        const referencesResult = sourceFileInfo.sourceFile.getDeclarationForPosition(
+            this._createSourceMapper(execEnv),
+            position,
+            this._evaluator!,
+            undefined,
+            token
+        );
+
+        if (!referencesResult) {
+            return undefined;
+        }
+
+        if (allowModuleRename && referencesResult.containsOnlyImportDecls) {
+            return referencesResult;
+        }
+
+        if (referencesResult.nonImportDeclarations.length === 0) {
+            // There is no symbol we can rename.
+            return undefined;
+        }
+
+        // Use declarations that doesn't contain import decls.
+        return new ReferencesResult(
+            referencesResult.requiresGlobalSearch,
+            referencesResult.nodeAtOffset,
+            referencesResult.symbolName,
+            referencesResult.nonImportDeclarations
+        );
+    }
+
     private _processModuleReferences(
         renameModuleProvider: RenameModuleProvider,
         filteringText: string,
@@ -2097,21 +2256,34 @@ export class Program {
         }
 
         const typeCacheSize = this._evaluator!.getTypeCacheSize();
+        const convertToMB = (bytes: number) => {
+            return `${Math.round(bytes / (1024 * 1024))}MB`;
+        };
 
         // If the type cache size has exceeded a high-water mark, query the heap usage.
         // Don't bother doing this until we hit this point because the heap usage may not
         // drop immediately after we empty the cache due to garbage collection timing.
         if (typeCacheSize > 750000 || this._parsedFileCount > 1000) {
-            const memoryUsage = process.memoryUsage();
+            const heapStats = getHeapStatistics();
 
-            // If we use more than 90% of the available heap size, avoid a crash
-            // by emptying the type cache.
-            if (memoryUsage.heapUsed > memoryUsage.rss * 0.9) {
-                const heapSizeInMb = Math.round(memoryUsage.rss / (1024 * 1024));
-                const heapUsageInMb = Math.round(memoryUsage.heapUsed / (1024 * 1024));
-
+            if (this._configOptions.verboseOutput) {
                 this._console.info(
-                    `Emptying type cache to avoid heap overflow. Used ${heapUsageInMb}MB out of ${heapSizeInMb}MB`
+                    `Heap stats: ` +
+                        `total_heap_size=${convertToMB(heapStats.total_heap_size)}, ` +
+                        `used_heap_size=${convertToMB(heapStats.used_heap_size)}, ` +
+                        `total_physical_size=${convertToMB(heapStats.total_physical_size)}, ` +
+                        `total_available_size=${convertToMB(heapStats.total_available_size)}, ` +
+                        `heap_size_limit=${convertToMB(heapStats.heap_size_limit)}`
+                );
+            }
+
+            // If we use more than 90% of the heap size limit, avoid a crash
+            // by emptying the type cache.
+            if (heapStats.used_heap_size > heapStats.heap_size_limit * 0.9) {
+                this._console.info(
+                    `Emptying type cache to avoid heap overflow. Used ${convertToMB(
+                        heapStats.used_heap_size
+                    )} out of ${convertToMB(heapStats.heap_size_limit)}`
                 );
                 this._createNewEvaluator();
                 this._discardCachedParseResults();

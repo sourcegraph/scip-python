@@ -27,6 +27,7 @@ import {
     ParameterNode,
     ParseNode,
     RaiseNode,
+    StringNode,
 } from '../parser/parseNodes';
 import * as DeclarationUtils from './aliasDeclarationUtils';
 import { AnalyzerFileInfo } from './analyzerFileInfo';
@@ -44,7 +45,7 @@ import {
     TypeVarType,
 } from './types';
 import { CanAssignFlags, ClassMember } from './typeUtils';
-import { TypeVarMap } from './typeVarMap';
+import { TypeVarContext } from './typeVarContext';
 
 export const enum EvaluatorFlags {
     None = 0,
@@ -133,13 +134,15 @@ export const enum EvaluatorFlags {
     AllowUnpackedTypedDict = 1 << 23,
 }
 
-export interface TypeArgumentResult {
+export interface SimpleTypeResult {
     type: Type;
+
+    // Is the type incomplete (i.e. not fully evaluated) because
+    // some of the paths involve cyclical dependencies?
     isIncomplete?: boolean | undefined;
 }
 
-export interface TypeResult {
-    type: Type;
+export interface TypeResult extends SimpleTypeResult {
     node: ParseNode;
 
     // Type consistency errors detected when evaluating this type.
@@ -148,10 +151,6 @@ export interface TypeResult {
     // Variadic type arguments allow the shorthand "()" to
     // represent an empty tuple (i.e. Tuple[()]).
     isEmptyTupleShorthand?: boolean | undefined;
-
-    // Is the type incomplete (i.e. not fully evaluated) because
-    // some of the paths involve cyclical dependencies?
-    isIncomplete?: boolean | undefined;
 
     unpackedType?: Type | undefined;
     typeList?: TypeResult[] | undefined;
@@ -248,6 +247,7 @@ export interface ValidateArgTypeParams {
     argType?: Type | undefined;
     errorNode: ExpressionNode;
     paramName?: string | undefined;
+    isParamNameSynthesized?: boolean;
     mapsToVarArgList?: boolean | undefined;
     expectingType?: boolean;
 }
@@ -280,7 +280,7 @@ export interface TypeEvaluator {
     runWithCancellationToken<T>(token: CancellationToken, callback: () => T): T;
 
     getType: (node: ExpressionNode) => Type | undefined;
-    getTypeOfExpression: (node: ExpressionNode, expectedType?: Type, flags?: EvaluatorFlags) => TypeResult;
+    getTypeOfExpression: (node: ExpressionNode, flags?: EvaluatorFlags, expectedType?: Type) => TypeResult;
     getTypeOfAnnotation: (node: ExpressionNode, options?: AnnotationTypeOptions) => Type;
     getTypeOfClass: (node: ClassNode) => ClassTypeResult | undefined;
     getTypeOfFunction: (node: FunctionNode) => FunctionTypeResult | undefined;
@@ -309,6 +309,7 @@ export interface TypeEvaluator {
     isAsymmetricDescriptorAssignment: (node: ParseNode) => boolean;
     suppressDiagnostics: (node: ParseNode, callback: () => void) => void;
 
+    getDeclarationsForStringNode: (node: StringNode) => Declaration[] | undefined;
     getDeclarationsForNameNode: (node: NameNode, skipUnreachableCode?: boolean) => Declaration[] | undefined;
     getTypeForDeclaration: (declaration: Declaration) => Type | undefined;
     resolveAliasDeclaration: (
@@ -324,7 +325,7 @@ export interface TypeEvaluator {
     getTypeFromIterable: (type: Type, isAsync: boolean, errorNode: ParseNode | undefined) => Type | undefined;
     getTypeFromIterator: (type: Type, isAsync: boolean, errorNode: ParseNode | undefined) => Type | undefined;
     getGetterTypeFromProperty: (propertyClass: ClassType, inferTypeIfNeeded: boolean) => Type | undefined;
-    getTypeForArgument: (arg: FunctionArgument) => TypeArgumentResult;
+    getTypeForArgument: (arg: FunctionArgument) => SimpleTypeResult;
     markNamesAccessed: (node: ParseNode, names: string[]) => void;
     getScopeIdForNode: (node: ParseNode) => string;
     makeTopLevelTypeVarsConcrete: (type: Type) => Type;
@@ -333,10 +334,10 @@ export interface TypeEvaluator {
         conditionFilter: TypeCondition[] | undefined,
         callback: (expandedSubtype: Type, unexpandedSubtype: Type) => Type | undefined
     ) => Type;
-    populateTypeVarMapBasedOnExpectedType: (
+    populateTypeVarContextBasedOnExpectedType: (
         type: ClassType,
         expectedType: Type,
-        typeVarMap: TypeVarMap,
+        typeVarContext: TypeVarContext,
         liveTypeVarScopes: TypeVarScopeId[] | undefined
     ) => boolean;
     lookUpSymbolRecursive: (node: ParseNode, name: string, honorCodeFlow: boolean) => SymbolWithScope | undefined;
@@ -385,7 +386,6 @@ export interface TypeEvaluator {
         firstParamType?: ClassType | TypeVarType
     ) => FunctionType | OverloadedFunctionType | undefined;
     getCallSignatureInfo: (node: CallNode, activeIndex: number, activeOrFake: boolean) => CallSignatureInfo | undefined;
-    getTypeAnnotationForParameter: (node: FunctionNode, paramIndex: number) => ExpressionNode | undefined;
     getAbstractMethods: (classType: ClassType) => AbstractMethod[];
     narrowConstrainedTypeVar: (node: ParseNode, typeVar: TypeVarType) => Type | undefined;
 
@@ -393,7 +393,7 @@ export interface TypeEvaluator {
         destType: Type,
         srcType: Type,
         diag?: DiagnosticAddendum,
-        typeVarMap?: TypeVarMap,
+        typeVarContext?: TypeVarContext,
         flags?: CanAssignFlags,
         recursionCount?: number
     ) => boolean;
@@ -438,6 +438,7 @@ export interface TypeEvaluator {
     printFunctionParts: (type: FunctionType) => [string[], string];
 
     getTypeCacheSize: () => number;
+    disposeEvaluator: () => void;
     useSpeculativeMode: <T>(speculativeNode: ParseNode, callback: () => T) => T;
     setTypeForNode: (node: ParseNode, type?: Type, flags?: EvaluatorFlags) => void;
 

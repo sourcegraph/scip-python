@@ -36,6 +36,7 @@ import { ImportResolver, ImportResolverFactory } from '../../../analyzer/importR
 import { findNodeByOffset } from '../../../analyzer/parseTreeUtils';
 import { Program } from '../../../analyzer/program';
 import { AnalyzerService, configFileNames } from '../../../analyzer/service';
+import { appendArray } from '../../../common/collectionUtils';
 import { ConfigOptions } from '../../../common/configOptions';
 import { ConsoleInterface, NullConsole } from '../../../common/console';
 import { Comparison, isNumber, isString, toBoolean } from '../../../common/core';
@@ -93,7 +94,7 @@ export interface TextChange {
 export interface HostSpecificFeatures {
     importResolverFactory: ImportResolverFactory;
 
-    runIndexer(workspace: WorkspaceServiceInstance, noStdLib: boolean): void;
+    runIndexer(workspace: WorkspaceServiceInstance, noStdLib: boolean, options?: string): void;
     getCodeActionsForPosition(
         workspace: WorkspaceServiceInstance,
         filePath: string,
@@ -139,7 +140,6 @@ export class TestState {
         const ignoreCase = toBoolean(testData.globalOptions[GlobalMetadataOptionNames.ignoreCase]);
 
         this._cancellationToken = new TestCancellationToken();
-        const configOptions = this._convertGlobalOptionsToConfigOptions(this.testData.globalOptions, mountPaths);
 
         const sourceFiles = [];
         const files: vfs.FileSet = {};
@@ -151,9 +151,6 @@ export class TestState {
                 } catch (e: any) {
                     throw new Error(`Failed to parse test ${file.fileName}: ${e.message}`);
                 }
-
-                configOptions.initializeFromJson(this.rawConfigJson, 'basic', nullConsole, testAccessHost);
-                this._applyTestConfigOptions(configOptions);
             } else {
                 files[file.fileName] = new vfs.File(file.content, { meta: file.fileOptions, encoding: 'utf8' });
 
@@ -174,6 +171,12 @@ export class TestState {
         this.fs = new PyrightFileSystem(this.testFS);
         this._files = sourceFiles;
 
+        const configOptions = this._convertGlobalOptionsToConfigOptions(this.testData.globalOptions, mountPaths);
+        if (this.rawConfigJson) {
+            configOptions.initializeFromJson(this.rawConfigJson, 'basic', nullConsole, this.fs, testAccessHost);
+            this._applyTestConfigOptions(configOptions);
+        }
+
         const service = this._createAnalysisService(
             nullConsole,
             this._hostSpecificFeatures.importResolverFactory,
@@ -188,13 +191,15 @@ export class TestState {
             disableLanguageServices: false,
             disableOrganizeImports: false,
             isInitialized: createDeferred<boolean>(),
+            searchPathsToWatch: [],
         };
 
         const indexer = toBoolean(testData.globalOptions[GlobalMetadataOptionNames.indexer]);
         const indexerWithoutStdLib = toBoolean(testData.globalOptions[GlobalMetadataOptionNames.indexerWithoutStdLib]);
         if (indexer || indexerWithoutStdLib) {
+            const indexerOptions = testData.globalOptions[GlobalMetadataOptionNames.indexerOptions];
             configOptions.indexing = true;
-            this._hostSpecificFeatures.runIndexer(this.workspace, indexerWithoutStdLib);
+            this._hostSpecificFeatures.runIndexer(this.workspace, indexerWithoutStdLib, indexerOptions);
         }
 
         if (this._files.length > 0) {
@@ -642,7 +647,9 @@ export class TestState {
 
     async verifyCodeActions(
         map: {
-            [marker: string]: { codeActions: { title: string; kind: string; command: Command }[] };
+            [marker: string]: {
+                codeActions: { title: string; kind: string; command?: Command; edit?: WorkspaceEdit[] }[];
+            };
         },
         verifyCodeActionCount?: boolean
     ): Promise<any> {
@@ -666,11 +673,14 @@ export class TestState {
             }
 
             for (const expected of map[name].codeActions) {
-                const expectedCommand = {
-                    title: expected.command.title,
-                    command: expected.command.command,
-                    arguments: convertToString(expected.command.arguments),
-                };
+                let expectedCommand: Command | undefined;
+                if (expected.command) {
+                    expectedCommand = {
+                        title: expected.command.title,
+                        command: expected.command.command,
+                        arguments: convertToString(expected.command.arguments),
+                    };
+                }
 
                 const matches = codeActions.filter((a) => {
                     const actualCommand = a.command
@@ -681,10 +691,13 @@ export class TestState {
                           }
                         : undefined;
 
+                    const actualEdit = a.edit;
+
                     return (
                         a.title === expected.title &&
                         a.kind! === expected.kind &&
-                        this._deepEqual(actualCommand, expectedCommand)
+                        this._deepEqual(actualCommand, expectedCommand) &&
+                        this._deepEqual(actualEdit, expected.edit)
                     );
                 });
 
@@ -736,7 +749,7 @@ export class TestState {
         return commandResult;
     }
 
-    protected verifyWorkspaceEdit(expected: WorkspaceEdit, actual: WorkspaceEdit) {
+    verifyWorkspaceEdit(expected: WorkspaceEdit, actual: WorkspaceEdit) {
         if (actual.changes) {
             this._verifyTextEditMap(expected.changes!, actual.changes);
         } else {
@@ -866,12 +879,12 @@ export class TestState {
         }
 
         for (const edit of expectedEdits) {
-            if (actualEdits.some((a) => this._textEditAreSame(edit, a))) {
-                return true;
+            if (!actualEdits.some((a) => this._textEditAreSame(edit, a))) {
+                return false;
             }
         }
 
-        return false;
+        return true;
     }
 
     private _textEditAreSame(expected: TextEdit, actual: TextEdit) {
@@ -952,7 +965,7 @@ export class TestState {
         }
     }
 
-    verifyHover(kind: MarkupKind, map: { [marker: string]: string }): void {
+    verifyHover(kind: MarkupKind, map: { [marker: string]: string | null }): void {
         // Do not force analyze, it can lead to test passing while it doesn't work in product
         for (const range of this.getRanges()) {
             const name = this.getMarkerName(range.marker!);
@@ -967,6 +980,13 @@ export class TestState {
                 kind,
                 this.program.getHoverForPosition(range.fileName, rangePos.start, kind, CancellationToken.None)
             );
+
+            // if expected is null then there should be nothing shown on hover
+            if (expected === null) {
+                assert.equal(actual, undefined);
+                continue;
+            }
+
             assert.ok(actual);
 
             assert.deepEqual(actual!.range, rangePos);
@@ -1077,7 +1097,13 @@ export class TestState {
                 for (let i = 0; i < expectedCompletions.length; i++) {
                     const expected = expectedCompletions[i];
                     const actualIndex = result.completionList.items.findIndex(
-                        (a) => a.label === expected.label && (expected.kind ? a.kind === expected.kind : true)
+                        (a) =>
+                            a.label === expected.label &&
+                            (expected.kind ? a.kind === expected.kind : true) &&
+                            (expected.detail ? a.detail === expected.detail : true) &&
+                            (expected.documentation && MarkupContent.is(a.documentation)
+                                ? a.documentation.value === expected.documentation
+                                : true)
                     );
                     if (actualIndex >= 0) {
                         if (verifyMode === 'excluded') {
@@ -1283,7 +1309,7 @@ export class TestState {
                 fileName,
                 position,
                 true,
-                (locs) => actual.push(...locs),
+                (locs) => appendArray(actual, locs),
                 CancellationToken.None
             );
 
@@ -1421,13 +1447,14 @@ export class TestState {
                 position,
                 expected.newName,
                 /* isDefaultWorkspace */ false,
+                /* allowModuleRename */ false,
                 CancellationToken.None
             );
 
-            assert.equal(actual?.length ?? 0, expected.changes.length);
+            assert.equal(actual?.edits.length ?? 0, expected.changes.length);
 
             for (const c of expected.changes) {
-                assert.equal(actual?.filter((e) => this._deepEqual(e, c)).length, 1);
+                assert.equal(actual?.edits.filter((e) => this._deepEqual(e, c)).length, 1);
             }
         }
     }
@@ -1469,14 +1496,14 @@ export class TestState {
             configOptions.stubPath = normalizePath(combinePaths(vfs.MODULE_PATH, 'typings'));
         }
 
-        configOptions.include.push(getFileSpec(configOptions.projectRoot, '.'));
-        configOptions.exclude.push(getFileSpec(configOptions.projectRoot, typeshedFolder));
-        configOptions.exclude.push(getFileSpec(configOptions.projectRoot, distlibFolder));
-        configOptions.exclude.push(getFileSpec(configOptions.projectRoot, libFolder));
+        configOptions.include.push(getFileSpec(this.fs, configOptions.projectRoot, '.'));
+        configOptions.exclude.push(getFileSpec(this.fs, configOptions.projectRoot, typeshedFolder));
+        configOptions.exclude.push(getFileSpec(this.fs, configOptions.projectRoot, distlibFolder));
+        configOptions.exclude.push(getFileSpec(this.fs, configOptions.projectRoot, libFolder));
 
         if (mountPaths) {
             for (const mountPath of mountPaths.keys()) {
-                configOptions.exclude.push(getFileSpec(configOptions.projectRoot, mountPath));
+                configOptions.exclude.push(getFileSpec(this.fs, configOptions.projectRoot, mountPath));
             }
         }
 
@@ -1803,10 +1830,12 @@ export class TestState {
         // directly set files to track rather than using fileSpec from config
         // to discover those files from file system
         service.test_program.setTrackedFiles(
-            this._files.filter((path) => {
-                const fileExtension = getFileExtension(path).toLowerCase();
-                return fileExtension === '.py' || fileExtension === '.pyi';
-            })
+            this._files
+                .filter((path) => {
+                    const fileExtension = getFileExtension(path).toLowerCase();
+                    return fileExtension === '.py' || fileExtension === '.pyi';
+                })
+                .filter((path) => service.isTracked(path))
         );
 
         return service;

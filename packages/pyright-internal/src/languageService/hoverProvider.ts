@@ -17,6 +17,7 @@ import * as ParseTreeUtils from '../analyzer/parseTreeUtils';
 import { SourceMapper } from '../analyzer/sourceMapper';
 import { TypeEvaluator } from '../analyzer/typeEvaluatorTypes';
 import {
+    ClassType,
     getTypeAliasInfo,
     isClassInstance,
     isFunction,
@@ -27,13 +28,18 @@ import {
     Type,
     UnknownType,
 } from '../analyzer/types';
-import { ClassMemberLookupFlags, isProperty, lookUpClassMember } from '../analyzer/typeUtils';
+import {
+    ClassMemberLookupFlags,
+    doForEachSubtype,
+    isMaybeDescriptorInstance,
+    lookUpClassMember,
+} from '../analyzer/typeUtils';
 import { throwIfCancellationRequested } from '../common/cancellationUtils';
 import { fail } from '../common/debug';
 import { convertOffsetToPosition, convertPositionToOffset } from '../common/positionUtils';
 import { Position, Range } from '../common/textRange';
 import { TextRange } from '../common/textRange';
-import { NameNode, ParseNode, ParseNodeType } from '../parser/parseNodes';
+import { NameNode, ParseNode, ParseNodeType, StringNode } from '../parser/parseNodes';
 import { ParseResults } from '../parser/parser';
 import { getDocumentationPartsForTypeAndDecl, getOverloadedFunctionTooltip } from './tooltipUtils';
 
@@ -121,6 +127,11 @@ export class HoverProvider {
                     this._addResultsPart(results.parts, typeText, true);
                     this._addDocumentationPart(format, sourceMapper, results.parts, node, evaluator, undefined);
                 }
+            }
+        } else if (node.nodeType === ParseNodeType.String) {
+            const type = evaluator.getExpectedType(node)?.type;
+            if (type !== undefined) {
+                this._tryAddPartsForTypedDictKey(format, sourceMapper, evaluator, node, type, results.parts);
             }
         }
 
@@ -219,7 +230,10 @@ export class HoverProvider {
                 let label = 'function';
                 if (resolvedDecl.isMethod) {
                     const declaredType = evaluator.getTypeForDeclaration(resolvedDecl);
-                    label = declaredType && isProperty(declaredType) ? 'property' : 'method';
+                    label =
+                        declaredType && isMaybeDescriptorInstance(declaredType, /* requireSetter */ false)
+                            ? 'property'
+                            : 'method';
                 }
 
                 const type = evaluator.getType(node);
@@ -239,6 +253,56 @@ export class HoverProvider {
                 break;
             }
         }
+    }
+
+    private static _tryAddPartsForTypedDictKey(
+        format: MarkupKind,
+        sourceMapper: SourceMapper,
+        evaluator: TypeEvaluator,
+        node: StringNode,
+        type: Type,
+        parts: HoverTextPart[]
+    ) {
+        // If the expected type is a TypedDict and the current node is a key entry then we can provide a tooltip
+        // with the type of the TypedDict key and its docstring, if available.
+        doForEachSubtype(type, (subtype) => {
+            if (isClassInstance(subtype) && ClassType.isTypedDictClass(subtype)) {
+                const entry = subtype.details.typedDictEntries?.get(node.value);
+                if (entry) {
+                    // If we have already added parts for another declaration (e.g. for a union of TypedDicts that share the same key)
+                    // then we need to add a separator to prevent a visual bug.
+                    if (parts.length > 0) {
+                        parts.push({ text: '\n\n---\n' });
+                    }
+
+                    // e.g. (key) name: str
+                    const text =
+                        '(key) ' +
+                        node.value +
+                        ': ' +
+                        evaluator.printType(entry.valueType, /* expandTypeAlias */ false);
+                    this._addResultsPart(parts, text, true);
+
+                    const declarations = subtype.details.fields.get(node.value)?.getDeclarations();
+                    if (declarations !== undefined && declarations?.length !== 0) {
+                        // As we are just interested in the docString we don't have to worry about
+                        // anything other than the first declaration. There also shouldn't be more
+                        // than one declaration for a TypedDict key variable.
+                        const declaration = declarations[0];
+                        if (declaration.type === DeclarationType.Variable && declaration.docString !== undefined) {
+                            this._addDocumentationPartForType(
+                                format,
+                                sourceMapper,
+                                parts,
+                                subtype,
+                                declaration,
+                                evaluator
+                            );
+                        }
+                    }
+                }
+            }
+        });
     }
 
     private static _addInitMethodInsteadIfCallNode(

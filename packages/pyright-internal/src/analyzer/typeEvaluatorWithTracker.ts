@@ -61,8 +61,8 @@ export function createTypeEvaluatorWithTracker(
     const withTracker: TypeEvaluator = {
         runWithCancellationToken: typeEvaluator.runWithCancellationToken,
         getType: (n) => run('getType', () => typeEvaluator.getType(n), n),
-        getTypeOfExpression: (n, e, f) =>
-            run('getTypeOfExpression', () => typeEvaluator.getTypeOfExpression(n, e, f), n),
+        getTypeOfExpression: (n, f, e) =>
+            run('getTypeOfExpression', () => typeEvaluator.getTypeOfExpression(n, f, e), n),
         getTypeOfAnnotation: typeEvaluator.getTypeOfAnnotation,
         getTypeOfClass: (n) => run('getTypeOfClass', () => typeEvaluator.getTypeOfClass(n), n),
         getTypeOfFunction: (n) => run('getTypeOfFunction', () => typeEvaluator.getTypeOfFunction(n), n),
@@ -86,6 +86,8 @@ export function createTypeEvaluatorWithTracker(
         isAsymmetricDescriptorAssignment: typeEvaluator.isAsymmetricDescriptorAssignment,
         suppressDiagnostics: (node, callback) =>
             run('suppressDiagnostics', () => typeEvaluator.suppressDiagnostics(node, callback)),
+        getDeclarationsForStringNode: (n) =>
+            run('getDeclarationsForStringNode', () => typeEvaluator.getDeclarationsForStringNode(n), n),
         getDeclarationsForNameNode: (n, s) =>
             run('getDeclarationsForNameNode', () => typeEvaluator.getDeclarationsForNameNode(n, s), n),
         getTypeForDeclaration: (n) => run('getTypeForDeclaration', () => typeEvaluator.getTypeForDeclaration(n), n),
@@ -105,7 +107,7 @@ export function createTypeEvaluatorWithTracker(
         makeTopLevelTypeVarsConcrete: (t) =>
             run('makeTopLevelTypeVarsConcrete', () => typeEvaluator.makeTopLevelTypeVarsConcrete(t), t),
         mapSubtypesExpandTypeVars: typeEvaluator.mapSubtypesExpandTypeVars,
-        populateTypeVarMapBasedOnExpectedType: typeEvaluator.populateTypeVarMapBasedOnExpectedType,
+        populateTypeVarContextBasedOnExpectedType: typeEvaluator.populateTypeVarContextBasedOnExpectedType,
         lookUpSymbolRecursive: typeEvaluator.lookUpSymbolRecursive,
         getDeclaredTypeOfSymbol: typeEvaluator.getDeclaredTypeOfSymbol,
         getEffectiveTypeOfSymbol: (s) =>
@@ -127,8 +129,6 @@ export function createTypeEvaluatorWithTracker(
         bindFunctionToClassOrObject: typeEvaluator.bindFunctionToClassOrObject,
         getCallSignatureInfo: (n, i, a) =>
             run('getCallSignatureInfo', () => typeEvaluator.getCallSignatureInfo(n, i, a), n),
-        getTypeAnnotationForParameter: (n, p) =>
-            run('getTypeAnnotationForParameter', () => typeEvaluator.getTypeAnnotationForParameter(n, p), n),
         getAbstractMethods: (c) => run('getAbstractMethods', () => typeEvaluator.getAbstractMethods(c), c),
         narrowConstrainedTypeVar: typeEvaluator.narrowConstrainedTypeVar,
         canAssignType: (d, s, a, m, f) => run('canAssignType', () => typeEvaluator.canAssignType(d, s, a, m, f), d),
@@ -151,6 +151,7 @@ export function createTypeEvaluatorWithTracker(
         printType: (t, e) => run('printType', () => typeEvaluator.printType(t, e), t),
         printFunctionParts: (t) => run('printFunctionParts', () => typeEvaluator.printFunctionParts(t), t),
         getTypeCacheSize: typeEvaluator.getTypeCacheSize,
+        disposeEvaluator: typeEvaluator.disposeEvaluator,
         useSpeculativeMode: typeEvaluator.useSpeculativeMode,
         setTypeForNode: typeEvaluator.setTypeForNode,
         checkForCancellation: typeEvaluator.checkForCancellation,

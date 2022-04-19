@@ -95,6 +95,12 @@ export function findNodeByOffset(node: ParseNode, offset: number): ParseNode | u
         if (child) {
             const containingChild = findNodeByOffset(child, offset);
             if (containingChild) {
+                // For augmented assignments, prefer the dest expression, which is a clone
+                // of the left expression but is used to hold the type of the operation result.
+                if (node.nodeType === ParseNodeType.AugmentedAssignment && containingChild === node.leftExpression) {
+                    return node.destExpression;
+                }
+
                 return containingChild;
             }
         }
@@ -231,17 +237,18 @@ export function printExpression(node: ExpressionNode, flags = PrintExpressionFla
                 exprString += 'f';
             }
 
+            const maxStringLength = 32;
             if (node.token.flags & StringTokenFlags.Triplicate) {
                 if (node.token.flags & StringTokenFlags.SingleQuote) {
-                    exprString += `'''${node.token.escapedValue}'''`;
+                    exprString += `'''${node.token.escapedValue.substring(0, maxStringLength)}'''`;
                 } else {
-                    exprString += `"""${node.token.escapedValue}"""`;
+                    exprString += `"""${node.token.escapedValue.substring(0, maxStringLength)}"""`;
                 }
             } else {
                 if (node.token.flags & StringTokenFlags.SingleQuote) {
-                    exprString += `'${node.token.escapedValue}'`;
+                    exprString += `'${node.token.escapedValue.substring(0, maxStringLength)}'`;
                 } else {
-                    exprString += `"${node.token.escapedValue}"`;
+                    exprString += `"${node.token.escapedValue.substring(0, maxStringLength)}"`;
                 }
             }
 
@@ -978,8 +985,8 @@ export function isMatchingExpression(reference: ExpressionNode, expression: Expr
             return false;
         }
 
-        if (reference.items[0].valueExpression.nodeType === ParseNodeType.Number) {
-            const referenceNumberNode = reference.items[0].valueExpression;
+        const expr = reference.items[0].valueExpression;
+        if (expr.nodeType === ParseNodeType.Number) {
             const subscriptNode = expression.items[0].valueExpression;
             if (
                 subscriptNode.nodeType !== ParseNodeType.Number ||
@@ -989,11 +996,30 @@ export function isMatchingExpression(reference: ExpressionNode, expression: Expr
                 return false;
             }
 
-            return referenceNumberNode.value === subscriptNode.value;
+            return expr.value === subscriptNode.value;
         }
 
-        if (reference.items[0].valueExpression.nodeType === ParseNodeType.StringList) {
-            const referenceStringListNode = reference.items[0].valueExpression;
+        if (
+            expr.nodeType === ParseNodeType.UnaryOperation &&
+            expr.operator === OperatorType.Subtract &&
+            expr.expression.nodeType === ParseNodeType.Number
+        ) {
+            const subscriptNode = expression.items[0].valueExpression;
+            if (
+                subscriptNode.nodeType !== ParseNodeType.UnaryOperation ||
+                subscriptNode.operator !== OperatorType.Subtract ||
+                subscriptNode.expression.nodeType !== ParseNodeType.Number ||
+                subscriptNode.expression.isImaginary ||
+                !subscriptNode.expression.isInteger
+            ) {
+                return false;
+            }
+
+            return expr.expression.value === subscriptNode.expression.value;
+        }
+
+        if (expr.nodeType === ParseNodeType.StringList) {
+            const referenceStringListNode = expr;
             const subscriptNode = expression.items[0].valueExpression;
             if (
                 referenceStringListNode.strings.length === 1 &&
@@ -1149,9 +1175,7 @@ export function isWithinLoop(node: ParseNode): boolean {
                 return true;
             }
 
-            case ParseNodeType.Function:
-            case ParseNodeType.Module:
-            case ParseNodeType.Class: {
+            case ParseNodeType.Module: {
                 break;
             }
         }
@@ -1862,6 +1886,36 @@ export function isFunctionSuiteEmpty(node: FunctionNode) {
     });
 
     return isEmpty;
+}
+
+export function getTypeAnnotationForParameter(node: FunctionNode, paramIndex: number): ExpressionNode | undefined {
+    if (paramIndex >= node.parameters.length) {
+        return undefined;
+    }
+
+    const param = node.parameters[paramIndex];
+    if (param.typeAnnotation) {
+        return param.typeAnnotation;
+    } else if (param.typeAnnotationComment) {
+        return param.typeAnnotationComment;
+    }
+
+    if (!node.functionAnnotationComment || node.functionAnnotationComment.isParamListEllipsis) {
+        return undefined;
+    }
+
+    let firstCommentAnnotationIndex = 0;
+    const paramAnnotations = node.functionAnnotationComment.paramTypeAnnotations;
+    if (paramAnnotations.length < node.parameters.length) {
+        firstCommentAnnotationIndex = 1;
+    }
+
+    const adjIndex = paramIndex - firstCommentAnnotationIndex;
+    if (adjIndex < 0 || adjIndex >= paramAnnotations.length) {
+        return undefined;
+    }
+
+    return paramAnnotations[adjIndex];
 }
 
 export function isImportModuleName(node: ParseNode): boolean {
