@@ -26,7 +26,7 @@ export interface LsifConfig {
     projectVersion: string;
 
     /** Cached Deps **/
-    envCacheFile: string | undefined;
+    environment: string | undefined;
 
     writeIndex: (index: lib.codeintel.lsiftyped.Index) => void;
 }

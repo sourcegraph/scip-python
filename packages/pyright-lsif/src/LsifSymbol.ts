@@ -16,16 +16,4 @@ export class LsifSymbol extends TypescriptLsifSymbol {
         // @ts-ignore
         return new TypescriptLsifSymbol(`lsif-pyright pypi ${name} ${version} `);
     }
-
-    public static potentialGlobal(
-        owner: LsifSymbol | undefined,
-        descriptor: lsif.lib.codeintel.lsiftyped.Descriptor,
-        counter: Counter,
-    ): LsifSymbol {
-        if (!owner) {
-            return LsifSymbol.local(counter.next());
-        }
-
-        return TypescriptLsifSymbol.global(owner, descriptor);
-    }
 }

@@ -8,8 +8,6 @@ import { Input } from './lsif-typescript/Input';
 import * as yargs from 'yargs';
 import { join } from 'path';
 
-console.log('==> Starting new execution');
-
 export function main(): void {
     yargs
         .scriptName('lsif-pyright')
@@ -44,7 +42,7 @@ export function main(): void {
                     describe: 'snapshot directory',
                 });
 
-                yargs.option('envCacheFile', {
+                yargs.option('environment', {
                     type: 'string',
                     default: '',
                     describe: 'filepath of environment cache. Can be used to speed up multiple executions.',
@@ -53,7 +51,7 @@ export function main(): void {
             (argv) => {
                 const workspaceRoot = argv.project as string;
                 let snapshotDir = argv.snapshotDir as string;
-                const envCacheFile = argv.envCacheFile as string;
+                const environment = argv.environment as string;
 
                 const projectRoot = workspaceRoot;
                 process.chdir(workspaceRoot);
@@ -78,7 +76,7 @@ export function main(): void {
                     projectRoot,
                     projectName,
                     projectVersion,
-                    envCacheFile,
+                    environment,
                     writeIndex: (partialIndex: any): void => {
                         if (partialIndex.metadata) {
                             lsifIndex.metadata = partialIndex.metadata;
@@ -125,7 +123,7 @@ export function main(): void {
                     describe: 'name of snapshot to run. If passed, only runs this snapshot test',
                 });
 
-                yargs.option('envCacheFile', {
+                yargs.option('environment', {
                     type: 'string',
                     default: '',
                     describe: 'filepath of environment cache. Can be used to speed up multiple executions.',
@@ -148,7 +146,7 @@ export function main(): void {
 
                 const snapshotRoot = argv.directory as string;
                 const snapshotName = argv.name as string;
-                const envCacheFile = argv.envCacheFile as string;
+                const environment = argv.environment as string;
 
                 const inputDirectory = join(snapshotRoot, 'input');
                 const outputDirectory = join(snapshotRoot, 'output');
@@ -173,7 +171,7 @@ export function main(): void {
                         projectRoot,
                         projectName,
                         projectVersion,
-                        envCacheFile,
+                        environment,
                         writeIndex: (partialIndex: any): void => {
                             if (partialIndex.metadata) {
                                 lsifIndex.metadata = partialIndex.metadata;
@@ -189,7 +187,6 @@ export function main(): void {
 
                     for (const doc of lsifIndex.documents) {
                         if (doc.relative_path.startsWith('..')) {
-                            console.log('Skipping Doc:', doc.relative_path);
                             continue;
                         }
 
@@ -203,15 +200,15 @@ export function main(): void {
                 }
             }
         )
-        .command(
-            'versions',
-            'display version information for current env',
-            () => {},
-            () => {
-                // console.log(packages.getEnvironmentPackages('', 'test'));
-                throw 'todo: put this back when it is ready';
-            }
-        )
+        // .command(
+        //     'versions',
+        //     'display version information for current env',
+        //     () => {},
+        //     () => {
+        //         // console.log(packages.getEnvironmentPackages('', 'test'));
+        //         throw 'todo: put this back when it is ready';
+        //     }
+        // )
         .help().argv;
 }
 

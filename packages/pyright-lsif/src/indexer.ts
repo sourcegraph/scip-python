@@ -16,6 +16,7 @@ import { Counter } from './lsif-typescript/Counter';
 import { getTypeShedFallbackPath } from 'pyright-internal/analyzer/pythonPathUtils';
 import { PyrightFileSystem } from 'pyright-internal/pyrightFileSystem';
 import getEnvironment from './virtualenv/environment';
+import { version } from 'package.json';
 
 export interface Config {}
 
@@ -28,6 +29,14 @@ export class Indexer {
     constructor(public readonly config: Config, public lsifConfig: LsifConfig) {
         this.counter = new Counter();
 
+        // TODO: Consider using the same setup that is used by pyright `[tool.pyright]`
+        //  The only problem is we probably _do_ want to try and analyze those tools.
+        //
+        //  Perhaps we should add `[tool.lsif-python]` to the section and just use the same logic.
+        //  I think that could be a pretty elegant solution to the problem (since you would already
+        //  have the same methods of configuring, you might just want to change the include/exclude)
+        //
+        // private _getConfigOptions(host: Host, commandLineOptions: CommandLineOptions): ConfigOptions {
         this.pyrightConfig = new ConfigOptions(lsifConfig.projectRoot);
         this.pyrightConfig.checkOnlyOpenFiles = false;
         this.pyrightConfig.indexing = true;
@@ -41,6 +50,7 @@ export class Indexer {
 
         // TODO:
         // - [ ] pyi files?
+        // - [ ] More configurable globbing?
         const pyFiles = glob.sync(lsifConfig.projectRoot + '/**/*.py');
         this.program.setTrackedFiles(pyFiles);
     }
@@ -51,15 +61,7 @@ export class Indexer {
             onCancellationRequested: Event.None,
         };
 
-        const packageConfig = getEnvironment(this.lsifConfig.projectVersion, this.lsifConfig.envCacheFile);
-
-        // TODO: I don't understand how typescript & jest & webpack work together
-        // so I don't know how to make sure that this always works (cause it fails when
-        // I run it via jet but not via webpacked javascript and what not)
-        let version = '0.0';
-        try {
-            version = require('package.json');
-        } catch (e) {}
+        const packageConfig = getEnvironment(this.lsifConfig.projectVersion, this.lsifConfig.environment);
 
         // Emit metadata
         this.lsifConfig.writeIndex(

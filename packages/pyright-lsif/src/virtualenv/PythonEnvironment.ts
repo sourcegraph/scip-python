@@ -21,11 +21,6 @@ export default class PythonEnvironment {
     }
 
     private _isThirdPartyFilepath(filepath: string): boolean {
-        // let sourceFile = this.program.getSourceFile(filepath);
-        // return !!sourceFile && sourceFile!.isThirdPartyImport();
-        // throw 'unimplemented';
-        // path.resolve
-
         // We just only want files that are from this directory
         // dunno if this is the best way to check it yet, but that's what I want to think
         // basically.

@@ -240,10 +240,6 @@ export class SourceFile {
         return this._isThirdPartyPyTypedPresent;
     }
 
-    isThirdPartyImport() {
-      return this._isThirdPartyImport;
-    }
-
     // Returns a list of cached diagnostics from the latest analysis job.
     // If the prevVersion is specified, the method returns undefined if
     // the diagnostics haven't changed.
