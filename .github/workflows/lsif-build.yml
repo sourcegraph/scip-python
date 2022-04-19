@@ -1,7 +1,7 @@
 name: lsif-build
 
 env:
-  NODE_VERSION: '16'
+  NODE_VERSION: '16.7.0'
 
 on:
   push:
