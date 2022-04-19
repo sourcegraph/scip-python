@@ -21,6 +21,3 @@ jobs:
           npm publish --access public
         env:
           NODE_AUTH_TOKEN: ${{secrets.NPM_TOKEN}}
-      - run: echo "PATCH=${GITHUB_REF/refs\/tags\//}" >> $GITHUB_ENV
-      - run: echo "MINOR=${PATCH%.*}" >> $GITHUB_ENV
-      - run: echo "MAJOR=${MINOR%.*}" >> $GITHUB_ENV
