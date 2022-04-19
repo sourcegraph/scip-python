@@ -8,7 +8,7 @@ import { Range } from './lsif-typescript/Range';
 
 export const lsiftyped = lib.codeintel.lsiftyped;
 
-export interface Options {
+export interface LsifConfig {
     /**
      * The directory where to generate the dump.lsif-typed file.
      *
@@ -19,13 +19,19 @@ export interface Options {
     /** The directory containing a tsconfig.json file. */
     projectRoot: string;
 
-    /** Version **/
-    version: string;
+    /** Name of current project **/
+    projectName: string;
+
+    /** Version of current project **/
+    projectVersion: string;
+
+    /** Cached Deps **/
+    environment: string | undefined;
 
     writeIndex: (index: lib.codeintel.lsiftyped.Index) => void;
 }
 
-export function index(options: Options) {
+export function index(options: LsifConfig) {
     const indexer = new Indexer({}, options);
     indexer.index();
 }
@@ -51,8 +57,8 @@ export function formatSnapshot(input: Input, document: lib.codeintel.lsiftyped.D
                 continue;
             }
 
-            const range = Range.fromLsif(occurrence.range);
             out.push('#');
+            const range = Range.fromLsif(occurrence.range);
 
             let modifier = 0;
             if (range.start.character === 0) {
