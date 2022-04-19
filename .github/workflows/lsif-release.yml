@@ -14,8 +14,7 @@ jobs:
         with:
           node-version: 16
           registry-url: 'https://registry.npmjs.org'
-      - run: cd ./packages/pyright-lsif/ && npm install 
-      - run: cd ./packages/pyright-lsif/ && npm run build 
+      - run: cd ./packages/pyright-lsif/ && npm install && npm run build
       - run: cd ./packages/pyright-lsif/ && npm publish --access public
         env:
           NODE_AUTH_TOKEN: ${{secrets.NPM_TOKEN}}
