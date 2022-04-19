@@ -48,6 +48,6 @@
     "LICENSE.txt"
   ],
   "bin": {
-    "lsif-pyright": "index.js"
+    "lsif-python": "index.js"
   }
 }
