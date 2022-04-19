@@ -21,6 +21,7 @@ import {
     ParseNodeType,
 } from 'pyright-internal/parser/parseNodes';
 import * as TypeUtils from 'pyright-internal/analyzer/typeUtils';
+import * as ParseTreeUtils from 'pyright-internal/analyzer/parseTreeUtils';
 
 // TypeStubExtendedWriter extends several aspects of the TypeStubWriter from pyright.
 // I'm using this primarily to get some pretty-looking, formatted type information to
@@ -212,7 +213,8 @@ export class TypeStubExtendedWriter extends TypeStubWriter {
             line += paramNode.name.value;
         }
 
-        const paramTypeAnnotation = this.evaluator.getTypeAnnotationForParameter(functionNode, paramIndex);
+        const paramTypeAnnotation = ParseTreeUtils.getTypeAnnotationForParameter(functionNode, paramIndex);
+
         let paramType = '';
         if (paramTypeAnnotation) {
             paramType = this._printExpression(paramTypeAnnotation, /* treatStringsAsSymbols */ true);
