@@ -1,5 +1,3 @@
-import requests
+import leftpad
 
-if __name__ == "__main__":
-    r = requests.get("https://google.com")
-    print(r.status_code)
+print(leftpad)

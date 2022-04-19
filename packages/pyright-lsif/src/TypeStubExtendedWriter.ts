@@ -1,9 +1,17 @@
 import { SourceFile } from 'pyright-internal/analyzer/sourceFile';
 import { TypeEvaluator } from 'pyright-internal/analyzer/typeEvaluatorTypes';
-import { isFunction, isNever, isUnknown, removeUnknownFromUnion } from 'pyright-internal/analyzer/types';
+import {
+    ClassType,
+    isFunction,
+    isInstantiableClass,
+    isNever,
+    isUnknown,
+    removeUnknownFromUnion,
+} from 'pyright-internal/analyzer/types';
 import { TypeStubWriter } from 'pyright-internal/analyzer/typeStubWriter';
 import {
     ArgumentCategory,
+    AssignmentNode,
     ClassNode,
     DecoratorNode,
     ExpressionNode,
@@ -12,23 +20,32 @@ import {
     ParameterNode,
     ParseNodeType,
 } from 'pyright-internal/parser/parseNodes';
+import * as TypeUtils from 'pyright-internal/analyzer/typeUtils';
 
+// TypeStubExtendedWriter extends several aspects of the TypeStubWriter from pyright.
+// I'm using this primarily to get some pretty-looking, formatted type information to
+// display in the hover text for various Python objects.
+//
+// At some point, we could try and think about how to re-use a bit more code, rather
+// than copy several of the different `visit*` methods, but it works pretty well for now.
+//
 // I have to ignore the private stuff for now -- can reset this later if we want.
+//
 // @ts-ignore
 export class TypeStubExtendedWriter extends TypeStubWriter {
+    /// Stores docstrings by node id, so that you only need to calculate them once.
+    /// It also allows retrieval of the docstring for various nodes (since visitors
+    /// don't return anything except for whether to continue traversing or not).
     public docstrings: Map<number, string[]>;
 
-    constructor(_sourceFile: SourceFile, _evaluator: TypeEvaluator) {
-        super('', _sourceFile, _evaluator);
+    constructor(sourceFile: SourceFile, public evaluator: TypeEvaluator) {
+        super('', sourceFile, evaluator);
 
         this.docstrings = new Map<number, string[]>();
     }
 
     override visitClass(node: ClassNode): boolean {
         const className = node.name.value;
-
-        this._emittedSuite = true;
-        this._emitDocString = false;
 
         let line = '';
         line += this._printDecorators(node.decorators);
@@ -59,12 +76,6 @@ export class TypeStubExtendedWriter extends TypeStubWriter {
 
         this.docstrings.set(node.id, [line]);
 
-        // this._emitSuite(() => {
-        //     this._classNestCount++;
-        //     this.walk(node.suite);
-        //     this._classNestCount--;
-        // });
-
         return false;
     }
 
@@ -74,16 +85,24 @@ export class TypeStubExtendedWriter extends TypeStubWriter {
         line += this._printDecorators(node.decorators);
         line += node.isAsync ? 'async ' : '';
         line += `def ${functionName}`;
-        line += `(${node.parameters.map((param, index) => this._printParameter(param, node, index)).join(', ')})`;
+
+        const mappedParameters = node.parameters.map((param, index) => this._printParameter(param, node, index))
+        if (mappedParameters.length <= 0) {
+            line += `(${mappedParameters.join(', ')})`;
+        } else {
+            // TODO: I don't really like this, but I also _hate_ the way things
+            // are wrapped currently in the hover. So we could come back to this part later.
+            line += `(\n  ${mappedParameters.join(',\n  ')}\n)`;
+        }
 
         let returnAnnotation: string | undefined;
         if (node.returnTypeAnnotation) {
-            // returnAnnotation = this._printExpression(node.returnTypeAnnotation, /* treatStringsAsSymbols */ true);
+            returnAnnotation = this._printExpression(node.returnTypeAnnotation, /* treatStringsAsSymbols */ true);
         } else if (node.functionAnnotationComment) {
-            // returnAnnotation = this._printExpression(
-            //     node.functionAnnotationComment.returnTypeAnnotation,
-            //     /* treatStringsAsSymbols */ true
-            // );
+            returnAnnotation = this._printExpression(
+                node.functionAnnotationComment.returnTypeAnnotation,
+                /* treatStringsAsSymbols */ true
+            );
         } else {
             // Handle a few common cases where we always know the answer.
             if (node.name.value === '__init__') {
@@ -108,12 +127,12 @@ export class TypeStubExtendedWriter extends TypeStubWriter {
         // If there was not return type annotation, see if we can infer
         // a type that is not unknown and add it as a comment.
         if (!returnAnnotation) {
-            const functionType = this._evaluator.getTypeOfFunction(node);
+            const functionType = this.evaluator.getTypeOfFunction(node);
             if (functionType && isFunction(functionType.functionType)) {
-                let returnType = this._evaluator.getFunctionInferredReturnType(functionType.functionType);
+                let returnType = this.evaluator.getFunctionInferredReturnType(functionType.functionType);
                 returnType = removeUnknownFromUnion(returnType);
                 if (!isNever(returnType) && !isUnknown(returnType)) {
-                    line += ` # -> ${this._evaluator.printType(returnType, /* expandTypeAlias */ false)}:`;
+                    line += ` # -> ${this.evaluator.printType(returnType, /* expandTypeAlias */ false)}:`;
                 }
             }
         }
@@ -123,6 +142,64 @@ export class TypeStubExtendedWriter extends TypeStubWriter {
         return true;
     }
 
+    override visitAssignment(node: AssignmentNode): boolean {
+        let isTypeAlias = false;
+        let line = '';
+
+        if (node.leftExpression.nodeType === ParseNodeType.Name) {
+            // TODO: Handle "__all__" as a special case.
+            // if (node.leftExpression.value === '__all__') {
+            //     if (this._functionNestCount === 0 && this._ifNestCount === 0) {
+            //         this._emittedSuite = true;
+            //
+            //         line = this._printExpression(node.leftExpression);
+            //         line += ' = ';
+            //         line += this._printExpression(node.rightExpression);
+            //         this._emitLine(line);
+            //     }
+            //
+            //     return false;
+            // }
+
+            const valueType = this.evaluator.getType(node.leftExpression);
+
+            if (node.typeAnnotationComment) {
+                line += this._printExpression(node.typeAnnotationComment, /* treatStringsAsSymbols */ true);
+            } else if (valueType) {
+                line += TypeUtils.getFullNameOfType(valueType);
+            }
+
+            if (valueType?.typeAliasInfo) {
+                isTypeAlias = true;
+            } else if (node.rightExpression.nodeType === ParseNodeType.Call) {
+                // Special-case TypeVar, TypeVarTuple, ParamSpec and NewType calls.
+                // Treat them like type aliases.
+                const callBaseType = this.evaluator.getType(node.rightExpression.leftExpression);
+                if (
+                    callBaseType &&
+                    isInstantiableClass(callBaseType) &&
+                    ClassType.isBuiltIn(callBaseType, ['TypeVar', 'TypeVarTuple', 'ParamSpec', 'NewType'])
+                ) {
+                    isTypeAlias = true;
+                }
+            }
+        }
+
+        if (line) {
+            if (isTypeAlias) {
+                line += ' = ';
+                line += this._printExpression(node.rightExpression);
+            }
+
+            this.docstrings.set(node.id, [line]);
+        }
+
+        return true;
+    }
+
+    /// Copied from super()._printParameter() except that the defaultValue is displayed in a more useful way for the
+    /// docstring. If we were to remove that from the hover, then we could go back to just calling the super() method
+    /// here.
     private override _printParameter(paramNode: ParameterNode, functionNode: FunctionNode, paramIndex: number): string {
         let line = '';
         if (paramNode.category === ParameterCategory.VarArgList) {
@@ -135,7 +212,7 @@ export class TypeStubExtendedWriter extends TypeStubWriter {
             line += paramNode.name.value;
         }
 
-        const paramTypeAnnotation = this._evaluator.getTypeAnnotationForParameter(functionNode, paramIndex);
+        const paramTypeAnnotation = this.evaluator.getTypeAnnotationForParameter(functionNode, paramIndex);
         let paramType = '';
         if (paramTypeAnnotation) {
             paramType = this._printExpression(paramTypeAnnotation, /* treatStringsAsSymbols */ true);

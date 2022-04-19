@@ -1,4 +1,7 @@
 import { LsifSymbol as TypescriptLsifSymbol } from './lsif-typescript/LsifSymbol';
+import * as lsif from './lsif';
+
+import { Counter } from './lsif-typescript/Counter';
 
 // @ts-ignore
 export class LsifSymbol extends TypescriptLsifSymbol {
