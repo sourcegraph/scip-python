@@ -8,8 +8,8 @@ on:
     branches:
       - lsif
   pull_request:
-    paths:
-      - '**.ts'
+    branches:
+      - lsif
 
 jobs:
   build:
