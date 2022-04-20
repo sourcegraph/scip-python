@@ -1,6 +1,6 @@
 {
   "name": "@sourcegraph/lsif-python",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "LSIF indexer for Python",
   "main": "index.js",
   "scripts": {
