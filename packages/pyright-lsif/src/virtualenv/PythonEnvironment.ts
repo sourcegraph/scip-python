@@ -5,10 +5,8 @@ export default class PythonEnvironment {
     /// Maps a module name (x.y.z) to an index in this.packages
     private _moduleNameToIndex: Map<string, number>;
     private _filepathToIndex: Map<string, number>;
-    private _cwd: string;
 
     constructor(private projectVersion: string, public packages: PythonPackage[]) {
-        this._cwd = path.resolve(process.cwd());
         this._moduleNameToIndex = new Map();
         this._filepathToIndex = new Map();
 
@@ -18,13 +16,6 @@ export default class PythonEnvironment {
                 this._filepathToIndex.set(filepath, index);
             }
         }
-    }
-
-    private _isThirdPartyFilepath(filepath: string): boolean {
-        // We just only want files that are from this directory
-        // dunno if this is the best way to check it yet, but that's what I want to think
-        // basically.
-        return path.resolve(filepath).includes(this._cwd);
     }
 
     public getPackageForModule(moduleName: string): PythonPackage | undefined {
@@ -67,20 +58,5 @@ export default class PythonEnvironment {
         }
 
         return this.packages[packageIndex];
-    }
-
-    public getPackageForFile(filepath: string): PythonPackage | undefined {
-        if (this._isThirdPartyFilepath(filepath)) {
-            // return { name: '', version: this.projectVersion };
-            console.log('OK OK');
-            return new PythonPackage('', this.projectVersion, []);
-        }
-
-        let index = this._filepathToIndex.get(filepath);
-        if (!index) {
-            return undefined;
-        }
-
-        return this.packages[index];
     }
 }

@@ -332,6 +332,7 @@ export class TreeVisitor extends ParseTreeWalker {
     override visitImport(node: ImportNode): boolean {
         this._docstringWriter.visitImport(node);
 
+        // TODO(0.2): Resolve all these weird import things.
         for (const listNode of node.list) {
             let lastName = listNode.module.nameParts[listNode.module.nameParts.length - 1];
             let decls = this.evaluator.getDeclarationsForNameNode(lastName);
@@ -339,7 +340,6 @@ export class TreeVisitor extends ParseTreeWalker {
                 continue;
             }
 
-            console.log('decl node:', decls);
 
             let decl = decls[0];
             let filepath = path.resolve(decl.path);
@@ -375,7 +375,6 @@ export class TreeVisitor extends ParseTreeWalker {
             // let importName = listNode.module.nameParts[listNode.module.nameParts.length - 1];
             // let resolved = this.evaluator.resolveAliasDeclaration(decls[0], true, true);
             // let resolvedInfo = this.evaluator.resolveAliasDeclarationWithInfo(decls[0], true, true);
-            // console.log(resolvedInfo)
         }
 
         return true;
@@ -387,14 +386,9 @@ export class TreeVisitor extends ParseTreeWalker {
         // this.pushNewNameNodeOccurence(node.module.nameParts[0], LsifSymbol.local(this.counter.next()));
         // const decl = this.evaluator.getDeclarationsForNameNode(node.module.nameParts[0])![0]
         // const resolvedDecl = this.evaluator.resolveAliasDeclaration(decl, /* resolveLocalNames */ true);
-        // console.log('decl:', decl);
-        // console.log(resolvedDecl)
-        // console.log('type:', this.evaluator.getTypeForDeclaration(decl))
         // const moduleName = node.module.nameParts.map(name => name.value).join('.');
         // const importedModuleType = ModuleType.create(moduleName, decl.path);
-        // console.log('modu:', importedModuleType)
         // @ts-ignore
-        // console.log('docs:', getModuleDocString(importedModuleType, decl, this.program._createSourceMapper(this._execEnv)));
         // getModuleDocString(ModuleType.create(node.module.nameParts[0].value,
 
         const role = lsiftyped.SymbolRole.ReadAccess;
@@ -714,11 +708,11 @@ export class TreeVisitor extends ParseTreeWalker {
                 return symbols.pythonModule(this, node, info.importName);
 
             case ParseNodeType.ImportFrom:
-                // console.log('from', node);
+                // TODO(0.2): Resolve all these weird import things.
                 return LsifSymbol.empty();
 
             case ParseNodeType.ImportFromAs:
-                // console.log('from as', node);
+                // TODO(0.2): Resolve all these weird import things.
                 return LsifSymbol.empty();
 
             case ParseNodeType.Lambda:
