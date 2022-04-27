@@ -5,7 +5,6 @@ def exported_function():
 #   documentation ```python
 #               > def exported_function(): # -> Literal['function']:
 #               > ```
-#   documentation 
     return "function"
 
 class MyClass:
@@ -23,7 +22,6 @@ class MyClass:
 #                   >   self
 #                   > ) -> None:
 #                   > ```
-#       documentation 
 #                ^^^^ definition  snapshot-util 0.1 foo/MyClass#__init__().(self)
         pass
 
@@ -34,7 +32,6 @@ class MyClass:
 #                   >   self
 #                   > ): # -> Literal['exported']:
 #                   > ```
-#       documentation 
 #                         ^^^^ definition  snapshot-util 0.1 foo/MyClass#exported_function().(self)
         return "exported"
 

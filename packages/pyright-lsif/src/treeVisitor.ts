@@ -24,7 +24,7 @@ import {
 } from 'pyright-internal/parser/parseNodes';
 
 import * as lsif from './lsif';
-import * as symbols from './symbols';
+import * as Symbols from './symbols';
 import {
     metaDescriptor,
     methodDescriptor,
@@ -203,7 +203,7 @@ export class TreeVisitor extends ParseTreeWalker {
             documentation.push('```python\n' + stub.join('\n') + '\n```');
         }
 
-        const doc = ParseTreeUtils.getDocString(node.suite.statements);
+        const doc = ParseTreeUtils.getDocString(node.suite.statements)?.trim();
         if (doc) {
             documentation.push(doc);
         }
@@ -281,13 +281,19 @@ export class TreeVisitor extends ParseTreeWalker {
         this._docstringWriter.visitFunction(node);
 
         // does this do return types?
+        const documentation = [];
         let stubs = this._docstringWriter.docstrings.get(node.id)!;
-        let functionDoc = ParseTreeUtils.getDocString(node.suite.statements) || '';
+        documentation.push('```python\n' + stubs.join('\n') + '\n```');
+
+        let functionDoc = ParseTreeUtils.getDocString(node.suite.statements);
+        if (functionDoc) {
+            documentation.push(functionDoc)
+        }
 
         this.document.symbols.push(
             new lsiftyped.SymbolInformation({
                 symbol: this.getLsifSymbol(node).value,
-                documentation: ['```python\n' + stubs.join('\n') + '\n```', functionDoc],
+                documentation,
             })
         );
 
@@ -455,12 +461,17 @@ export class TreeVisitor extends ParseTreeWalker {
         if (decls.length > 0) {
             const decl = decls[0];
             if (!decl.node) {
-                if (parent.nodeType !== ParseNodeType.ModuleName) {
-                    throw 'YAYAYAYA'
+                switch (parent.nodeType) {
+                    case ParseNodeType.ModuleName:
+                        let symbol = Symbols.makeModuleName(node, decl, this.evaluator);
+                        if (symbol) {
+                            this.pushNewNameNodeOccurence(node, symbol);
+                        }
+
+                        return true;
+                    default:
+                        throw 'unhandled missing node';
                 }
-                // throw 'decl without a node';
-                console.log("MISSING DECL NODE:", node, decl);
-                return true;
             }
 
             const type = this.evaluator.getTypeForDeclaration(decl);
@@ -773,7 +784,7 @@ export class TreeVisitor extends ParseTreeWalker {
             case ParseNodeType.ImportAs:
                 // @ts-ignore Pretty sure this always is true
                 let info = node.module.importInfo;
-                return symbols.pythonModule(this, node, info.importName);
+                return Symbols.pythonModule(this, node, info.importName);
 
             case ParseNodeType.ImportFrom:
                 // TODO(0.2): Resolve all these weird import things.
