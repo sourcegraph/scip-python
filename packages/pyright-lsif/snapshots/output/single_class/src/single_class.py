@@ -23,6 +23,9 @@ class ExampleClass:
 #                                 ^^^ reference  python-stdlib 3.10 builtins/int#
         local_c = ", world!"
 #       ^^^^^^^ definition local 0
+#       documentation ```python
+#                   > builtins.str
+#                   > ```
 
         self.a = a
 #       ^^^^ reference  snapshot-util 0.1 `src.single_class`/ExampleClass#__init__().(self)

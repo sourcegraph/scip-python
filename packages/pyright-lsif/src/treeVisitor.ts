@@ -11,6 +11,7 @@ import {
     ClassNode,
     ExpressionNode,
     FunctionNode,
+    ImportFromAsNode,
     ImportFromNode,
     ImportNode,
     ModuleNameNode,
@@ -36,13 +37,7 @@ import { LsifSymbol } from './LsifSymbol';
 import { Position } from './lsif-typescript/Position';
 import { Range } from './lsif-typescript/Range';
 import { lsiftyped, LsifConfig } from './lib';
-import {
-    getDocString,
-    getEnclosingClass,
-    getEnclosingSuite,
-    isFromImportModuleName,
-    isImportModuleName,
-} from 'pyright-internal/analyzer/parseTreeUtils';
+import * as ParseTreeUtils from 'pyright-internal/analyzer/parseTreeUtils';
 import {
     ClassType,
     isClass,
@@ -63,10 +58,19 @@ import { Program } from 'pyright-internal/analyzer/program';
 import PythonEnvironment from './virtualenv/PythonEnvironment';
 import { Counter } from './lsif-typescript/Counter';
 import PythonPackage from './virtualenv/PythonPackage';
+import { getFunctionOrClassDeclDocString } from 'pyright-internal/analyzer/typeDocStringUtils';
+import * as Hardcoded from './hardcoded';
+import { Event } from 'vscode-languageserver';
+import { HoverResults } from 'pyright-internal/languageService/hoverProvider';
 
 //  Useful functions for later, but haven't gotten far enough yet to use them.
 //      extractParameterDocumentation
 //      import { getModuleDocString } from 'pyright-internal/analyzer/typeDocStringUtils';
+
+const token = {
+    isCancellationRequested: false,
+    onCancellationRequested: Event.None,
+};
 
 function parseNodeToRange(name: ParseNode, lines: TextRangeCollection<TextRange>): Range {
     const _start = convertOffsetToPosition(name.start, lines);
@@ -92,6 +96,7 @@ export class TreeVisitor extends ParseTreeWalker {
     private _fileInfo: AnalyzerFileInfo | undefined;
     private _imports: Map<number, ParseNode>;
     private _symbols: Map<number, LsifSymbol>;
+    private symbolInformationForNode: Map<number, boolean>;
 
     private _docstringWriter: TypeStubExtendedWriter;
 
@@ -133,6 +138,7 @@ export class TreeVisitor extends ParseTreeWalker {
         );
         this._symbols = new Map();
         this._imports = new Map();
+        this.symbolInformationForNode = new Map();
 
         this._docstringWriter = new TypeStubExtendedWriter(this.config.sourceFile, this.evaluator);
 
@@ -197,7 +203,7 @@ export class TreeVisitor extends ParseTreeWalker {
             documentation.push('```python\n' + stub.join('\n') + '\n```');
         }
 
-        const doc = getDocString(node.suite.statements);
+        const doc = ParseTreeUtils.getDocString(node.suite.statements);
         if (doc) {
             documentation.push(doc);
         }
@@ -276,7 +282,7 @@ export class TreeVisitor extends ParseTreeWalker {
 
         // does this do return types?
         let stubs = this._docstringWriter.docstrings.get(node.id)!;
-        let functionDoc = getDocString(node.suite.statements) || '';
+        let functionDoc = ParseTreeUtils.getDocString(node.suite.statements) || '';
 
         this.document.symbols.push(
             new lsiftyped.SymbolInformation({
@@ -339,7 +345,6 @@ export class TreeVisitor extends ParseTreeWalker {
             if (!decls || decls.length === 0) {
                 continue;
             }
-
 
             let decl = decls[0];
             let filepath = path.resolve(decl.path);
@@ -416,13 +421,49 @@ export class TreeVisitor extends ParseTreeWalker {
         return true;
     }
 
+    override visitImportFromAs(_node: ImportFromAsNode): boolean {
+        // console.log("visitImportFromAs", node.id, node.name.value);
+        //
+        // const decls = this.evaluator.getDeclarationsForNameNode(node.name);
+        // if (!decls) {
+        //     return false;
+        // }
+        // const decl = decls[0];
+        // // console.log("ImportFromAs", node.name.token, decls);
+        //
+        // const resolved = this.evaluator.resolveAliasDeclaration(decl, true);
+        // if (!resolved) {
+        //     return false;
+        // }
+        //
+        // const type_ = this.evaluator.getTypeForDeclaration(resolved);
+        // console.log("  ", type_);
+
+        return true;
+    }
+
     override visitName(node: NameNode): boolean {
+        if (!node.parent) {
+            // return;
+            throw 'No parent for named node';
+        }
+
+        console.log(node.token.value, ParseTreeUtils.printParseNodeType(node.parent.nodeType));
+
+        const parent = node.parent;
         const decls = this.evaluator.getDeclarationsForNameNode(node) || [];
         if (decls.length > 0) {
             const decl = decls[0];
             if (!decl.node) {
+                if (parent.nodeType !== ParseNodeType.ModuleName) {
+                    throw 'YAYAYAYA'
+                }
+                // throw 'decl without a node';
+                console.log("MISSING DECL NODE:", node, decl);
                 return true;
             }
+
+            const type = this.evaluator.getTypeForDeclaration(decl);
 
             // TODO: Handle intrinsics more usefully (using declaration probably)
             if (isIntrinsicDeclaration(decl)) {
@@ -472,7 +513,7 @@ export class TreeVisitor extends ParseTreeWalker {
             return true;
         }
 
-        if (node && (isImportModuleName(node) || isFromImportModuleName(node))) {
+        if (node && (ParseTreeUtils.isImportModuleName(node) || ParseTreeUtils.isFromImportModuleName(node))) {
             return true;
         }
 
@@ -533,13 +574,40 @@ export class TreeVisitor extends ParseTreeWalker {
         const moduleName = nodeFileInfo.moduleName;
         if (moduleName == 'builtins') {
             return this.makeBuiltinLsifSymbol(node, nodeFileInfo);
+        } else if (Hardcoded.stdlib_module_names.has(moduleName)) {
+            // return this.makeBuiltinLsifSymbol(node, nodeFileInfo);
+            return this.makeLsifSymbol(this.stdlibPackage, moduleName, node);
         }
 
         const pythonPackage = this.getPackageInfo(node, moduleName);
         if (!pythonPackage) {
-            // throw `no package info ${moduleName}`;
-            let newSymbol = LsifSymbol.local(this.counter.next());
+            if (this.rawGetLsifSymbol(node)) {
+                return this.rawGetLsifSymbol(node)!;
+            }
+
+            // console.log(`no package info ${moduleName} ${node.nodeType}`);
+            // let newSymbol = this.makeLsifSymbol(this.projectPackage, "_", node);
+            const newSymbol = LsifSymbol.local(this.counter.next());
             this.rawSetLsifSymbol(node, newSymbol);
+            this.emitSymbolInformationOnce(
+                node,
+                newSymbol /* () => {
+                const hoverResult = this.program.getHoverForPosition(
+                    nodeFileInfo.filePath,
+                    convertOffsetToPosition(node.start, nodeFileInfo.lines),
+                    'markdown',
+                    token
+                );
+
+                if (!hoverResult) {
+                    console.log("OH NO NO NO", nodeFileInfo.filePath)
+                    // throw 'asdf';
+                    return [];
+                }
+
+                return _formatHover(hoverResult);
+            } */
+            );
             return newSymbol;
         }
 
@@ -620,7 +688,7 @@ export class TreeVisitor extends ParseTreeWalker {
                 );
 
             case ParseNodeType.Function:
-                let cls = getEnclosingClass(node, false);
+                let cls = ParseTreeUtils.getEnclosingClass(node, false);
                 if (cls) {
                     return LsifSymbol.global(
                         this.getLsifSymbol(cls),
@@ -643,7 +711,7 @@ export class TreeVisitor extends ParseTreeWalker {
                 return LsifSymbol.global(this.getLsifSymbol(node.parent!), metaDescriptor('#'));
 
             case ParseNodeType.Name:
-                const enclosingSuite = getEnclosingSuite(node as ParseNode);
+                const enclosingSuite = ParseTreeUtils.getEnclosingSuite(node as ParseNode);
                 if (enclosingSuite) {
                     const enclosingParent = enclosingSuite.parent;
                     if (enclosingParent) {
@@ -664,7 +732,7 @@ export class TreeVisitor extends ParseTreeWalker {
                 switch (node.valueExpression.nodeType) {
                     case ParseNodeType.Name:
                         return LsifSymbol.global(
-                            this.getLsifSymbol(getEnclosingSuite(node) || node.parent!),
+                            this.getLsifSymbol(ParseTreeUtils.getEnclosingSuite(node) || node.parent!),
                             termDescriptor(node.valueExpression.value)
                         );
                     default:
@@ -709,11 +777,33 @@ export class TreeVisitor extends ParseTreeWalker {
 
             case ParseNodeType.ImportFrom:
                 // TODO(0.2): Resolve all these weird import things.
+                console.log('ImportFrom');
                 return LsifSymbol.empty();
 
             case ParseNodeType.ImportFromAs:
                 // TODO(0.2): Resolve all these weird import things.
-                return LsifSymbol.empty();
+                const decls = this.evaluator.getDeclarationsForNameNode(node.name);
+                if (decls) {
+                    const decl = decls[0];
+                    const resolved = this.evaluator.resolveAliasDeclaration(decl, true)!;
+                    console.log('ImportFromAs', node.name.token, resolved);
+
+                    if (resolved.node) {
+                        const symbol = this.getLsifSymbol(resolved.node);
+                        this.emitSymbolInformationOnce(resolved.node, symbol);
+
+                        return symbol;
+                    }
+
+                    // const type_ = this.evaluator.getTypeForDeclaration(resolved);
+
+                    // console.log("  ", decl)
+                    // console.log(type_)
+
+                    // const type_ = this.evaluator.getType
+                    // console.log(this.typeToSymbol(decl.node,
+                }
+                return LsifSymbol.local(this.counter.next());
 
             case ParseNodeType.Lambda:
                 return LsifSymbol.local(this.counter.next());
@@ -867,6 +957,45 @@ export class TreeVisitor extends ParseTreeWalker {
         }
         this.scopeStack.pop();
     }
+
+    private emitSymbolInformationOnce(node: ParseNode, symbol: LsifSymbol) {
+        if (this.symbolInformationForNode.get(node.id)) {
+            return;
+        }
+
+        this.symbolInformationForNode.set(node.id, true);
+
+        const nodeFileInfo = getFileInfo(node)!;
+        const hoverResult = this.program.getHoverForPosition(
+            nodeFileInfo.filePath,
+            convertOffsetToPosition(node.start, nodeFileInfo.lines),
+            'markdown',
+            token
+        );
+
+        if (hoverResult) {
+            this.document.symbols.push(
+                new lsiftyped.SymbolInformation({
+                    symbol: symbol.value,
+                    documentation: _formatHover(hoverResult),
+                })
+            );
+
+            return;
+        }
+
+        // @ts-ignore
+        // console.log('Docstring:', getFunctionOrClassDeclDocString(node));
+
+        this._docstringWriter.walk(node);
+        const docs = '```python\n' + (this._docstringWriter.docstrings.get(node.id) || []).join('\n') + '\n```';
+        this.document.symbols.push(
+            new lsiftyped.SymbolInformation({
+                symbol: symbol.value,
+                documentation: [docs],
+            })
+        );
+    }
 }
 
 function _formatModuleName(node: ModuleNameNode): string {
@@ -878,4 +1007,15 @@ function _formatModuleName(node: ModuleNameNode): string {
     moduleName += node.nameParts.map((part) => part.value).join('.');
 
     return moduleName;
+}
+
+// Based off of: convertHoverResults
+function _formatHover(hoverResults: HoverResults): string[] {
+    return hoverResults.parts.map((part) => {
+        if (part.python) {
+            return '```python\n' + part.text + '\n```\n';
+        } else {
+            return part.text;
+        }
+    });
 }

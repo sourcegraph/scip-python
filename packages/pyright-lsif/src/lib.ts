@@ -36,41 +36,59 @@ export function index(options: LsifConfig) {
     indexer.index();
 }
 
-const packageName = 'lsif-pyright pypi';
+function getSymbolTable(
+    doc: lib.codeintel.lsiftyped.Document
+): Map<string, lib.codeintel.lsiftyped.SymbolInformation> {
+    let symbolTable = new Map();
+    for (const symbol of doc.symbols) {
+        symbolTable.set(symbol.symbol, symbol);
+    }
+    return symbolTable;
+}
 
-export function formatSnapshot(input: Input, document: lib.codeintel.lsiftyped.Document): string {
+const packageName = 'lsif-pyright pypi';
+const commentSyntax = '#';
+
+export function formatSnapshot(input: Input, doc: lib.codeintel.lsiftyped.Document): string {
+    const symbolTable = getSymbolTable(doc);
+
     const out: string[] = [];
-    document.occurrences.sort(occurrencesByLine);
+    doc.occurrences.sort(occurrencesByLine);
     let occurrenceIndex = 0;
     for (const [lineNumber, line] of input.lines.entries()) {
         out.push('');
         out.push(line);
         out.push('\n');
         while (
-            occurrenceIndex < document.occurrences.length &&
-            document.occurrences[occurrenceIndex].range[0] === lineNumber
+            occurrenceIndex < doc.occurrences.length &&
+            doc.occurrences[occurrenceIndex].range[0] === lineNumber
         ) {
-            const occurrence = document.occurrences[occurrenceIndex];
+            const occurrence = doc.occurrences[occurrenceIndex];
             occurrenceIndex++;
             if (occurrence.range.length > 3) {
                 // Skip multiline occurrences for now.
                 continue;
             }
 
-            out.push('#');
+            out.push(commentSyntax);
             const range = Range.fromLsif(occurrence.range);
 
-            let modifier = 0;
-            if (range.start.character === 0) {
-                modifier = 1;
-            } else {
+            const isStartOfLine = range.start.character == 0;
+            if (!isStartOfLine) {
                 out.push(' '.repeat(range.start.character - 1));
             }
-            const length = range.end.character - range.start.character - modifier;
-            if (length < 0) {
+
+
+            let modifier = 0;
+            if (isStartOfLine) {
+                modifier = 1;
+            }
+
+            const caretLength = range.end.character - range.start.character - modifier;
+            if (caretLength < 0) {
                 throw new Error(input.format(range, 'negative length occurrence!'));
             }
-            out.push('^'.repeat(length));
+            out.push('^'.repeat(caretLength));
             out.push(' ');
             const isDefinition = (occurrence.symbol_roles & lsiftyped.SymbolRole.Definition) > 0;
             out.push(isDefinition ? 'definition' : 'reference');
@@ -78,7 +96,28 @@ export function formatSnapshot(input: Input, document: lib.codeintel.lsiftyped.D
             const symbol = occurrence.symbol.startsWith(packageName)
                 ? occurrence.symbol.slice(packageName.length)
                 : occurrence.symbol;
-            out.push(symbol.replace("\n", "|"));
+            out.push(symbol.replace('\n', '|'));
+
+            const info = symbolTable.get(occurrence.symbol);
+            if (info && isDefinition) {
+                let docPrefix = '\n' + commentSyntax
+                if (!isStartOfLine) {
+                    docPrefix += ' '.repeat(range.start.character - 1);
+                }
+
+                for (const documentation of info.documentation) {
+                    for (const [idx, line] of documentation.split('\n').entries()) {
+                        out.push(docPrefix);
+                        if (idx == 0) {
+                            out.push('documentation ');
+                        } else {
+                            out.push('            > ');
+                        }
+                        out.push(line);
+                    }
+                }
+            }
+
             out.push('\n');
         }
     }
