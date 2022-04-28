@@ -202,12 +202,23 @@ export class TreeVisitor extends ParseTreeWalker {
         // so we need to push a new symbol
         const enclosingClass = ParseTreeUtils.getEnclosingClass(node, true);
         if (enclosingClass) {
+            // TODO: Should this be typeExpression?
+            // const type = this.evaluator.getType(node.valueExpression);
+            // const hover = this.program.getHoverForPosition(
+
+            const hoverResult = this.program.getHoverForPosition(
+                this.fileInfo!.filePath,
+                convertOffsetToPosition(node.start, this.fileInfo!.lines),
+                'markdown',
+                token
+            );
+
             this.document.symbols.push(
                 new lsiftyped.SymbolInformation({
                     symbol: this.getLsifSymbol(node).value,
 
                     // TODO: Get the documentation for a type annotation
-                    // documentation: ['A Field of a Class'],
+                    documentation: _formatHover(hoverResult!),
                 })
             );
         }
@@ -462,9 +473,11 @@ export class TreeVisitor extends ParseTreeWalker {
             //  (we want to track them down...)
             // Fo
             if (resolved && decl.node !== resolved.node) {
-                if (!this._imports.has(decl.node.id)) {
-                    throw 'This should only happen for imports';
-                }
+                // TODO: Check this later when I'm not embarassed on twitch
+                //       Errored on `sam.py`
+                // if (!this._imports.has(decl.node.id)) {
+                //     throw 'This should only happen for imports';
+                // }
 
                 if (type) {
                     this.pushTypeReference(node, decl.node, type);
@@ -472,7 +485,7 @@ export class TreeVisitor extends ParseTreeWalker {
                 }
 
                 if (resolved && resolvedType) {
-                    console.log("  => using resolved");
+                    console.log('  => using resolved');
                     this.pushTypeReference(node, resolved.node, resolvedType);
                     return true;
                 }
@@ -1014,10 +1027,11 @@ function _formatModuleName(node: ModuleNameNode): string {
 }
 
 // Based off of: convertHoverResults
+//  We can do slightly differently because we expected multiple different sections
 function _formatHover(hoverResults: HoverResults): string[] {
     return hoverResults.parts.map((part) => {
         if (part.python) {
-            return '```python\n' + part.text + '\n```\n';
+            return '```python\n' + part.text + '\n```';
         } else {
             return part.text;
         }
