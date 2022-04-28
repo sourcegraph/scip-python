@@ -22,6 +22,17 @@ export function pythonModule(visitor: TreeVisitor, node: ParseNode, moduleName: 
     }
 }
 
+export function makePackage(pythonPackage: PythonPackage): LsifSymbol {
+    return LsifSymbol.package(pythonPackage.name, pythonPackage.version);
+}
+
+export function makeModule(moduleName: string, pythonPackage: PythonPackage): LsifSymbol {
+    return LsifSymbol.global(
+        LsifSymbol.global(makePackage(pythonPackage), packageDescriptor(moduleName)),
+        metaDescriptor('__init__')
+    );
+}
+
 export function makeModuleName(node: NameNode, decl: Declaration, evaluator: TypeEvaluator): LsifSymbol | undefined {
     if (node.parent!.nodeType !== ParseNodeType.ModuleName) {
         throw 'Expected ModuleName';
