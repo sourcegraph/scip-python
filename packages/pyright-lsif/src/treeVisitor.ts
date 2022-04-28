@@ -168,11 +168,17 @@ export class TreeVisitor extends ParseTreeWalker {
                     })
                 );
 
+                const documentation = [`(module) ${fileInfo.moduleName}`];
+                const docstring = ParseTreeUtils.getDocString(node.statements);
+                if (docstring) {
+                    documentation.push(docstring.trim());
+                }
+
                 // TODO(documentation): See if hover can provide more information
                 this.document.symbols.push(
                     new lsiftyped.SymbolInformation({
                         symbol: symbol.value,
-                        documentation: [`(module) ${fileInfo.moduleName}`],
+                        documentation,
                     })
                 );
             } else {
