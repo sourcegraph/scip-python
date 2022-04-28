@@ -1,6 +1,7 @@
-class ExampleClass:
-# definition  snapshot-util 0.1 `src.single_class`/__init__:
+# < definition lsif-pyright pypi snapshot-util 0.1 `src.single_class`/__init__:
 #documentation (module) src.single_class
+
+class ExampleClass:
 #     ^^^^^^^^^^^^ definition  snapshot-util 0.1 `src.single_class`/ExampleClass#
 #     documentation ```python
 #                 > class ExampleClass:

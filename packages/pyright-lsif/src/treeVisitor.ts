@@ -164,7 +164,7 @@ export class TreeVisitor extends ParseTreeWalker {
                     new lsiftyped.Occurrence({
                         symbol_roles: lsiftyped.SymbolRole.Definition,
                         symbol: symbol.value,
-                        range: [0, 0, 1],
+                        range: [0, 0, 0],
                     })
                 );
 

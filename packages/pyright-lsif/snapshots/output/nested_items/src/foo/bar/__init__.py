@@ -1,6 +1,7 @@
-class InitClass:
-# definition  snapshot-util 0.1 `src.foo.bar`/__init__:
+# < definition lsif-pyright pypi snapshot-util 0.1 `src.foo.bar`/__init__:
 #documentation (module) src.foo.bar
+
+class InitClass:
 #     ^^^^^^^^^ definition  snapshot-util 0.1 `src.foo.bar`/InitClass#
 #     documentation ```python
 #                 > class InitClass:

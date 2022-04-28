@@ -1,6 +1,7 @@
-class ClassWithInferredField:
-# definition  snapshot-util 0.1 inferred_field_docstring/__init__:
+# < definition lsif-pyright pypi snapshot-util 0.1 inferred_field_docstring/__init__:
 #documentation (module) inferred_field_docstring
+
+class ClassWithInferredField:
 #     ^^^^^^^^^^^^^^^^^^^^^^ definition  snapshot-util 0.1 inferred_field_docstring/ClassWithInferredField#
 #     documentation ```python
 #                 > class ClassWithInferredField:

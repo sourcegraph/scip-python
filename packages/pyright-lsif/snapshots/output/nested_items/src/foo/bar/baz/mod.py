@@ -1,6 +1,7 @@
-class SuchNestedMuchWow:
-# definition  snapshot-util 0.1 `src.foo.bar.baz.mod`/__init__:
+# < definition lsif-pyright pypi snapshot-util 0.1 `src.foo.bar.baz.mod`/__init__:
 #documentation (module) src.foo.bar.baz.mod
+
+class SuchNestedMuchWow:
 #     ^^^^^^^^^^^^^^^^^ definition  snapshot-util 0.1 `src.foo.bar.baz.mod`/SuchNestedMuchWow#
 #     documentation ```python
 #                 > class SuchNestedMuchWow:

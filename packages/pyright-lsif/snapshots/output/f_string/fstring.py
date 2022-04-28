@@ -1,6 +1,7 @@
-var = ", world!"
-# definition  snapshot-util 0.1 fstring/__init__:
+# < definition lsif-pyright pypi snapshot-util 0.1 fstring/__init__:
 #documentation (module) fstring
+
+var = ", world!"
 #^^ definition  snapshot-util 0.1 fstring/var.
 #documentation ```python
 #            > builtins.str

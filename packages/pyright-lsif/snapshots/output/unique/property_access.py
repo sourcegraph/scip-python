@@ -1,6 +1,7 @@
-from typing import Sequence
-# definition  snapshot-util 0.1 property_access/__init__:
+# < definition lsif-pyright pypi snapshot-util 0.1 property_access/__init__:
 #documentation (module) property_access
+
+from typing import Sequence
 #    ^^^^^^ reference  snapshot-util 0.1 typing/__init__:
 #                  ^^^^^^^^ reference  snapshot-util 0.1 typing/Sequence#
 

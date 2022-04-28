@@ -1,6 +1,7 @@
-class ClassWithField:
-# definition  snapshot-util 0.1 field_docstring/__init__:
+# < definition lsif-pyright pypi snapshot-util 0.1 field_docstring/__init__:
 #documentation (module) field_docstring
+
+class ClassWithField:
 #     ^^^^^^^^^^^^^^ definition  snapshot-util 0.1 field_docstring/ClassWithField#
 #     documentation ```python
 #                 > class ClassWithField:
