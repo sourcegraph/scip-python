@@ -1,5 +1,6 @@
 from foo.bar import InitClass
 # definition  snapshot-util 0.1 `src.importer`/__init__:
+#documentation (module) src.importer
 #    ^^^^^^^ reference  snapshot-util 0.1 `foo.bar`/__init__:
 #                   ^^^^^^^^^ reference  snapshot-util 0.1 `src.foo.bar`/InitClass#
 from foo.bar.baz.mod import SuchNestedMuchWow

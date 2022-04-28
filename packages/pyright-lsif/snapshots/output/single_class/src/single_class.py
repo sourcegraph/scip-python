@@ -1,6 +1,10 @@
 class ExampleClass:
 # definition  snapshot-util 0.1 `src.single_class`/__init__:
+#documentation (module) src.single_class
 #     ^^^^^^^^^^^^ definition  snapshot-util 0.1 `src.single_class`/ExampleClass#
+#     documentation ```python
+#                 > class ExampleClass:
+#                 > ```
     a: int
 #   ^ definition  snapshot-util 0.1 `src.single_class`/ExampleClass#a.
 #      ^^^ reference  python-stdlib 3.10 builtins/int#
@@ -13,9 +17,19 @@ class ExampleClass:
 
     static_var = "Hello World"
 #   ^^^^^^^^^^ definition  snapshot-util 0.1 `src.single_class`/ExampleClass#static_var.
+#   documentation ```python
+#               > builtins.str
+#               > ```
 
     def __init__(self, a: int, b: int):
 #       ^^^^^^^^ definition  snapshot-util 0.1 `src.single_class`/ExampleClass#__init__().
+#       documentation ```python
+#                   > def __init__(
+#                   >   self,
+#                   >   a: int,
+#                   >   b: int
+#                   > ) -> None:
+#                   > ```
 #                ^^^^ definition  snapshot-util 0.1 `src.single_class`/ExampleClass#__init__().(self)
 #                      ^ definition  snapshot-util 0.1 `src.single_class`/ExampleClass#__init__().(a)
 #                         ^^^ reference  python-stdlib 3.10 builtins/int#

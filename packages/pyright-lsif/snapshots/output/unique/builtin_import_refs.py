@@ -1,5 +1,6 @@
 from typing import Any
 # definition  snapshot-util 0.1 builtin_import_refs/__init__:
+#documentation (module) builtin_import_refs
 #    ^^^^^^ reference  snapshot-util 0.1 typing/__init__:
 #                  ^^^ reference local 0
 
