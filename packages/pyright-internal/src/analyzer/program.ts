@@ -2445,7 +2445,7 @@ export class Program {
         return false;
     }
 
-    private _createSourceMapper(execEnv: ExecutionEnvironment, mapCompiled?: boolean, preferStubs?: boolean) {
+    public _createSourceMapper(execEnv: ExecutionEnvironment, mapCompiled?: boolean, preferStubs?: boolean) {
         const sourceMapper = new SourceMapper(
             this._importResolver,
             execEnv,
