@@ -5,6 +5,6 @@ import leftpad
 #      ^^^^^^^ reference  leftpad 0.1.2 leftpad/__init__:
 
 print(leftpad)
-#^^^^ reference  python-stdlib 3.10 builtins/print().
+#^^^^ reference local 0print().
 #     ^^^^^^^ reference  snapshot-util 0.1 leftpad/__init__:
 

@@ -64,6 +64,8 @@ import { getFunctionOrClassDeclDocString, getModuleDocString } from 'pyright-int
 import * as Hardcoded from './hardcoded';
 import { Event } from 'vscode-languageserver';
 import { HoverResults } from 'pyright-internal/languageService/hoverProvider';
+import { convertDocStringToMarkdown } from 'pyright-internal/analyzer/docStringConversion';
+import { assert } from 'pyright-internal/common/debug';
 
 //  Useful functions for later, but haven't gotten far enough yet to use them.
 //      extractParameterDocumentation
@@ -174,7 +176,7 @@ export class TreeVisitor extends ParseTreeWalker {
                 const documentation = [`(module) ${fileInfo.moduleName}`];
                 const docstring = ParseTreeUtils.getDocString(node.statements);
                 if (docstring) {
-                    documentation.push(docstring.trim());
+                    documentation.push(convertDocStringToMarkdown(docstring.trim()));
                 }
 
                 this.document.symbols.push(
@@ -494,10 +496,22 @@ export class TreeVisitor extends ParseTreeWalker {
                 }
             }
 
-            const type = this.evaluator.getTypeForDeclaration(decl);
+            const declNode = decl.node;
+            switch (declNode.nodeType) {
+                case ParseNodeType.ImportAs:
+                    assert(declNode != node.parent, 'Must not be the definition');
 
-            // Should I always be using resolved?
+
+                    const moduleName = _formatModuleName(declNode.module);
+                    const pythonPackage = this.moduleNameNodeToPythonPackage(declNode.module);
+                    assert(pythonPackage, 'Must have a python package');
+                    this.pushNewNameNodeOccurence(node, Symbols.makeModule(moduleName, pythonPackage));
+                    return true;
+            }
+
             const resolved = this.evaluator.resolveAliasDeclaration(decl, true, true);
+
+            const type = this.evaluator.getTypeForDeclaration(decl);
             const resolvedType = this.evaluator.getTypeForDeclaration(resolved!);
 
             // TODO: Handle intrinsics more usefully (using declaration probably)
@@ -510,7 +524,7 @@ export class TreeVisitor extends ParseTreeWalker {
             //  (we want to track them down...)
             // Fo
             if (resolved && decl.node !== resolved.node) {
-                console.log("  Aliased Types:");
+                console.log('  Aliased Types:');
                 // TODO: Check this later when I'm not embarassed on twitch
                 //       Errored on `sam.py`
                 // if (!this._imports.has(decl.node.id)) {
@@ -518,20 +532,20 @@ export class TreeVisitor extends ParseTreeWalker {
                 // }
 
                 if (type) {
-                    console.log("Pushed type 1")
+                    console.log('Pushed type 1');
                     this.pushTypeReference(node, decl.node, type);
                     return true;
                 }
 
                 if (resolved && resolvedType) {
-                    console.log("Pushed type 2", resolvedType)
+                    console.log('Pushed type 2', resolvedType);
                     this.pushTypeReference(node, resolved.node, resolvedType);
                     return true;
                 }
 
                 // TODO: Handle inferred types here
                 // console.log('SKIP:', node.token.value, resolvedType);
-                    console.log("Pushed type 3")
+                console.log('Pushed type 3');
 
                 this.pushNewNameNodeOccurence(node, this.getLsifSymbol(decl.node));
                 return true;
@@ -562,7 +576,7 @@ export class TreeVisitor extends ParseTreeWalker {
 
                     const doc = ParseTreeUtils.getDocString(parent.suite.statements)?.trim();
                     if (doc) {
-                        documentation.push(doc);
+                        documentation.push(convertDocStringToMarkdown(doc));
                     }
 
                     this.document.symbols.push(
@@ -723,10 +737,14 @@ export class TreeVisitor extends ParseTreeWalker {
                     );
                 }
 
-                throw 'nope'
+                // throw 'nope';
 
                 // const version = this.getPackageInfo(node, moduleName);
                 const version = this.config.pythonEnvironment.getPackageForModule(moduleName)!;
+                if (!version) {
+                    return LsifSymbol.local(this.counter.next());
+                }
+
                 return LsifSymbol.global(
                     LsifSymbol.package(version.name, version.version),
                     packageDescriptor(moduleName)
@@ -918,7 +936,7 @@ export class TreeVisitor extends ParseTreeWalker {
             }
 
             // const pythonPackage = this.getPackageInfo(node, decl.moduleName)!;
-            console.log("getting lsif symbol from node");
+            console.log('getting lsif symbol from node');
             // return LsifSymbol.global(LsifSymbol.package("requests", "2.0.0"), methodDescriptor(node.value));
             return this.getLsifSymbol(decl.node);
             // return LsifSymbol.global(
@@ -1139,6 +1157,17 @@ export class TreeVisitor extends ParseTreeWalker {
         // }
 
         return this.evaluator.getInferredTypeOfDeclaration(symbolWithScope.symbol, aliasDecl);
+    }
+
+    private moduleNameNodeToPythonPackage(node: ModuleNameNode): PythonPackage | undefined {
+        const declModuleName = _formatModuleName(node);
+        let pythonPackage = this.config.pythonEnvironment.getPackageForModule(declModuleName);
+        if (!pythonPackage) {
+            // TODO: Should probably configure this to be disabled if needed
+            pythonPackage = this.config.pythonEnvironment.guessPackage(declModuleName);
+        }
+
+        return pythonPackage;
     }
 }
 

@@ -51,9 +51,32 @@ export function formatSnapshot(input: Input, doc: lib.codeintel.lsiftyped.Docume
     const out: string[] = [];
     const symbolTable = getSymbolTable(doc);
 
+    const symbolsWithDefinitions: Set<string> = new Set();
+    for (let occurrence of doc.occurrences) {
+        const isDefinition = (occurrence.symbol_roles & lsiftyped.SymbolRole.Definition) > 0;
+        if (isDefinition) {
+            symbolsWithDefinitions.add(occurrence.symbol);
+        }
+    }
+
+    const emittedDocstrings: Set<string> = new Set();
     const pushDoc = (range: Range, symbol: string, isDefinition: boolean, isStartOfLine: boolean) => {
+        // Only emit docstrings once
+        if (emittedDocstrings.has(symbol)) {
+            out.push('\n');
+            return;
+        }
+
+        // Only definitions OR symbols without a definition should be emitted
+        if (!isDefinition && symbolsWithDefinitions.has(symbol)) {
+            out.push('\n');
+            return;
+        }
+
+        emittedDocstrings.add(symbol);
+
         const info = symbolTable.get(symbol);
-        if (info && isDefinition) {
+        if (info) {
             let docPrefix = '\n' + commentSyntax;
             if (!isStartOfLine) {
                 docPrefix += ' '.repeat(range.start.character - 1);
