@@ -18,6 +18,23 @@ export default class PythonEnvironment {
         }
     }
 
+    public guessPackage(moduleName: string): PythonPackage | undefined {
+        let parts = moduleName.split('.');
+        let first = parts[0];
+        for (let index = 0; index < this.packages.length; index++) {
+            if (first == this.packages[index].name) {
+                return this.packages[index]
+            }
+        }
+        // let index = this._moduleNameToIndex.get(first);
+        // console.log("~~", this._moduleNameToIndex, first)
+        // if (index !== undefined) {
+        //     return this.packages[index];
+        // }
+
+        return undefined;
+    }
+
     public getPackageForModule(moduleName: string): PythonPackage | undefined {
         // TODO: Could turn these into a Set (normalize all paths, replace with `.`, etc) and then just look this up
         // that is probably worth it as an optimization later.

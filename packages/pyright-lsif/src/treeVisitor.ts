@@ -11,6 +11,7 @@ import {
     ClassNode,
     ExpressionNode,
     FunctionNode,
+    ImportAsNode,
     ImportFromAsNode,
     ImportFromNode,
     ImportNode,
@@ -47,18 +48,19 @@ import {
     isTypeVar,
     isUnknown,
     Type,
+    TypeCategory,
 } from 'pyright-internal/analyzer/types';
 import { TypeStubExtendedWriter } from './TypeStubExtendedWriter';
 import { SourceFile } from 'pyright-internal/analyzer/sourceFile';
 import { extractParameterDocumentation } from 'pyright-internal/analyzer/docStringUtils';
-import { isAliasDeclaration, isIntrinsicDeclaration } from 'pyright-internal/analyzer/declaration';
+import { DeclarationType, isAliasDeclaration, isIntrinsicDeclaration } from 'pyright-internal/analyzer/declaration';
 import { ConfigOptions, ExecutionEnvironment } from 'pyright-internal/common/configOptions';
 import { versionToString } from 'pyright-internal/common/pythonVersion';
 import { Program } from 'pyright-internal/analyzer/program';
 import PythonEnvironment from './virtualenv/PythonEnvironment';
 import { Counter } from './lsif-typescript/Counter';
 import PythonPackage from './virtualenv/PythonPackage';
-import { getFunctionOrClassDeclDocString } from 'pyright-internal/analyzer/typeDocStringUtils';
+import { getFunctionOrClassDeclDocString, getModuleDocString } from 'pyright-internal/analyzer/typeDocStringUtils';
 import * as Hardcoded from './hardcoded';
 import { Event } from 'vscode-languageserver';
 import { HoverResults } from 'pyright-internal/languageService/hoverProvider';
@@ -66,6 +68,7 @@ import { HoverResults } from 'pyright-internal/languageService/hoverProvider';
 //  Useful functions for later, but haven't gotten far enough yet to use them.
 //      extractParameterDocumentation
 //      import { getModuleDocString } from 'pyright-internal/analyzer/typeDocStringUtils';
+//      this.evaluator.printType(...)
 
 const token = {
     isCancellationRequested: false,
@@ -96,7 +99,7 @@ export class TreeVisitor extends ParseTreeWalker {
     private fileInfo: AnalyzerFileInfo | undefined;
     private _imports: Map<number, ParseNode>;
     private _symbols: Map<number, LsifSymbol>;
-    private symbolInformationForNode: Map<number, boolean>;
+    private symbolInformationForNode: Set<string>;
 
     private _docstringWriter: TypeStubExtendedWriter;
 
@@ -137,7 +140,7 @@ export class TreeVisitor extends ParseTreeWalker {
         );
         this._symbols = new Map();
         this._imports = new Map();
-        this.symbolInformationForNode = new Map();
+        this.symbolInformationForNode = new Set();
 
         this._docstringWriter = new TypeStubExtendedWriter(this.config.sourceFile, this.evaluator);
 
@@ -174,7 +177,6 @@ export class TreeVisitor extends ParseTreeWalker {
                     documentation.push(docstring.trim());
                 }
 
-                // TODO(documentation): See if hover can provide more information
                 this.document.symbols.push(
                     new lsiftyped.SymbolInformation({
                         symbol: symbol.value,
@@ -222,8 +224,6 @@ export class TreeVisitor extends ParseTreeWalker {
             this.document.symbols.push(
                 new lsiftyped.SymbolInformation({
                     symbol: this.getLsifSymbol(node).value,
-
-                    // TODO: Get the documentation for a type annotation
                     documentation: _formatHover(hoverResult!),
                 })
             );
@@ -301,7 +301,7 @@ export class TreeVisitor extends ParseTreeWalker {
 
             // This pulls documentation of various styles from function docstring
             const paramDocstring = paramNode.name
-                ? extractParameterDocumentation(functionDoc, paramNode.name!.value)
+                ? extractParameterDocumentation(functionDoc || '', paramNode.name!.value)
                 : undefined;
 
             const paramDocumentation = paramDocstring ? [paramDocstring] : undefined;
@@ -329,21 +329,45 @@ export class TreeVisitor extends ParseTreeWalker {
     override visitImport(node: ImportNode): boolean {
         this._docstringWriter.visitImport(node);
 
-        // TODO(0.2): Resolve all these weird import things.
         for (const listNode of node.list) {
-            let lastName = listNode.module.nameParts[listNode.module.nameParts.length - 1];
-            let decls = this.evaluator.getDeclarationsForNameNode(lastName);
-            if (!decls || decls.length === 0) {
+            let symbolNameNode: NameNode;
+            if (listNode.alias) {
+                // The symbol name is defined by the alias.
+                symbolNameNode = listNode.alias;
+            } else {
+                // There was no alias, so we need to use the first element of
+                // the name parts as the symbol.
+                symbolNameNode = listNode.module.nameParts[0];
+            }
+
+            if (!symbolNameNode) {
+                // This can happen in certain cases where there are parse errors.
                 continue;
             }
 
-            let decl = decls[0];
-            let filepath = path.resolve(decl.path);
-            if (filepath.startsWith(this.cwd)) {
+            // Look up the symbol to find the alias declaration.
+            let symbolType = this.getAliasedSymbolTypeForName(listNode, symbolNameNode.value);
+            if (symbolType) {
+                if (symbolType.category !== TypeCategory.Module) {
+                    throw 'only modules should be modules';
+                }
+
+                // TODO: get the right package
+                // const pythonPackage = this.getPackageInfo(listNode, symbolType.moduleName);
+                let pythonPackage = this.config.pythonEnvironment.getPackageForModule(symbolType.moduleName);
+                if (!pythonPackage) {
+                    // TODO: Should probably configure this to be disabled if needed
+                    pythonPackage = this.config.pythonEnvironment.guessPackage(symbolType.moduleName);
+                }
+
+                if (!pythonPackage) {
+                    continue;
+                }
+
                 let symbol = LsifSymbol.global(
                     LsifSymbol.global(
-                        LsifSymbol.package(this.projectPackage.name, this.projectPackage.version),
-                        packageDescriptor(_formatModuleName(listNode.module))
+                        LsifSymbol.package(pythonPackage.name, pythonPackage.version),
+                        packageDescriptor(symbolType.moduleName)
                     ),
                     metaDescriptor('__init__')
                 );
@@ -355,22 +379,33 @@ export class TreeVisitor extends ParseTreeWalker {
                         range: parseNodeToRange(listNode, this.fileInfo!.lines).toLsif(),
                     })
                 );
+
+                // TODO: Probably want to do this some other way, cause
+                // I don't like counting on putting information in here
+                // (would rather use emitSymbolInformationOnce instead)
+                if (this.symbolInformationForNode.has(symbol.value)) {
+                    continue;
+                }
+
+                const documentation = [`(module) ${symbolType.moduleName}`];
+                if (symbolType.docString) {
+                    documentation.push('```\n' + symbolType.docString + '```');
+                } else {
+                    // TODO(multi_decls)
+                    let decls = this.evaluator.getDeclarationsForNameNode(symbolNameNode)!;
+                    const resolved = this.evaluator.resolveAliasDeclaration(decls[0], true, true);
+                    const moduleDoc = getModuleDocString(
+                        symbolType,
+                        resolved,
+                        this.program._createSourceMapper(this.execEnv, true, true)
+                    );
+                    if (moduleDoc) {
+                        documentation.push(moduleDoc);
+                    }
+                }
+
+                this.emitSymbolInformationOnce(listNode, symbol, documentation);
             }
-
-            // This isn't correct: gets the current file, not the import file
-            // let filepath = getFileInfoFromNode(_node)!.filePath;
-            // return this.config.pythonEnvironment.getPackageForModule(moduleName);
-
-            // TODO: This is the same problem as from visitImportFrom,
-            //  I can't get this to resolve to a type that is useful for getting
-            //  hover information.
-            //
-            //  So we will have to figure out something else (perhaps we just load the file? and then get the docs?)
-            //  Not important enough for now though. Also should make sure we only emit the symbols once
-            //
-            // let importName = listNode.module.nameParts[listNode.module.nameParts.length - 1];
-            // let resolved = this.evaluator.resolveAliasDeclaration(decls[0], true, true);
-            // let resolvedInfo = this.evaluator.resolveAliasDeclarationWithInfo(decls[0], true, true);
         }
 
         return true;
@@ -413,8 +448,6 @@ export class TreeVisitor extends ParseTreeWalker {
     }
 
     override visitImportFromAs(_node: ImportFromAsNode): boolean {
-        // console.log("visitImportFromAs", node.id, node.name.value);
-        //
         // const decls = this.evaluator.getDeclarationsForNameNode(node.name);
         // if (!decls) {
         //     return false;
@@ -439,16 +472,13 @@ export class TreeVisitor extends ParseTreeWalker {
             throw 'No parent for named node';
         }
 
-        if (node.parent.nodeType == ParseNodeType.Class) {
-            console.log('==> Inside class name now');
-        }
-
         console.log(node.token.value, ParseTreeUtils.printParseNodeType(node.parent.nodeType));
 
         const parent = node.parent;
         const decls = this.evaluator.getDeclarationsForNameNode(node) || [];
         if (decls.length > 0) {
-            // TOOD: Should probably just loop over the declarations
+            // TODO(multi_decls)
+
             const decl = decls[0];
             if (!decl.node) {
                 switch (parent.nodeType) {
@@ -466,6 +496,7 @@ export class TreeVisitor extends ParseTreeWalker {
 
             const type = this.evaluator.getTypeForDeclaration(decl);
 
+            // Should I always be using resolved?
             const resolved = this.evaluator.resolveAliasDeclaration(decl, true, true);
             const resolvedType = this.evaluator.getTypeForDeclaration(resolved!);
 
@@ -479,6 +510,7 @@ export class TreeVisitor extends ParseTreeWalker {
             //  (we want to track them down...)
             // Fo
             if (resolved && decl.node !== resolved.node) {
+                console.log("  Aliased Types:");
                 // TODO: Check this later when I'm not embarassed on twitch
                 //       Errored on `sam.py`
                 // if (!this._imports.has(decl.node.id)) {
@@ -486,18 +518,20 @@ export class TreeVisitor extends ParseTreeWalker {
                 // }
 
                 if (type) {
+                    console.log("Pushed type 1")
                     this.pushTypeReference(node, decl.node, type);
                     return true;
                 }
 
                 if (resolved && resolvedType) {
-                    console.log('  => using resolved');
+                    console.log("Pushed type 2", resolvedType)
                     this.pushTypeReference(node, resolved.node, resolvedType);
                     return true;
                 }
 
                 // TODO: Handle inferred types here
-                console.log('SKIP:', node.token.value, resolvedType);
+                // console.log('SKIP:', node.token.value, resolvedType);
+                    console.log("Pushed type 3")
 
                 this.pushNewNameNodeOccurence(node, this.getLsifSymbol(decl.node));
                 return true;
@@ -642,29 +676,10 @@ export class TreeVisitor extends ParseTreeWalker {
                 return this.rawGetLsifSymbol(node)!;
             }
 
-            // console.log(`no package info ${moduleName} ${node.nodeType}`);
             // let newSymbol = this.makeLsifSymbol(this.projectPackage, "_", node);
             const newSymbol = LsifSymbol.local(this.counter.next());
             this.rawSetLsifSymbol(node, newSymbol);
-            this.emitSymbolInformationOnce(
-                node,
-                newSymbol /* () => {
-                const hoverResult = this.program.getHoverForPosition(
-                    nodeFileInfo.filePath,
-                    convertOffsetToPosition(node.start, nodeFileInfo.lines),
-                    'markdown',
-                    token
-                );
-
-                if (!hoverResult) {
-                    console.log("OH NO NO NO", nodeFileInfo.filePath)
-                    // throw 'asdf';
-                    return [];
-                }
-
-                return _formatHover(hoverResult);
-            } */
-            );
+            this.emitSymbolInformationOnce(node, newSymbol);
             return newSymbol;
         }
 
@@ -708,9 +723,12 @@ export class TreeVisitor extends ParseTreeWalker {
                     );
                 }
 
-                const version = this.getPackageInfo(node, moduleName);
+                throw 'nope'
+
+                // const version = this.getPackageInfo(node, moduleName);
+                const version = this.config.pythonEnvironment.getPackageForModule(moduleName)!;
                 return LsifSymbol.global(
-                    LsifSymbol.package(pythonPackage.name, pythonPackage.version),
+                    LsifSymbol.package(version.name, version.version),
                     packageDescriptor(moduleName)
                 );
 
@@ -900,6 +918,8 @@ export class TreeVisitor extends ParseTreeWalker {
             }
 
             // const pythonPackage = this.getPackageInfo(node, decl.moduleName)!;
+            console.log("getting lsif symbol from node");
+            // return LsifSymbol.global(LsifSymbol.package("requests", "2.0.0"), methodDescriptor(node.value));
             return this.getLsifSymbol(decl.node);
             // return LsifSymbol.global(
             //     // LsifSymbol.package(decl.moduleName, pythonPackage.version),
@@ -921,7 +941,6 @@ export class TreeVisitor extends ParseTreeWalker {
         } else if (isTypeVar(typeObj)) {
             throw 'typevar';
         } else if (isModule(typeObj)) {
-            // throw `module ${typeObj}`;
             const pythonPackage = this.getPackageInfo(node, typeObj.moduleName)!;
             return LsifSymbol.global(
                 LsifSymbol.package(typeObj.moduleName, pythonPackage.version),
@@ -981,12 +1000,26 @@ export class TreeVisitor extends ParseTreeWalker {
         return this.config.pythonEnvironment.getPackageForModule(moduleName);
     }
 
-    private emitSymbolInformationOnce(node: ParseNode, symbol: LsifSymbol) {
-        if (this.symbolInformationForNode.get(node.id)) {
+    private emitSymbolInformationOnce(
+        node: ParseNode,
+        symbol: LsifSymbol,
+        documentation: string[] | undefined = undefined
+    ) {
+        if (this.symbolInformationForNode.has(symbol.value)) {
             return;
         }
 
-        this.symbolInformationForNode.set(node.id, true);
+        this.symbolInformationForNode.add(symbol.value);
+        if (documentation) {
+            this.document.symbols.push(
+                new lsiftyped.SymbolInformation({
+                    symbol: symbol.value,
+                    documentation,
+                })
+            );
+
+            return;
+        }
 
         const nodeFileInfo = getFileInfo(node)!;
         const hoverResult = this.program.getHoverForPosition(
@@ -1018,6 +1051,94 @@ export class TreeVisitor extends ParseTreeWalker {
                 documentation: [docs],
             })
         );
+    }
+
+    // this is copied from TypeEvaluator -> getAliasedSymbolTypeForName
+    //  but it just was not exposed as such.
+    private getAliasedSymbolTypeForName(
+        node: ImportAsNode | ImportFromAsNode | ImportFromNode,
+        name: string
+    ): Type | undefined {
+        const symbolWithScope = this.evaluator.lookUpSymbolRecursive(node, name, /* honorCodeFlow */ true);
+        if (!symbolWithScope) {
+            return undefined;
+        }
+
+        // Normally there will be at most one decl associated with the import node, but
+        // there can be multiple in the case of the "from .X import X" statement. In such
+        // case, we want to choose the last declaration.
+        const filteredDecls = symbolWithScope.symbol
+            .getDeclarations()
+            .filter(
+                (decl) => ParseTreeUtils.isNodeContainedWithin(node, decl.node) && decl.type === DeclarationType.Alias
+            );
+        let aliasDecl = filteredDecls.length > 0 ? filteredDecls[filteredDecls.length - 1] : undefined;
+
+        // If we didn't find an exact match, look for any alias associated with
+        // this symbol. In cases where we have multiple ImportAs nodes that share
+        // the same first-part name (e.g. "import asyncio" and "import asyncio.tasks"),
+        // we may not find the declaration associated with this node.
+        if (!aliasDecl) {
+            aliasDecl = symbolWithScope.symbol.getDeclarations().find((decl) => decl.type === DeclarationType.Alias);
+        }
+
+        if (!aliasDecl) {
+            return undefined;
+        }
+
+        // assert(aliasDecl.type === DeclarationType.Alias);
+        const fileInfo = getFileInfo(node);
+
+        // Try to resolve the alias while honoring external visibility.
+        const resolvedAliasInfo = this.evaluator.resolveAliasDeclarationWithInfo(
+            aliasDecl,
+            /* resolveLocalNames */ true,
+            /* allowExternallyHiddenAccess */ fileInfo.isStubFile
+        );
+
+        if (!resolvedAliasInfo) {
+            return undefined;
+        }
+
+        if (!resolvedAliasInfo.declaration) {
+            // return evaluatorOptions.evaluateUnknownImportsAsAny ? AnyType.create() : UnknownType.create();
+            return undefined;
+        }
+
+        // if (node.nodeType === ParseNodeType.ImportFromAs) {
+        //     if (resolvedAliasInfo.isPrivate) {
+        //         addDiagnostic(
+        //             fileInfo.diagnosticRuleSet.reportPrivateUsage,
+        //             DiagnosticRule.reportPrivateUsage,
+        //             Localizer.Diagnostic.privateUsedOutsideOfModule().format({
+        //                 name: node.name.value,
+        //             }),
+        //             node.name
+        //         );
+        //     }
+        //
+        //     if (resolvedAliasInfo.privatePyTypedImporter) {
+        //         const diag = new DiagnosticAddendum();
+        //         if (resolvedAliasInfo.privatePyTypedImported) {
+        //             diag.addMessage(
+        //                 Localizer.DiagnosticAddendum.privateImportFromPyTypedSource().format({
+        //                     module: resolvedAliasInfo.privatePyTypedImported,
+        //                 })
+        //             );
+        //         }
+        //         addDiagnostic(
+        //             fileInfo.diagnosticRuleSet.reportPrivateImportUsage,
+        //             DiagnosticRule.reportPrivateImportUsage,
+        //             Localizer.Diagnostic.privateImportFromPyTypedModule().format({
+        //                 name: node.name.value,
+        //                 module: resolvedAliasInfo.privatePyTypedImporter,
+        //             }) + diag.getString(),
+        //             node.name
+        //         );
+        //     }
+        // }
+
+        return this.evaluator.getInferredTypeOfDeclaration(symbolWithScope.symbol, aliasDecl);
     }
 }
 
