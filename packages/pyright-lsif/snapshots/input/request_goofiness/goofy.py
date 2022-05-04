@@ -1,3 +1,3 @@
 import requests
 
-requests.get("https://sourcegraph.com")
+print(requests.get("https://sourcegraph.com"))
