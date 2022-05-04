@@ -5,5 +5,10 @@
         "files": [
             "leftpad"
         ]
+    },
+    {
+        "name": "requests",
+        "version": "2.0.0",
+        "files": []
     }
 ]

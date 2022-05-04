@@ -69,7 +69,7 @@ export function main(): void {
 
                 const lsifIndex = new lib.codeintel.lsiftyped.Index();
 
-                console.log('Indexing:', projectRoot, '@', projectVersion);
+                console.log('Indexing Dir:', projectRoot, ' // version:', projectVersion);
 
                 index({
                     workspaceRoot,

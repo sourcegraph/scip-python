@@ -40,6 +40,7 @@ export class Indexer {
         this.pyrightConfig = new ConfigOptions(lsifConfig.projectRoot);
         this.pyrightConfig.checkOnlyOpenFiles = false;
         this.pyrightConfig.indexing = true;
+        this.pyrightConfig.useLibraryCodeForTypes = true;
 
         const fs = new PyrightFileSystem(createFromRealFileSystem());
         this.pyrightConfig.typeshedPath = getTypeShedFallbackPath(fs);
