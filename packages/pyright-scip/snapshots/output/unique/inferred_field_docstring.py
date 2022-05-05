@@ -19,6 +19,6 @@ class ClassWithInferredField:
 #                         ^^^ reference local 0
         self.b = b
 #       ^^^^ reference  snapshot-util 0.1 inferred_field_docstring/ClassWithInferredField#__init__().(self)
-#            ^ definition local 1
+#            ^ definition  snapshot-util 0.1 inferred_field_docstring/ClassWithInferredField#b.
 #                ^ reference  snapshot-util 0.1 inferred_field_docstring/ClassWithInferredField#__init__().(b)
 

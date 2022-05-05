@@ -476,13 +476,12 @@ export class TreeVisitor extends ParseTreeWalker {
 
     override visitName(node: NameNode): boolean {
         if (!node.parent) {
-            // return;
-            throw 'No parent for named node';
+            throw `No parent for named node: ${node.token.value}`;
         }
 
-        console.log(node.token.value, 'parent:', ParseTreeUtils.printParseNodeType(node.parent.nodeType));
-
         const parent = node.parent;
+        console.log(node.token.value, 'parent:', ParseTreeUtils.printParseNodeType(parent.nodeType));
+
         const decls = this.evaluator.getDeclarationsForNameNode(node) || [];
         if (decls.length > 0) {
             // TODO(multi_decls)
@@ -503,6 +502,8 @@ export class TreeVisitor extends ParseTreeWalker {
                 }
             }
 
+            console.log("    decl type::", ParseTreeUtils.printParseNodeType(decl.node.nodeType));
+
             const declNode = decl.node;
             switch (declNode.nodeType) {
                 case ParseNodeType.Name:
@@ -513,8 +514,6 @@ export class TreeVisitor extends ParseTreeWalker {
 
                     if (parent.nodeType === ParseNodeType.ListComprehensionFor) {
                         const symbol = this.getLocalForDeclaration(declNode);
-                        // this.pushNewNameNodeOccurence(node, symbol);
-                        // return true;
                         break;
                     }
 
@@ -535,14 +534,15 @@ export class TreeVisitor extends ParseTreeWalker {
                     return true;
             }
 
-            const resolved = this.evaluator.resolveAliasDeclaration(decl, true, true);
 
             const type = this.evaluator.getTypeForDeclaration(decl);
+            const resolved = this.evaluator.resolveAliasDeclaration(decl, true, true);
             if (!resolved) {
+                softAssert(false, "Must have a resolved alias declaration");
                 return true;
             }
 
-            const resolvedType = this.evaluator.getTypeForDeclaration(resolved!);
+            const resolvedType = this.evaluator.getTypeForDeclaration(resolved);
 
             // TODO: Handle intrinsics more usefully (using declaration probably)
             if (isIntrinsicDeclaration(decl)) {
@@ -552,7 +552,7 @@ export class TreeVisitor extends ParseTreeWalker {
 
             // Handle aliases differently
             //  (we want to track them down...)
-            if (resolved && decl.node !== resolved.node) {
+            if (decl.node !== resolved.node) {
                 // TODO: Check this later when I'm not embarassed on twitch
                 //       Errored on `sam.py`
                 // if (!this._imports.has(decl.node.id)) {
@@ -564,7 +564,7 @@ export class TreeVisitor extends ParseTreeWalker {
                     return true;
                 }
 
-                if (resolved && resolvedType) {
+                if (resolvedType) {
                     const resolvedInfo = getFileInfo(node);
                     const hoverResult = this.program.getHoverForPosition(
                         resolvedInfo.filePath,
@@ -827,7 +827,18 @@ export class TreeVisitor extends ParseTreeWalker {
                 );
 
             case ParseNodeType.MemberAccess:
-                throw 'oh ya';
+                // // throw 'oh ya';
+                // return this.getLsifSymbol(node.parent!);
+                console.log('Member Access:', node.leftExpression.nodeType, node);
+                const left = node.leftExpression;
+
+                switch (left.nodeType) {
+                    case ParseNodeType.Name:
+                        // return this.getLsifSymbol(left);
+                }
+
+                // softAssert(false, "Ohn no");
+                return LsifSymbol.empty();
 
             case ParseNodeType.Parameter:
                 if (!node.name) {
@@ -867,6 +878,55 @@ export class TreeVisitor extends ParseTreeWalker {
                 return LsifSymbol.global(this.getLsifSymbol(node.parent!), metaDescriptor('#'));
 
             case ParseNodeType.Name:
+                const parent = node.parent;
+                if (!parent) {
+                    throw 'must have parent';
+                }
+
+                switch (parent.nodeType) {
+                    case ParseNodeType.MemberAccess:
+                        // if (node.id === parent.leftExpression.id) {
+                            const type = this.evaluator.getTypeOfExpression(parent.leftExpression);
+                            console.log("Left Expression Type:", type);
+
+                            switch (type.type.category) {
+                                case TypeCategory.TypeVar:
+                                    const typeVar = type.type
+                                    const bound = (typeVar.details.boundType! as ClassType);
+                                    // console.log("Is TypeVar", typeVar.details.boundType);
+
+                                    // TODO:
+                                    const pythonPackage = this.getPackageInfo(node, bound.details.moduleName)!;
+                                    return LsifSymbol.global(LsifSymbol.global(
+                                        LsifSymbol.global(
+                                            LsifSymbol.package(pythonPackage.name, pythonPackage.version),
+                                            packageDescriptor(bound.details.moduleName)
+                                        ), typeDescriptor(bound.details.name)
+                                    ), termDescriptor(node.value)
+                                                            );
+                                default:
+                            }
+                        // }
+                }
+
+                // const enclosingSuite = undefined;
+                // switch (parent.nodeType) {
+                //     case ParseNodeType.MemberAccess:
+                //         break;
+                //     default:
+                //         enclosingSuite = ParseTreeUtils.getEnclosingSuite(node as ParseNode);
+                //         if (enclosingSuite) {
+                //             const enclosingParent = enclosingSuite.parent;
+                //             if (enclosingParent) {
+                //                 switch (enclosingParent.nodeType) {
+                //                     case ParseNodeType.Function:
+                //                     case ParseNodeType.Lambda:
+                //                         return LsifSymbol.local(this.counter.next());
+                //                 }
+                //             }
+                //         }
+                // }
+
                 const enclosingSuite = ParseTreeUtils.getEnclosingSuite(node as ParseNode);
                 if (enclosingSuite) {
                     const enclosingParent = enclosingSuite.parent;
