@@ -480,7 +480,7 @@ export class TreeVisitor extends ParseTreeWalker {
             throw 'No parent for named node';
         }
 
-        console.log(node.token.value, 'parent ->', ParseTreeUtils.printParseNodeType(node.parent.nodeType));
+        console.log(node.token.value, 'parent:', ParseTreeUtils.printParseNodeType(node.parent.nodeType));
 
         const parent = node.parent;
         const decls = this.evaluator.getDeclarationsForNameNode(node) || [];
@@ -504,10 +504,8 @@ export class TreeVisitor extends ParseTreeWalker {
             }
 
             const declNode = decl.node;
-            console.log('DeclNode Type:', ParseTreeUtils.printParseNodeType(declNode.nodeType));
             switch (declNode.nodeType) {
                 case ParseNodeType.Name:
-                    console.log(declNode);
                     const parent = declNode.parent!;
                     if (!parent) {
                         break;
@@ -555,7 +553,6 @@ export class TreeVisitor extends ParseTreeWalker {
             // Handle aliases differently
             //  (we want to track them down...)
             if (resolved && decl.node !== resolved.node) {
-                console.log('  Aliased Types:');
                 // TODO: Check this later when I'm not embarassed on twitch
                 //       Errored on `sam.py`
                 // if (!this._imports.has(decl.node.id)) {
@@ -563,14 +560,11 @@ export class TreeVisitor extends ParseTreeWalker {
                 // }
 
                 if (type) {
-                    console.log('Pushed type 1');
                     this.pushTypeReference(node, decl.node, type);
                     return true;
                 }
 
                 if (resolved && resolvedType) {
-                    console.log('Pushed type 2', node.value);
-
                     const resolvedInfo = getFileInfo(node);
                     const hoverResult = this.program.getHoverForPosition(
                         resolvedInfo.filePath,
@@ -578,7 +572,6 @@ export class TreeVisitor extends ParseTreeWalker {
                         'markdown',
                         token
                     );
-                    console.log('  Hover:', hoverResult);
 
                     if (hoverResult) {
                         const symbol = this.typeToSymbol(node, declNode, resolvedType);
@@ -593,7 +586,6 @@ export class TreeVisitor extends ParseTreeWalker {
 
                 // TODO: Handle inferred types here
                 // console.log('SKIP:', node.token.value, resolvedType);
-                console.log('Pushed type 3');
 
                 this.pushNewNameNodeOccurence(node, this.getLsifSymbol(decl.node));
                 return true;
@@ -661,7 +653,6 @@ export class TreeVisitor extends ParseTreeWalker {
 
             const builtinType = this.evaluator.getBuiltInType(node, node.value);
             const pyrightSymbol = this.evaluator.lookUpSymbolRecursive(node, node.value, true);
-            // console.log('  Builtin', builtinType, );
 
             if (!Types.isUnknown(builtinType)) {
                 // TODO: We could expose this and try to use it, but for now, let's skip that.
@@ -700,15 +691,6 @@ export class TreeVisitor extends ParseTreeWalker {
                 // let scope = getScopeForNode(node)!;
                 // let builtinScope = getBuiltInScope(scope);
             }
-
-            // switch (parent.nodeType) {
-            //     case ParseNodeType.ListComprehension:
-            //         console.log("short cirtcuit")
-            //         const symbol = LsifSymbol.local(this.counter.next());
-            //         this.rawSetLsifSymbol(node, symbol);
-            //         this.pushNewNameNodeOccurence(node, symbol);
-            //         return true;
-            // }
 
             // TODO: WriteAccess isn't really implemented yet on my side
             // Now this must be a reference, so let's reference the right thing.
@@ -824,7 +806,6 @@ export class TreeVisitor extends ParseTreeWalker {
                 // const version = this.getPackageInfo(node, moduleName);
                 const version = this.config.pythonEnvironment.getPackageForModule(moduleName)!;
                 if (!version) {
-                    console.log('Version Local', moduleName);
                     return LsifSymbol.local(this.counter.next());
                 }
 
@@ -958,7 +939,7 @@ export class TreeVisitor extends ParseTreeWalker {
                 if (decls) {
                     const decl = decls[0];
                     const resolved = this.evaluator.resolveAliasDeclaration(decl, true)!;
-                    console.log('ImportFromAs', node.name.token, resolved);
+                    // console.log('ImportFromAs', node.name.token, resolved);
 
                     // TODO(requests)
                     if (resolved.node && resolved.node != node) {
@@ -983,13 +964,11 @@ export class TreeVisitor extends ParseTreeWalker {
 
             case ParseNodeType.ListComprehensionFor:
                 // console.log('For:', node);
-                console.log('  -> entering for');
                 return LsifSymbol.local(this.counter.next());
 
             case ParseNodeType.ListComprehension:
-                throw 'never get here';
-                // return LsifSymbol.empty();
-                return this.getLsifSymbol(node.parent!);
+                softAssert(false, 'Should never enter ListComprehension directly');
+                return LsifSymbol.empty();
 
             // Some nodes, it just makes sense to return whatever their parent is.
             case ParseNodeType.With:
