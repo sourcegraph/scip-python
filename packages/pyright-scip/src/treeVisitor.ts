@@ -62,6 +62,18 @@ import { assert } from 'pyright-internal/common/debug';
 //      import { getModuleDocString } from 'pyright-internal/analyzer/typeDocStringUtils';
 //      this.evaluator.printType(...)
 
+// TODO: Make this a command line flag
+const shouldError = true;
+function softAssert(expression: any, message: string) {
+    if (!expression) {
+        if (shouldError) {
+            assert(expression, message);
+        } else {
+            console.warn('Failed with:', message);
+        }
+    }
+}
+
 const token = {
     isCancellationRequested: false,
     onCancellationRequested: Event.None,
@@ -468,7 +480,7 @@ export class TreeVisitor extends ParseTreeWalker {
             throw 'No parent for named node';
         }
 
-        console.log(node.token.value, ParseTreeUtils.printParseNodeType(node.parent.nodeType));
+        console.log(node.token.value, 'parent ->', ParseTreeUtils.printParseNodeType(node.parent.nodeType));
 
         const parent = node.parent;
         const decls = this.evaluator.getDeclarationsForNameNode(node) || [];
@@ -486,12 +498,29 @@ export class TreeVisitor extends ParseTreeWalker {
 
                         return true;
                     default:
-                        throw 'unhandled missing node';
+                        softAssert(false, 'unhandled missing node for declaration');
+                        return true;
                 }
             }
 
             const declNode = decl.node;
+            console.log('DeclNode Type:', ParseTreeUtils.printParseNodeType(declNode.nodeType));
             switch (declNode.nodeType) {
+                case ParseNodeType.Name:
+                    console.log(declNode);
+                    const parent = declNode.parent!;
+                    if (!parent) {
+                        break;
+                    }
+
+                    if (parent.nodeType === ParseNodeType.ListComprehensionFor) {
+                        const symbol = this.getLocalForDeclaration(declNode);
+                        // this.pushNewNameNodeOccurence(node, symbol);
+                        // return true;
+                        break;
+                    }
+
+                    break;
                 case ParseNodeType.ImportAs:
                     const moduleName = _formatModuleName(declNode.module);
                     const pythonPackage = this.moduleNameNodeToPythonPackage(declNode.module);
@@ -551,14 +580,12 @@ export class TreeVisitor extends ParseTreeWalker {
                     );
                     console.log('  Hover:', hoverResult);
 
-
                     if (hoverResult) {
                         const symbol = this.typeToSymbol(node, declNode, resolvedType);
                         this.rawSetLsifSymbol(declNode, symbol);
 
                         this.emitSymbolInformationOnce(node, symbol, _formatHover(hoverResult));
                     }
-
 
                     this.pushTypeReference(node, resolved.node, resolvedType);
                     return true;
@@ -585,7 +612,7 @@ export class TreeVisitor extends ParseTreeWalker {
             // TODO: Write a more rigorous check for if this node is a
             // definition node. Probably some util somewhere already for
             // that (need to explore pyright some more)
-            if (decl.node.id == node.parent!.id) {
+            if (decl.node.id == parent.id) {
                 if (parent.nodeType == ParseNodeType.Class) {
                     const symbol = this.getLsifSymbol(parent);
 
@@ -652,7 +679,7 @@ export class TreeVisitor extends ParseTreeWalker {
                         })
                     );
 
-                    // throw 'should probably put new symbol here?';
+                    softAssert(false, 'Should probably put a new symbol here?');
                 } else if (Types.isOverloadedFunction(builtinType)) {
                     const overloadedSymbol = this.getLsifSymbol(decl.node);
                     this.document.symbols.push(
@@ -673,6 +700,15 @@ export class TreeVisitor extends ParseTreeWalker {
                 // let scope = getScopeForNode(node)!;
                 // let builtinScope = getBuiltInScope(scope);
             }
+
+            // switch (parent.nodeType) {
+            //     case ParseNodeType.ListComprehension:
+            //         console.log("short cirtcuit")
+            //         const symbol = LsifSymbol.local(this.counter.next());
+            //         this.rawSetLsifSymbol(node, symbol);
+            //         this.pushNewNameNodeOccurence(node, symbol);
+            //         return true;
+            // }
 
             // TODO: WriteAccess isn't really implemented yet on my side
             // Now this must be a reference, so let's reference the right thing.
@@ -875,7 +911,8 @@ export class TreeVisitor extends ParseTreeWalker {
                             termDescriptor(node.valueExpression.value)
                         );
                     default:
-                        throw 'Unhandled type annotation';
+                        softAssert(false, 'Unhandled type annotation');
+                        return LsifSymbol.local(this.counter.next());
                 }
 
             case ParseNodeType.FunctionAnnotation:
@@ -886,7 +923,7 @@ export class TreeVisitor extends ParseTreeWalker {
                 );
 
             case ParseNodeType.Decorator:
-                // throw 'Should not handle decorator directly';
+                softAssert(false, 'Should not handle decorators directly');
                 return LsifSymbol.local(this.counter.next());
 
             case ParseNodeType.Assignment:
@@ -944,6 +981,16 @@ export class TreeVisitor extends ParseTreeWalker {
             case ParseNodeType.Lambda:
                 return LsifSymbol.local(this.counter.next());
 
+            case ParseNodeType.ListComprehensionFor:
+                // console.log('For:', node);
+                console.log('  -> entering for');
+                return LsifSymbol.local(this.counter.next());
+
+            case ParseNodeType.ListComprehension:
+                throw 'never get here';
+                // return LsifSymbol.empty();
+                return this.getLsifSymbol(node.parent!);
+
             // Some nodes, it just makes sense to return whatever their parent is.
             case ParseNodeType.With:
             case ParseNodeType.If:
@@ -951,24 +998,18 @@ export class TreeVisitor extends ParseTreeWalker {
             // To explore:
             case ParseNodeType.StatementList:
             case ParseNodeType.Tuple:
-            case ParseNodeType.ListComprehension:
-            case ParseNodeType.ListComprehensionFor:
+            case ParseNodeType.List:
             case ParseNodeType.ListComprehensionIf:
             case ParseNodeType.Argument:
             case ParseNodeType.BinaryOperation:
-                // There is some confusion for me about whether we should do this
-                // vs the other idea...
-                // return LsifSymbol.empty();
-
                 return this.getLsifSymbol(node.parent!);
 
             default:
-                // throw `Unhandled: ${node.nodeType}\n`;
-                console.warn(`Unhandled: ${node.nodeType}`);
+                softAssert(false, `Unhandled: ${node.nodeType}:${ParseTreeUtils.printParseNodeType(node.nodeType)}`);
+
                 if (!node.parent) {
                     return LsifSymbol.local(this.counter.next());
                 }
-
                 return this.getLsifSymbol(node.parent!);
         }
     }
@@ -1058,15 +1099,24 @@ export class TreeVisitor extends ParseTreeWalker {
         this.pushNewNameNodeOccurence(node, symbol);
     }
 
+    private getLocalForDeclaration(node: NameNode): LsifSymbol {
+        const existing = this.rawGetLsifSymbol(node);
+        if (existing) {
+            return existing;
+        }
+
+        const symbol = LsifSymbol.local(this.counter.next());
+        this.rawSetLsifSymbol(node, symbol);
+        return symbol;
+    }
+
     // Might be the only way we can add new occurrences?
     private pushNewNameNodeOccurence(
         node: NameNode,
         symbol: LsifSymbol,
         role: number = lsiftyped.SymbolRole.ReadAccess
     ): void {
-        if (symbol.value.trim() != symbol.value) {
-            console.trace(`Invalid symbol dude ${node.value} -> ${symbol.value}`);
-        }
+        softAssert(symbol.value.trim() == symbol.value, `Invalid symbol ${node.value} -> ${symbol.value}`);
 
         this.document.occurrences.push(
             new lsiftyped.Occurrence({
