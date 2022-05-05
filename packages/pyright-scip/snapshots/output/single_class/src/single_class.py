@@ -11,19 +11,19 @@ class ExampleClass:
 #   documentation ```python
 #               > (variable) a: int
 #               > ```
-#      ^^^ reference local 0
+#      ^^^ reference  python-stdlib 3.10 builtins/int#
     b: int
 #   ^ definition  snapshot-util 0.1 `src.single_class`/ExampleClass#b.
 #   documentation ```python
 #               > (variable) b: int
 #               > ```
-#      ^^^ reference local 1
+#      ^^^ reference  python-stdlib 3.10 builtins/int#
     c: str
 #   ^ definition  snapshot-util 0.1 `src.single_class`/ExampleClass#c.
 #   documentation ```python
 #               > (variable) c: str
 #               > ```
-#      ^^^ reference local 2
+#      ^^^ reference  python-stdlib 3.10 builtins/str#
 
     static_var = "Hello World"
 #   ^^^^^^^^^^ definition  snapshot-util 0.1 `src.single_class`/ExampleClass#static_var.
@@ -42,11 +42,11 @@ class ExampleClass:
 #                   > ```
 #                ^^^^ definition  snapshot-util 0.1 `src.single_class`/ExampleClass#__init__().(self)
 #                      ^ definition  snapshot-util 0.1 `src.single_class`/ExampleClass#__init__().(a)
-#                         ^^^ reference local 3
+#                         ^^^ reference  python-stdlib 3.10 builtins/int#
 #                              ^ definition  snapshot-util 0.1 `src.single_class`/ExampleClass#__init__().(b)
-#                                 ^^^ reference local 4
+#                                 ^^^ reference  python-stdlib 3.10 builtins/int#
         local_c = ", world!"
-#       ^^^^^^^ definition local 5
+#       ^^^^^^^ definition local 0
 #       documentation ```python
 #                   > builtins.str
 #                   > ```
@@ -62,5 +62,5 @@ class ExampleClass:
         self.c = "hello" + local_c
 #       ^^^^ reference  snapshot-util 0.1 `src.single_class`/ExampleClass#__init__().(self)
 #            ^ reference  snapshot-util 0.1 `src.single_class`/ExampleClass#c.
-#                          ^^^^^^^ reference local 5
+#                          ^^^^^^^ reference local 0
 

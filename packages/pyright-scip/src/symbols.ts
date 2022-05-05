@@ -2,7 +2,7 @@ import { Declaration } from 'pyright-internal/analyzer/declaration';
 import { TypeEvaluator } from 'pyright-internal/analyzer/typeEvaluatorTypes';
 import { NameNode, ParseNode, ParseNodeType } from 'pyright-internal/parser/parseNodes';
 import { Counter } from './lsif-typescript/Counter';
-import { metaDescriptor, packageDescriptor } from './lsif-typescript/Descriptor';
+import { metaDescriptor, packageDescriptor, typeDescriptor } from './lsif-typescript/Descriptor';
 import { LsifSymbol } from './LsifSymbol';
 import { TreeVisitor } from './treeVisitor';
 import PythonPackage from './virtualenv/PythonPackage';
@@ -49,6 +49,10 @@ export function makeModuleName(node: NameNode, decl: Declaration, evaluator: Typ
     //     metaDescriptor('__init__')
     // );
     return undefined;
+}
+
+export function makeClass(pythonPackage: PythonPackage, moduleName: string, name: string) {
+    return LsifSymbol.global(LsifSymbol.global(makePackage(pythonPackage), packageDescriptor(moduleName)), typeDescriptor(name))
 }
 
 export function make(node: ParseNode, counter: Counter): LsifSymbol {

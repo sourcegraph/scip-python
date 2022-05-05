@@ -9,16 +9,16 @@ def my_cool_function(a: str) -> str:
 #               > ) -> str:
 #               > ```
 #                    ^ definition  snapshot-util 0.1 `src.single_function`/my_cool_function().(a)
-#                       ^^^ reference local 1
-#                               ^^^ reference local 0
+#                       ^^^ reference  python-stdlib 3.10 builtins/str#
+#                               ^^^ reference  python-stdlib 3.10 builtins/str#
     x = ", world"
-#   ^ definition local 2
+#   ^ definition local 0
 #   documentation ```python
 #               > builtins.str
 #               > ```
     return a + x
 #          ^ reference  snapshot-util 0.1 `src.single_function`/my_cool_function().(a)
-#              ^ reference local 2
+#              ^ reference local 0
 
 def my_cool_function_2(a: str):
 #   ^^^^^^^^^^^^^^^^^^ definition  snapshot-util 0.1 `src.single_function`/my_cool_function_2().
@@ -28,17 +28,17 @@ def my_cool_function_2(a: str):
 #               > ):
 #               > ```
 #                      ^ definition  snapshot-util 0.1 `src.single_function`/my_cool_function_2().(a)
-#                         ^^^ reference local 3
+#                         ^^^ reference  python-stdlib 3.10 builtins/str#
     x = ", world"
-#   ^ definition local 4
+#   ^ definition local 1
 #   documentation ```python
 #               > builtins.str
 #               > ```
     return (lambda y: a + x + y)("oh no")
-#                  ^ definition local 5(y)
+#                  ^ definition local 2(y)
 #                     ^ reference  snapshot-util 0.1 `src.single_function`/my_cool_function_2().(a)
-#                         ^ reference local 4
-#                             ^ reference local 5(y)
+#                         ^ reference local 1
+#                             ^ reference local 2(y)
 
 def next_level():
 #   ^^^^^^^^^^ definition  snapshot-util 0.1 `src.single_function`/next_level().

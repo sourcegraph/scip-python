@@ -24,7 +24,7 @@ class PropertyClass:
         pass
 
     @property
-#    ^^^^^^^^ reference local 0
+#    ^^^^^^^^ reference  python-stdlib 3.10 builtins/property#
     def prop_ref(self):
 #       ^^^^^^^^ definition  snapshot-util 0.1 property_access/PropertyClass#prop_ref().
 #       documentation ```python
@@ -60,11 +60,11 @@ def usage(xs: Sequence[PropertyClass]):
 #                   > def nested(): # -> None:
 #                   > ```
         for x in xs:
-#           ^ definition local 1
+#           ^ definition local 0
 #                ^^ reference  snapshot-util 0.1 property_access/usage().(xs)
             print(x.prop_ref)
 #           ^^^^^ reference  python-stdlib 3.10 builtins/__init__:print().
 #           documentation 
-#                 ^ reference local 1
+#                 ^ reference local 0
 #                   ^^^^^^^^ reference  snapshot-util 0.1 property_access/PropertyClass#prop_ref().
 

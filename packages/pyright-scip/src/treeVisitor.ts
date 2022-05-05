@@ -63,7 +63,7 @@ import { assert } from 'pyright-internal/common/debug';
 //      this.evaluator.printType(...)
 
 // TODO: Make this a command line flag
-const shouldError = true;
+const shouldError = 1;
 function softAssert(expression: any, message: string) {
     if (!expression) {
         if (shouldError) {
@@ -71,6 +71,20 @@ function softAssert(expression: any, message: string) {
         } else {
             console.warn('Failed with:', message);
         }
+    }
+
+    return expression;
+}
+
+function debug(...exprs: any[]) {
+    if (shouldError >= 2) {
+        console.log(...exprs);
+    }
+}
+
+function info(...exprs: any[]) {
+    if (shouldError >= 1) {
+        console.log(...exprs);
     }
 }
 
@@ -120,7 +134,7 @@ export class TreeVisitor extends ParseTreeWalker {
     constructor(public config: TreeVisitorConfig) {
         super();
 
-        console.log('===== Working file:', config.sourceFile.getFilePath());
+        info('=> Working file:', config.sourceFile.getFilePath(), "<==");
 
         if (!this.config.lsifConfig.projectName) {
             throw 'Must have project name';
@@ -480,7 +494,7 @@ export class TreeVisitor extends ParseTreeWalker {
         }
 
         const parent = node.parent;
-        console.log(node.token.value, 'parent:', ParseTreeUtils.printParseNodeType(parent.nodeType));
+        debug(node.token.value, 'parent:', ParseTreeUtils.printParseNodeType(parent.nodeType));
 
         const decls = this.evaluator.getDeclarationsForNameNode(node) || [];
         if (decls.length > 0) {
@@ -502,28 +516,16 @@ export class TreeVisitor extends ParseTreeWalker {
                 }
             }
 
-            console.log("    decl type::", ParseTreeUtils.printParseNodeType(decl.node.nodeType));
+            debug("    decl type::", ParseTreeUtils.printParseNodeType(decl.node.nodeType));
 
             const declNode = decl.node;
             switch (declNode.nodeType) {
-                case ParseNodeType.Name:
-                    const parent = declNode.parent!;
-                    if (!parent) {
-                        break;
-                    }
-
-                    if (parent.nodeType === ParseNodeType.ListComprehensionFor) {
-                        const symbol = this.getLocalForDeclaration(declNode);
-                        break;
-                    }
-
-                    break;
                 case ParseNodeType.ImportAs:
                     const moduleName = _formatModuleName(declNode.module);
                     const pythonPackage = this.moduleNameNodeToPythonPackage(declNode.module);
 
                     // TODO: I would like to get to the bottom of why `json` returns no module
-                    if (!pythonPackage) {
+                    if (!softAssert(pythonPackage, "Should have python package")) {
                         return true;
                     }
 
@@ -532,16 +534,32 @@ export class TreeVisitor extends ParseTreeWalker {
 
                     this.pushNewNameNodeOccurence(node, Symbols.makeModule(moduleName, pythonPackage));
                     return true;
+
+                case ParseNodeType.Name:
+                    const parent = declNode.parent!;
+                    if (!parent) {
+                        break;
+                    }
+
+                    // Don't allow scope to leak from list comprehensions
+                    // TODO: Dict comprehensions
+                    // TODO: Consider getting scope var and checking with that?
+                    if (parent.nodeType === ParseNodeType.ListComprehensionFor) {
+                        this.getLocalForDeclaration(declNode);
+                        break;
+                    }
+
+                    break;
             }
 
 
-            const type = this.evaluator.getTypeForDeclaration(decl);
             const resolved = this.evaluator.resolveAliasDeclaration(decl, true, true);
             if (!resolved) {
-                softAssert(false, "Must have a resolved alias declaration");
+                softAssert(resolved, "Must have a resolved alias declaration");
                 return true;
             }
 
+            const type = this.evaluator.getTypeForDeclaration(decl);
             const resolvedType = this.evaluator.getTypeForDeclaration(resolved);
 
             // TODO: Handle intrinsics more usefully (using declaration probably)
@@ -681,6 +699,9 @@ export class TreeVisitor extends ParseTreeWalker {
                     );
 
                     this.pushNewNameNodeOccurence(node, overloadedSymbol);
+                } else if (Types.isClass(builtinType)) {
+                    this.pushNewNameNodeOccurence(node, Symbols.makeClass(this.stdlibPackage, "builtins", node.value));
+                    return true;
                 } else {
                     // TODO: IntrinsicRefactor
                     this.pushNewNameNodeOccurence(node, this.getIntrinsicSymbol(node));
@@ -765,6 +786,10 @@ export class TreeVisitor extends ParseTreeWalker {
         return newSymbol;
     }
 
+    // Intrinsics are things like:
+    //      __name__
+    //      __all__
+    //
     // TODO: This isn't good anymore
     private getIntrinsicSymbol(_node: ParseNode): LsifSymbol {
         // return this.makeLsifSymbol(this._stdlibPackage, 'intrinsics', node);
@@ -829,7 +854,7 @@ export class TreeVisitor extends ParseTreeWalker {
             case ParseNodeType.MemberAccess:
                 // // throw 'oh ya';
                 // return this.getLsifSymbol(node.parent!);
-                console.log('Member Access:', node.leftExpression.nodeType, node);
+                debug('Member Access:', node.leftExpression.nodeType, node);
                 const left = node.leftExpression;
 
                 switch (left.nodeType) {
@@ -887,7 +912,7 @@ export class TreeVisitor extends ParseTreeWalker {
                     case ParseNodeType.MemberAccess:
                         // if (node.id === parent.leftExpression.id) {
                             const type = this.evaluator.getTypeOfExpression(parent.leftExpression);
-                            console.log("Left Expression Type:", type);
+                            debug("Left Expression Type:", type);
 
                             switch (type.type.category) {
                                 case TypeCategory.TypeVar:
@@ -990,7 +1015,7 @@ export class TreeVisitor extends ParseTreeWalker {
 
             case ParseNodeType.ImportFrom:
                 // TODO(0.2): Resolve all these weird import things.
-                console.log('ImportFrom');
+                debug('ImportFrom');
                 return LsifSymbol.empty();
 
             case ParseNodeType.ImportFromAs:

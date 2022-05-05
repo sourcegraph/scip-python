@@ -12,7 +12,7 @@ class Example:
 #   documentation ```python
 #               > (variable) y: int
 #               > ```
-#      ^^^ reference local 0
+#      ^^^ reference  python-stdlib 3.10 builtins/int#
 
     def __init__(self, in_val):
 #       ^^^^^^^^ definition  snapshot-util 0.1 class_nohint/Example#__init__().
