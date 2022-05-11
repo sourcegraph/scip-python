@@ -1,5 +1,5 @@
-# < definition scip-python pypi snapshot-util 0.1 file_from_module/__init__:
-#documentation (module) file_from_module
+# < definition scip-python pypi snapshot-util 0.1 `abc.file`/__init__:
+#documentation (module) abc.file
 
 from xyz import nested_file
 #    ^^^ reference  snapshot-util 0.1 xyz/__init__:

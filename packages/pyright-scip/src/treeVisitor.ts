@@ -1084,6 +1084,7 @@ export class TreeVisitor extends ParseTreeWalker {
                 return Symbols.pythonModule(this, node, info.importName);
 
             case ParseNodeType.ImportFrom:
+                // node
                 // TODO(0.2): Resolve all these weird import things.
                 log.debug('ImportFrom');
                 return LsifSymbol.empty();
@@ -1102,7 +1103,6 @@ export class TreeVisitor extends ParseTreeWalker {
 
                     // console.log('ImportFromAs', node.name.token, resolved);
 
-                    // TODO(requests)
                     if (resolved.node && resolved.node != node) {
                         const symbol = this.getLsifSymbol(resolved.node);
                         this.emitSymbolInformationOnce(resolved.node, symbol);
@@ -1118,6 +1118,53 @@ export class TreeVisitor extends ParseTreeWalker {
                     // const type_ = this.evaluator.getType
                     // console.log(this.typeToSymbol(decl.node,
                 }
+
+                console.log('ImportFromAs:', node.name.value);
+                const type = this.getAliasedSymbolTypeForName(node, node.name.value);
+                if (type) {
+                    switch (type.category) {
+                        case TypeCategory.Module:
+                            // TODO: Copy and pasted
+                            // console.log("ModuleName:", node.name.value);
+
+                            const parent = node.parent;
+                            assert(parent);
+                            switch (parent.nodeType) {
+                                case ParseNodeType.ImportFrom:
+                                    const pythonPackage =
+                                        this.moduleNameNodeToPythonPackage(parent.module) || this.projectPackage;
+
+                                    console.log(
+                                        'you did it',
+                                        [...parent.module.nameParts, node.name].map((part) => part.value).join('.')
+                                    );
+
+                                    return Symbols.makeModule(
+                                        [...parent.module.nameParts, node.name].map((part) => part.value).join('.'),
+                                        pythonPackage
+                                    );
+                            }
+
+                            let pythonPackage = undefined;
+                            if (path.resolve(type.filePath).startsWith(this.cwd)) {
+                                pythonPackage = this.projectPackage;
+                            }
+                            if (!pythonPackage) {
+                                pythonPackage = this.config.pythonEnvironment.getPackageForModule(type.moduleName);
+                            }
+                            if (!pythonPackage) {
+                                // TODO: Should probably configure this to be disabled if needed
+                                pythonPackage = this.config.pythonEnvironment.guessPackage(type.moduleName);
+                            }
+
+                            if (!pythonPackage) {
+                                break;
+                            }
+
+                            return Symbols.makeModule(type.moduleName, pythonPackage);
+                    }
+                }
+
                 return LsifSymbol.local(this.counter.next());
 
             case ParseNodeType.Lambda:
@@ -1151,7 +1198,11 @@ export class TreeVisitor extends ParseTreeWalker {
                 return this.getLsifSymbol(node.parent!);
 
             default:
-                softAssert(false, `Unhandled: ${node.nodeType}: ${ParseTreeUtils.printParseNodeType(node.nodeType)}`, ParseTreeUtils.getFileInfoFromNode(node)!.filePath);
+                softAssert(
+                    false,
+                    `Unhandled: ${node.nodeType}: ${ParseTreeUtils.printParseNodeType(node.nodeType)}`,
+                    ParseTreeUtils.getFileInfoFromNode(node)!.filePath
+                );
 
                 if (!node.parent) {
                     return LsifSymbol.local(this.counter.next());
