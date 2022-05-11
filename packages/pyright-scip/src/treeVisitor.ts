@@ -63,10 +63,11 @@ import { assert } from 'pyright-internal/common/debug';
 //      this.evaluator.printType(...)
 
 // TODO: Make this a command line flag
-const shouldError = 0;
-function softAssert(expression: any, message: string) {
+const shouldError = 1;
+function softAssert(expression: any, message: string, ...exprs: any) {
     if (!expression) {
         if (shouldError) {
+            console.log(message, ...exprs);
             assert(expression, message);
         } else {
             console.warn('Failed with:', message);
@@ -76,7 +77,18 @@ function softAssert(expression: any, message: string) {
     return expression;
 }
 
+const _msgs = new Set<string>();
 const log = {
+    once: (msg: string) => {
+        if (_msgs.has(msg)) {
+            return;
+        }
+
+        _msgs.add(msg);
+
+        console.log(msg);
+    },
+
     debug: (...exprs: any[]) => {
         if (shouldError >= 2) {
             console.log(...exprs);
@@ -84,7 +96,7 @@ const log = {
     },
 
     info: (...exprs: any[]) => {
-        if (shouldError >= 0) {
+        if (shouldError >= 1) {
             console.log(...exprs);
         }
     },
@@ -485,7 +497,11 @@ export class TreeVisitor extends ParseTreeWalker {
         const moduleName = _formatModuleName(node.module);
 
         const importInfo = getImportInfo(node.module);
-        if (importInfo && path.resolve(importInfo.resolvedPaths[0]).startsWith(this.cwd)) {
+        if (
+            importInfo &&
+            importInfo.resolvedPaths[0] &&
+            path.resolve(importInfo.resolvedPaths[0]).startsWith(this.cwd)
+        ) {
             const symbol = Symbols.makeModule(moduleName, this.projectPackage);
             this.pushNewOccurrence(node.module, symbol);
             this.document.symbols.push(
@@ -508,7 +524,6 @@ export class TreeVisitor extends ParseTreeWalker {
         }
 
         if (node.alias) {
-            console.log('Creating alias local', node.alias.value);
             this.getLocalForDeclaration(node.alias);
         }
 
@@ -578,17 +593,13 @@ export class TreeVisitor extends ParseTreeWalker {
                     const moduleName = _formatModuleName(declNode.module);
                     const pythonPackage = this.moduleNameNodeToPythonPackage(declNode.module);
 
-                    // TODO: I would like to get to the bottom of why `json` returns no module
-                    if (!softAssert(pythonPackage, 'Should have python package')) {
-                        console.log(declNode.module);
+                    if (!pythonPackage) {
+                        log.once(`Missing package information for: ${moduleName}`);
+                        this.pushNewOccurrence(node, this.getLocalForDeclaration(node));
                         return true;
                     }
 
-                    // assert(declNode != node.parent, 'Must not be the definition');
-                    if (declNode == node.parent) {
-                        console.log('Definition was decl', decl);
-                    }
-
+                    assert(declNode != node.parent, 'Must not be the definition');
                     assert(pythonPackage, 'Must have a python package: ' + moduleName);
 
                     this.pushNewOccurrence(node, Symbols.makeModule(moduleName, pythonPackage));
@@ -729,30 +740,37 @@ export class TreeVisitor extends ParseTreeWalker {
                 // so that's a bit of a shame...
 
                 if (Types.isFunction(builtinType)) {
-                    // TODO: IntrinsicRefactor
-                    this.document.symbols.push(
-                        new lsiftyped.SymbolInformation({
-                            symbol: this.getIntrinsicSymbol(node).value,
-                            documentation: [builtinType.details.docString || ''],
-                        })
-                    );
+                    const doc = builtinType.details.docString;
 
-                    softAssert(false, 'Should probably put a new symbol here?');
+                    const symbol = this.getIntrinsicSymbol(node);
+                    this.emitSymbolInformationOnce(node, symbol, doc ? [doc] : undefined);
+                    this.pushNewOccurrence(node, symbol);
                 } else if (Types.isOverloadedFunction(builtinType)) {
                     const overloadedSymbol = this.getLsifSymbol(decl.node);
-                    this.document.symbols.push(
-                        new lsiftyped.SymbolInformation({
-                            symbol: overloadedSymbol.value,
-                            documentation: [builtinType.overloads[0].details.docString || ''],
-                        })
-                    );
 
+                    const doc = builtinType.overloads[0].details.docString;
+                    this.emitSymbolInformationOnce(node, overloadedSymbol, doc ? [doc] : undefined);
                     this.pushNewOccurrence(node, overloadedSymbol);
                 } else if (Types.isClass(builtinType)) {
-                    this.pushNewOccurrence(node, Symbols.makeClass(this.stdlibPackage, 'builtins', node.value));
+                    const doc = builtinType.details.docString;
+
+                    const symbol = Symbols.makeClass(this.stdlibPackage, 'builtins', node.value);
+                    this.emitSymbolInformationOnce(node, symbol, doc ? [doc] : undefined);
+                    this.pushNewOccurrence(node, symbol);
+                    return true;
+                } else if (Types.isModule(builtinType)) {
+                    // const pythonPackage = this.getPackageInfo(node, builtinType.moduleName)!;
+                    const symbol = LsifSymbol.global(
+                        LsifSymbol.package(builtinType.moduleName, this.stdlibPackage.version),
+                        metaDescriptor('__init__')
+                    );
+
+                    this.emitSymbolInformationOnce(node, symbol);
+                    this.pushNewOccurrence(node, symbol);
                     return true;
                 } else {
                     // TODO: IntrinsicRefactor
+                    softAssert(false, 'unhandled intrinsic', node);
                     this.pushNewOccurrence(node, this.getIntrinsicSymbol(node));
                 }
 
@@ -1117,6 +1135,10 @@ export class TreeVisitor extends ParseTreeWalker {
             case ParseNodeType.With:
             case ParseNodeType.If:
             case ParseNodeType.For:
+            case ParseNodeType.Try:
+            case ParseNodeType.Except:
+            case ParseNodeType.While:
+            case ParseNodeType.Call:
             // To explore:
             case ParseNodeType.StatementList:
             case ParseNodeType.Tuple:
@@ -1124,10 +1146,12 @@ export class TreeVisitor extends ParseTreeWalker {
             case ParseNodeType.ListComprehensionIf:
             case ParseNodeType.Argument:
             case ParseNodeType.BinaryOperation:
+            // TODO: Not skilled enough to handle yet
+            case ParseNodeType.StringList:
                 return this.getLsifSymbol(node.parent!);
 
             default:
-                softAssert(false, `Unhandled: ${node.nodeType}:${ParseTreeUtils.printParseNodeType(node.nodeType)}`);
+                softAssert(false, `Unhandled: ${node.nodeType}: ${ParseTreeUtils.printParseNodeType(node.nodeType)}`, ParseTreeUtils.getFileInfoFromNode(node)!.filePath);
 
                 if (!node.parent) {
                     return LsifSymbol.local(this.counter.next());
@@ -1200,13 +1224,15 @@ export class TreeVisitor extends ParseTreeWalker {
                 LsifSymbol.package(typeObj.moduleName, pythonPackage.version),
                 metaDescriptor('__init__')
             );
+        } else if (Types.isOverloadedFunction(typeObj)) {
+            if (!typeObj.overloads) {
+                softAssert(false, "Didn't think it would be possible to have overloaded w/ no overloads");
+                return LsifSymbol.local(this.counter.next());
+            }
+            return this.typeToSymbol(node, declNode, typeObj.overloads[0]);
         }
 
-        // throw 'unreachable typeObj';
-        // const mod = LsifSymbol.sourceFile(this.getPackageSymbol(), [this.fileInfo!.moduleName]);
-        // const mod = LsifSymbol.global(this.getPackageSymbol(), packageDescriptor(this.fileInfo!.moduleName));
-        // return LsifSymbol.global(mod, termDescriptor(node.value));
-        console.warn(`Unreachable TypeObj: ${node.value}: ${typeObj.category}`);
+        softAssert(false, `Unreachable TypeObj: ${node.value}: ${typeObj.category}`);
         return LsifSymbol.local(this.counter.next());
     }
 

@@ -25,6 +25,9 @@ class PropertyClass:
 
     @property
 #    ^^^^^^^^ reference  python-stdlib 3.10 builtins/property#
+#    documentation ```python
+#                > (class) property
+#                > ```
     def prop_ref(self):
 #       ^^^^^^^^ definition  snapshot-util 0.1 property_access/PropertyClass#prop_ref().
 #       documentation ```python
@@ -64,7 +67,12 @@ def usage(xs: Sequence[PropertyClass]):
 #                ^^ reference  snapshot-util 0.1 property_access/usage().(xs)
             print(x.prop_ref)
 #           ^^^^^ reference  python-stdlib 3.10 builtins/__init__:print().
-#           documentation 
+#           documentation ```python
+#                       > (function)
+#                       > print(*values: object, sep: str | None = ..., end: str | None = ..., file: SupportsWrite[str] | None = ..., flush: Literal[False] = ...) -> None
+#                       > 
+#                       > print(*values: object, sep: str | None = ..., end: str | None = ..., file: _SupportsWriteAndFlush[str] | None = ..., flush: bool) -> None
+#                       > ```
 #                 ^ reference local 0
 #                   ^^^^^^^^ reference  snapshot-util 0.1 property_access/PropertyClass#prop_ref().
 

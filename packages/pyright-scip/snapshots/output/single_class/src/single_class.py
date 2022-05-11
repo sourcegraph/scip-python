@@ -12,6 +12,9 @@ class ExampleClass:
 #               > (variable) a: int
 #               > ```
 #      ^^^ reference  python-stdlib 3.10 builtins/int#
+#      documentation ```python
+#                  > (class) int
+#                  > ```
     b: int
 #   ^ definition  snapshot-util 0.1 `src.single_class`/ExampleClass#b.
 #   documentation ```python
@@ -24,6 +27,9 @@ class ExampleClass:
 #               > (variable) c: str
 #               > ```
 #      ^^^ reference  python-stdlib 3.10 builtins/str#
+#      documentation ```python
+#                  > (class) str
+#                  > ```
 
     static_var = "Hello World"
 #   ^^^^^^^^^^ definition  snapshot-util 0.1 `src.single_class`/ExampleClass#static_var.

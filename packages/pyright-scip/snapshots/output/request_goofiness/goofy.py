@@ -42,7 +42,12 @@ import requests
 
 print(requests.get("https://sourcegraph.com"))
 #^^^^ reference  python-stdlib 3.10 builtins/__init__:print().
-#documentation 
+#documentation ```python
+#            > (function)
+#            > print(*values: object, sep: str | None = ..., end: str | None = ..., file: SupportsWrite[str] | None = ..., flush: Literal[False] = ...) -> None
+#            > 
+#            > print(*values: object, sep: str | None = ..., end: str | None = ..., file: _SupportsWriteAndFlush[str] | None = ..., flush: bool) -> None
+#            > ```
 #     ^^^^^^^^ reference  requests 2.0.0 requests/__init__:
 #              ^^^ reference  requests 2.0.0 `requests.api`/get().
 #              documentation ```python
