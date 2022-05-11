@@ -63,7 +63,7 @@ import { assert } from 'pyright-internal/common/debug';
 //      this.evaluator.printType(...)
 
 // TODO: Make this a command line flag
-const errorLevel = 2;
+const errorLevel = 1;
 function softAssert(expression: any, message: string, ...exprs: any) {
     if (!expression) {
         if (errorLevel) {
@@ -582,7 +582,6 @@ export class TreeVisitor extends ParseTreeWalker {
             const declNode = decl.node;
             switch (declNode.nodeType) {
                 case ParseNodeType.ImportAs:
-                    console.log('decl node id:', decl.node.id);
                     // If we see that the declaration is for an alias, then we want to just use the
                     // imported alias local definition. This prevents these from leaking out (which
                     // I think is the desired behavior)
@@ -604,6 +603,7 @@ export class TreeVisitor extends ParseTreeWalker {
                         return Symbols.makeModule(moduleName, pythonPackage);
                     });
 
+                    // TODO: We could maybe cache this to not always be asking for these names & decls
                     let nodeForRange: ParseNode = node;
                     while (nodeForRange.parent && nodeForRange.parent.nodeType === ParseNodeType.MemberAccess) {
                         const member = nodeForRange.parent.memberName;
@@ -688,9 +688,6 @@ export class TreeVisitor extends ParseTreeWalker {
                     this.pushTypeReference(node, resolved.node, resolvedType);
                     return true;
                 }
-
-                // TODO: Handle inferred types here
-                // console.log('SKIP:', node.token.value, resolvedType);
 
                 this.pushNewOccurrence(node, this.getLsifSymbol(decl.node));
                 return true;
@@ -1006,7 +1003,6 @@ export class TreeVisitor extends ParseTreeWalker {
                             case TypeCategory.TypeVar:
                                 const typeVar = type.type;
                                 const bound = typeVar.details.boundType! as ClassType;
-                                // console.log("Is TypeVar", typeVar.details.boundType);
 
                                 // TODO:
                                 const pythonPackage = this.getPackageInfo(node, bound.details.moduleName)!;
@@ -1122,22 +1118,12 @@ export class TreeVisitor extends ParseTreeWalker {
                         return LsifSymbol.local(this.counter.next());
                     }
 
-                    // console.log('ImportFromAs', node.name.token, resolved);
-
                     if (resolved.node && resolved.node != node) {
                         const symbol = this.getLsifSymbol(resolved.node);
                         this.emitSymbolInformationOnce(resolved.node, symbol);
 
                         return symbol;
                     }
-
-                    // const type_ = this.evaluator.getTypeForDeclaration(resolved);
-
-                    // console.log("  ", decl)
-                    // console.log(type_)
-
-                    // const type_ = this.evaluator.getType
-                    // console.log(this.typeToSymbol(decl.node,
                 }
 
                 const type = this.getAliasedSymbolTypeForName(node, node.name.value);
@@ -1166,7 +1152,6 @@ export class TreeVisitor extends ParseTreeWalker {
                 return LsifSymbol.local(this.counter.next());
 
             case ParseNodeType.ListComprehensionFor:
-                // console.log('For:', node);
                 return LsifSymbol.local(this.counter.next());
 
             case ParseNodeType.ListComprehension:
@@ -1378,9 +1363,6 @@ export class TreeVisitor extends ParseTreeWalker {
             return;
         }
 
-        // @ts-ignore
-        // console.log('Docstring:', getFunctionOrClassDeclDocString(node));
-
         this._docstringWriter.walk(node);
         const docs = '```python\n' + (this._docstringWriter.docstrings.get(node.id) || []).join('\n') + '\n```';
         this.document.symbols.push(
@@ -1496,6 +1478,8 @@ export class TreeVisitor extends ParseTreeWalker {
         return pythonPackage;
     }
 
+    // TODO: This could be a global cache perhaps, because multiple files can ask for the same
+    // symbol if they have the same declaration.
     private getSymbolOnce<T extends ParseNode>(node: T, finder: () => LsifSymbol): LsifSymbol {
         const existing = this.rawGetLsifSymbol(node);
         if (existing) {
