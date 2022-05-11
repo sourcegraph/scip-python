@@ -38,6 +38,7 @@ import requests
 #                  > :copyright: (c) 2017 by Kenneth Reitz.
 #                  > :license: Apache 2.0, see LICENSE for more details.
 #                  > 
+#      ^^^^^^^^ reference  snapshot-util 0.1 requests/__init__:
 
 print(requests.get("https://sourcegraph.com"))
 #^^^^ reference  python-stdlib 3.10 builtins/__init__:print().

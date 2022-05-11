@@ -3,22 +3,7 @@
 
 import leftpad
 #      ^^^^^^^ reference  leftpad 0.1.2 leftpad/__init__:
-#      documentation (module) leftpad
-#      documentation ```
-#                  > Left pad a string.
-#                  > 
-#                  > >>> left_pad("foo", 5)
-#                  > '  foo'
-#                  > 
-#                  > >>> left_pad("foobar", 6)
-#                  > 'foobar'
-#                  > 
-#                  > >>> left_pad(1, 2, '0')
-#                  > '01'
-#                  > 
-#                  > >>> left_pad(17, 5, 0)
-#                  > '00017'
-#                  > ```
+#      ^^^^^^^ reference  leftpad 0.1.2 leftpad/__init__:
 
 print(leftpad)
 #^^^^ reference  python-stdlib 3.10 builtins/__init__:print().

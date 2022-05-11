@@ -25,6 +25,7 @@ export class Indexer {
     importResolver: ImportResolver;
     counter: Counter;
     pyrightConfig: ConfigOptions;
+    projectFiles: Set<string>;
 
     constructor(public readonly config: Config, public lsifConfig: LsifConfig) {
         this.counter = new Counter();
@@ -53,6 +54,7 @@ export class Indexer {
         // - [ ] pyi files?
         // - [ ] More configurable globbing?
         const pyFiles = glob.sync(lsifConfig.projectRoot + '/**/*.py');
+        this.projectFiles = new Set(pyFiles.map((p) => path.resolve(p)));
         this.program.setTrackedFiles(pyFiles);
     }
 
@@ -62,7 +64,11 @@ export class Indexer {
             onCancellationRequested: Event.None,
         };
 
-        const packageConfig = getEnvironment(this.lsifConfig.projectVersion, this.lsifConfig.environment);
+        const packageConfig = getEnvironment(
+            this.projectFiles,
+            this.lsifConfig.projectVersion,
+            this.lsifConfig.environment
+        );
 
         // Emit metadata
         this.lsifConfig.writeIndex(

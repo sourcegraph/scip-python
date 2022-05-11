@@ -23,18 +23,18 @@ function pipBulkShow(names: string[]): string[] {
         .split('---');
 }
 
-export default function getEnvironment(projectVersion: string, cachedEnvFile: string | undefined): PythonEnvironment {
+export default function getEnvironment(projectFiles: Set<string>, projectVersion: string, cachedEnvFile: string | undefined): PythonEnvironment {
     if (cachedEnvFile) {
         let f = JSON.parse(fs.readFileSync(cachedEnvFile).toString()).map((entry: any) => {
           return new PythonPackage(entry.name, entry.version, entry.files);
         });
 
-        return new PythonEnvironment(projectVersion, f);
+        return new PythonEnvironment(projectFiles, projectVersion, f);
     }
 
     const listed = pipList();
     const bulk = pipBulkShow(listed.map((item) => item.name));
     const info = bulk.map((shown) => PythonPackage.fromPipShow(shown));
 
-    return new PythonEnvironment(projectVersion, info);
+    return new PythonEnvironment(projectFiles, projectVersion, info);
 }

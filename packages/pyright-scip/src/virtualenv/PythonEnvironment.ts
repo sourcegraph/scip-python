@@ -6,7 +6,7 @@ export default class PythonEnvironment {
     private _moduleNameToIndex: Map<string, number>;
     private _filepathToIndex: Map<string, number>;
 
-    constructor(private projectVersion: string, public packages: PythonPackage[]) {
+    constructor(private projectFiles: Set<string>, private projectVersion: string, public packages: PythonPackage[]) {
         this._moduleNameToIndex = new Map();
         this._filepathToIndex = new Map();
 
@@ -23,7 +23,7 @@ export default class PythonEnvironment {
         let first = parts[0];
         for (let index = 0; index < this.packages.length; index++) {
             if (first == this.packages[index].name) {
-                return this.packages[index]
+                return this.packages[index];
             }
         }
         // let index = this._moduleNameToIndex.get(first);
@@ -42,6 +42,25 @@ export default class PythonEnvironment {
         let packageIndex = this._moduleNameToIndex.get(moduleName);
         if (!packageIndex) {
             const moduleNameWithInit = moduleName + '.__init__';
+
+            // TODO: Consider whether we actually want to do this or not w/ keeping
+            // track of the current project files...
+            //  Perhaps we could instead create a "fake" package and insert it first
+            //  into the packages instead.
+            //
+            //  That would feel a lot better and less "special-casey"
+            //
+            // for (let projectFile of this.projectFiles) {
+            //     let normalized = projectFile
+            //         .replace(path.resolve(process.cwd()), "")
+            //         .slice(0, projectFile.length - path.extname(projectFile).length)
+            //         .replace(path.sep, '.');
+            //     console.log(normalized);
+            //
+            //     if (normalized === moduleName || normalized === moduleNameWithInit) {
+            //         return new PythonPackage("NAME", this.projectVersion, []);
+            //     }
+            // }
 
             // TODO: This should be formalized much better and I would think this
             // could benefit a lot from some unit tests :) but we'll come back to
