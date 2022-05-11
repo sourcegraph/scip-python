@@ -63,10 +63,10 @@ import { assert } from 'pyright-internal/common/debug';
 //      this.evaluator.printType(...)
 
 // TODO: Make this a command line flag
-const shouldError = 1;
+const errorLevel = 2;
 function softAssert(expression: any, message: string, ...exprs: any) {
     if (!expression) {
-        if (shouldError) {
+        if (errorLevel) {
             console.log(message, ...exprs);
             assert(expression, message);
         } else {
@@ -90,13 +90,13 @@ const log = {
     },
 
     debug: (...exprs: any[]) => {
-        if (shouldError >= 2) {
+        if (errorLevel >= 2) {
             console.log(...exprs);
         }
     },
 
     info: (...exprs: any[]) => {
-        if (shouldError >= 1) {
+        if (errorLevel >= 1) {
             console.log(...exprs);
         }
     },
@@ -582,6 +582,7 @@ export class TreeVisitor extends ParseTreeWalker {
             const declNode = decl.node;
             switch (declNode.nodeType) {
                 case ParseNodeType.ImportAs:
+                    console.log('decl node id:', decl.node.id);
                     // If we see that the declaration is for an alias, then we want to just use the
                     // imported alias local definition. This prevents these from leaking out (which
                     // I think is the desired behavior)
@@ -591,18 +592,39 @@ export class TreeVisitor extends ParseTreeWalker {
                     }
 
                     const moduleName = _formatModuleName(declNode.module);
-                    const pythonPackage = this.moduleNameNodeToPythonPackage(declNode.module);
+                    const symbol = this.getSymbolOnce(declNode, () => {
+                        const pythonPackage = this.moduleNameNodeToPythonPackage(declNode.module);
+                        if (!pythonPackage) {
+                            return this.getLocalForDeclaration(node);
+                        }
 
-                    if (!pythonPackage) {
-                        log.once(`Missing package information for: ${moduleName}`);
-                        this.pushNewOccurrence(node, this.getLocalForDeclaration(node));
-                        return true;
+                        assert(declNode != node.parent, 'Must not be the definition');
+                        assert(pythonPackage, 'Must have a python package: ' + moduleName);
+
+                        return Symbols.makeModule(moduleName, pythonPackage);
+                    });
+
+                    let nodeForRange: ParseNode = node;
+                    while (nodeForRange.parent && nodeForRange.parent.nodeType === ParseNodeType.MemberAccess) {
+                        const member = nodeForRange.parent.memberName;
+                        const memberDecl = this.evaluator.getDeclarationsForNameNode(member, false);
+
+                        // OK, so I think _only_ Modules won't have a declaration,
+                        // so keep going until we find something that _has_ a declaration.
+                        //
+                        // That seems a bit goofy, but that lets us get the correct range here:
+                        //
+                        // importlib.resources.read_text('pre_commit.resources', 'filename')
+                        // #^^^^^^^^^^^^^^^^^^ reference  python-stdlib 3.10 `importlib.resources`/__init__:
+                        // #                   ^^^^^^^^^ reference  snapshot-util 0.1 `importlib.resources`/read_text().
+                        if (memberDecl && memberDecl.length > 0) {
+                            break;
+                        }
+
+                        nodeForRange = nodeForRange.parent;
                     }
 
-                    assert(declNode != node.parent, 'Must not be the definition');
-                    assert(pythonPackage, 'Must have a python package: ' + moduleName);
-
-                    this.pushNewOccurrence(node, Symbols.makeModule(moduleName, pythonPackage));
+                    this.pushNewOccurrence(nodeForRange, symbol);
                     return true;
 
                 case ParseNodeType.Name:
@@ -919,7 +941,6 @@ export class TreeVisitor extends ParseTreeWalker {
                 );
 
             case ParseNodeType.MemberAccess:
-                // // throw 'oh ya';
                 // return this.getLsifSymbol(node.parent!);
                 log.debug('Member Access:', node.leftExpression.nodeType, node);
                 const left = node.leftExpression;
@@ -1086,7 +1107,7 @@ export class TreeVisitor extends ParseTreeWalker {
             case ParseNodeType.ImportFrom:
                 // node
                 // TODO(0.2): Resolve all these weird import things.
-                log.debug('ImportFrom');
+                log.info('ImportFrom');
                 return LsifSymbol.empty();
 
             case ParseNodeType.ImportFromAs:
@@ -1119,49 +1140,23 @@ export class TreeVisitor extends ParseTreeWalker {
                     // console.log(this.typeToSymbol(decl.node,
                 }
 
-                console.log('ImportFromAs:', node.name.value);
                 const type = this.getAliasedSymbolTypeForName(node, node.name.value);
                 if (type) {
                     switch (type.category) {
                         case TypeCategory.Module:
-                            // TODO: Copy and pasted
-                            // console.log("ModuleName:", node.name.value);
-
                             const parent = node.parent;
                             assert(parent);
+
                             switch (parent.nodeType) {
                                 case ParseNodeType.ImportFrom:
                                     const pythonPackage =
                                         this.moduleNameNodeToPythonPackage(parent.module) || this.projectPackage;
-
-                                    console.log(
-                                        'you did it',
-                                        [...parent.module.nameParts, node.name].map((part) => part.value).join('.')
-                                    );
 
                                     return Symbols.makeModule(
                                         [...parent.module.nameParts, node.name].map((part) => part.value).join('.'),
                                         pythonPackage
                                     );
                             }
-
-                            let pythonPackage = undefined;
-                            if (path.resolve(type.filePath).startsWith(this.cwd)) {
-                                pythonPackage = this.projectPackage;
-                            }
-                            if (!pythonPackage) {
-                                pythonPackage = this.config.pythonEnvironment.getPackageForModule(type.moduleName);
-                            }
-                            if (!pythonPackage) {
-                                // TODO: Should probably configure this to be disabled if needed
-                                pythonPackage = this.config.pythonEnvironment.guessPackage(type.moduleName);
-                            }
-
-                            if (!pythonPackage) {
-                                break;
-                            }
-
-                            return Symbols.makeModule(type.moduleName, pythonPackage);
                     }
                 }
 
@@ -1499,6 +1494,17 @@ export class TreeVisitor extends ParseTreeWalker {
         }
 
         return pythonPackage;
+    }
+
+    private getSymbolOnce<T extends ParseNode>(node: T, finder: () => LsifSymbol): LsifSymbol {
+        const existing = this.rawGetLsifSymbol(node);
+        if (existing) {
+            return existing;
+        }
+
+        const symbol = finder();
+        this.rawSetLsifSymbol(node, symbol);
+        return symbol;
     }
 }
 
