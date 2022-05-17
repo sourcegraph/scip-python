@@ -2,6 +2,7 @@ import * as fs from 'fs';
 import * as child_process from 'child_process';
 import PythonPackage from './PythonPackage';
 import PythonEnvironment from './PythonEnvironment';
+import { withStatus } from 'src/status';
 
 // Some future improvements:
 //  - Could use `importlib` and execute some stuff from Python
@@ -23,18 +24,32 @@ function pipBulkShow(names: string[]): string[] {
         .split('---');
 }
 
-export default function getEnvironment(projectFiles: Set<string>, projectVersion: string, cachedEnvFile: string | undefined): PythonEnvironment {
+export default function getEnvironment(
+    projectFiles: Set<string>,
+    projectVersion: string,
+    cachedEnvFile: string | undefined
+): PythonEnvironment {
     if (cachedEnvFile) {
         let f = JSON.parse(fs.readFileSync(cachedEnvFile).toString()).map((entry: any) => {
-          return new PythonPackage(entry.name, entry.version, entry.files);
+            return new PythonPackage(entry.name, entry.version, entry.files);
         });
 
         return new PythonEnvironment(projectFiles, projectVersion, f);
     }
 
-    const listed = pipList();
-    const bulk = pipBulkShow(listed.map((item) => item.name));
-    const info = bulk.map((shown) => PythonPackage.fromPipShow(shown));
+    return withStatus('Evaluating python environment dependencies', (spinner) => {
+        const listed = pipList();
 
-    return new PythonEnvironment(projectFiles, projectVersion, info);
+        spinner.render();
+        const bulk = pipBulkShow(listed.map((item) => item.name));
+
+        spinner.render();
+        const info = bulk.map((shown) => {
+            spinner.render();
+            return PythonPackage.fromPipShow(shown);
+        });
+
+        spinner.render();
+        return new PythonEnvironment(projectFiles, projectVersion, info);
+    });
 }

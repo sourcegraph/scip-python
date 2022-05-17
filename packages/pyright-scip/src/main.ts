@@ -5,73 +5,53 @@ import * as child_process from 'child_process';
 import { lib } from './lsif';
 import { index, formatSnapshot, writeSnapshot } from './lib';
 import { Input } from './lsif-typescript/Input';
-import * as yargs from 'yargs';
 import { join } from 'path';
+import { mainCommand } from './MainCommand';
+import { withStatus, statusConfig } from './status';
+
+// TODO: I should make this closer to PyrightConfigOptions
 
 export function main(): void {
-    yargs
-        .scriptName('scip-python')
-        .usage('$0 <cmd> [args]')
-        .version('0.0')
-        .command(
-            'index [project]',
-            'LSIF index a project',
-            (yargs) => {
-                yargs.positional('project', {
-                    type: 'string',
-                    default: '.',
-                    describe:
-                        'path to the TypeScript project to index. Normally, this directory contains a tsconfig.json file.',
-                });
+    const command = mainCommand(
+        (options) => {
+            if (!options.progressBar) {
+                statusConfig.showProgress = false;
+            }
 
-                yargs.option('projectName', {
-                    type: 'string',
-                    default: '',
-                    describe: 'name of project',
-                });
-                yargs.option('projectVersion', {
-                    type: 'string',
-                    default: '',
-                    describe: 'version of project',
-                });
+            const workspaceRoot = options.cwd;
+            let snapshotDir = options.snapshotDir;
+            const environment = options.environment;
 
+            const projectRoot = workspaceRoot;
+            process.chdir(workspaceRoot);
 
-                yargs.option('snapshotDir', {
-                    type: 'string',
-                    default: '',
-                    describe: 'snapshot directory',
-                });
+            // TODO: use setup.py / poetry to determine better projectName
+            const projectName = options.projectName;
+            if (!projectName || projectName == '') {
+                console.warn('Must pass `--project-name`');
+                return;
+            }
 
-                yargs.option('environment', {
-                    type: 'string',
-                    default: '',
-                    describe: 'filepath of environment cache. Can be used to speed up multiple executions.',
-                });
-            },
-            (argv) => {
-                const workspaceRoot = argv.project as string;
-                let snapshotDir = argv.snapshotDir as string;
-                const environment = argv.environment as string;
-
-                const projectRoot = workspaceRoot;
-                process.chdir(workspaceRoot);
-
-                // TODO: use setup.py / poetry to determine better projectName
-                const projectName = argv.projectName as string;
-
-                // TODO: Use setup.py / poetry to determine better projectVersion
-                //  for now, the current hash works OK
-                let projectVersion = argv.projectVersion as string;
-                if (projectVersion === '') {
-                    // Default to current git hash
+            // TODO: Use setup.py / poetry to determine better projectVersion
+            //  for now, the current hash works OK
+            let projectVersion = options.projectVersion;
+            if (!projectVersion || projectVersion === '') {
+                // Default to current git hash
+                try {
                     projectVersion = child_process.execSync('git rev-parse HEAD').toString().trim();
+                } catch (e) {
+                    console.warn('Must either pass `--project-version` or run from within a git repository');
+                    return;
                 }
+            }
 
-                const lsifIndex = new lib.codeintel.lsiftyped.Index();
+            const scipIndex = new lib.codeintel.lsiftyped.Index();
 
-                console.log('Indexing Dir:', projectRoot, ' // version:', projectVersion);
+            console.log('Indexing Dir:', projectRoot, ' // version:', projectVersion);
 
+            try {
                 index({
+                    ...options,
                     workspaceRoot,
                     projectRoot,
                     projectName,
@@ -79,137 +59,100 @@ export function main(): void {
                     environment,
                     writeIndex: (partialIndex: any): void => {
                         if (partialIndex.metadata) {
-                            lsifIndex.metadata = partialIndex.metadata;
+                            scipIndex.metadata = partialIndex.metadata;
                         }
                         for (const doc of partialIndex.documents) {
-                            lsifIndex.documents.push(doc);
+                            scipIndex.documents.push(doc);
+                        }
+                    },
+                });
+            } catch (e) {
+                console.warn('Experienced Fatal Error While Indexing: Please create an issue:', e);
+                return;
+            }
+
+            withStatus('Writing to ' + path.join(projectRoot, options.output), () => {
+                fs.writeFileSync(path.join(projectRoot, options.output), scipIndex.serializeBinary());
+            });
+
+            if (snapshotDir) {
+                for (const doc of scipIndex.documents) {
+                    if (doc.relative_path.startsWith('..')) {
+                        console.log('Skipping Doc:', doc.relative_path);
+                        continue;
+                    }
+
+                    const inputPath = path.join(projectRoot, doc.relative_path);
+                    const input = Input.fromFile(inputPath);
+                    const obtained = formatSnapshot(input, doc);
+                    const relativeToInputDirectory = path.relative(projectRoot, inputPath);
+                    const outputPath = path.resolve(snapshotDir, relativeToInputDirectory);
+                    writeSnapshot(outputPath, obtained);
+                }
+            }
+        },
+        (snapshotRoot, options) => {
+            const projectName = options.projectName;
+            const projectVersion = options.projectVersion;
+            const environment = options.environment;
+
+            const snapshotOnly = options.only;
+
+            const inputDirectory = join(snapshotRoot, 'input');
+            const outputDirectory = join(snapshotRoot, 'output');
+
+            // Either read all the directories or just the one passed in by name
+            let snapshotDirectories = fs.readdirSync(inputDirectory);
+            if (snapshotOnly) {
+                snapshotDirectories = [snapshotOnly];
+            }
+
+            for (const snapshotDir of snapshotDirectories) {
+                const projectRoot = join(inputDirectory, snapshotDir);
+                if (!fs.lstatSync(projectRoot).isDirectory()) {
+                    continue;
+                }
+
+                console.log('Creating Snapshot For: ', projectRoot);
+
+                const scipIndex = new lib.codeintel.lsiftyped.Index();
+                index({
+                    ...options,
+                    workspaceRoot: projectRoot,
+                    projectRoot,
+                    projectName,
+                    projectVersion,
+                    environment,
+                    writeIndex: (partialIndex: any): void => {
+                        if (partialIndex.metadata) {
+                            scipIndex.metadata = partialIndex.metadata;
+                        }
+                        for (const doc of partialIndex.documents) {
+                            scipIndex.documents.push(doc);
                         }
                     },
                 });
 
-                console.log('Writing to: ', path.join(projectRoot, 'dump.lsif-typed'));
-                fs.writeFileSync(path.join(projectRoot, 'dump.lsif-typed'), lsifIndex.serializeBinary());
+                const scipBinaryFile = path.join(projectRoot, options.output);
+                fs.writeFileSync(scipBinaryFile, scipIndex.serializeBinary());
 
-                if (snapshotDir) {
-                    for (const doc of lsifIndex.documents) {
-                        if (doc.relative_path.startsWith('..')) {
-                            console.log('Skipping Doc:', doc.relative_path);
-                            continue;
-                        }
-
-                        const inputPath = path.join(projectRoot, doc.relative_path);
-                        const input = Input.fromFile(inputPath);
-                        const obtained = formatSnapshot(input, doc);
-                        const relativeToInputDirectory = path.relative(projectRoot, inputPath);
-                        const outputPath = path.resolve(snapshotDir, relativeToInputDirectory);
-                        writeSnapshot(outputPath, obtained);
+                for (const doc of scipIndex.documents) {
+                    if (doc.relative_path.startsWith('..')) {
+                        continue;
                     }
+
+                    const inputPath = path.join(projectRoot, doc.relative_path);
+                    const input = Input.fromFile(inputPath);
+                    const obtained = formatSnapshot(input, doc);
+                    const relativeToInputDirectory = path.relative(projectRoot, inputPath);
+                    const outputPath = path.resolve(outputDirectory, snapshotDir, relativeToInputDirectory);
+                    writeSnapshot(outputPath, obtained);
                 }
             }
-        )
-        .command(
-            'snapshot-dir [directory]',
-            'create snapshots for directory',
-            (yargs) => {
-                yargs.positional('directory', {
-                    type: 'string',
-                    default: '.',
-                    describe: 'root before `input` to create snapshots for',
-                });
+        }
+    );
 
-                yargs.option('name', {
-                    type: 'string',
-                    default: '',
-                    describe: 'name of snapshot to run. If passed, only runs this snapshot test',
-                });
-
-                yargs.option('environment', {
-                    type: 'string',
-                    default: '',
-                    describe: 'filepath of environment cache. Can be used to speed up multiple executions.',
-                });
-
-                yargs.option('projectName', {
-                    type: 'string',
-                    default: '',
-                    describe: 'name of project',
-                });
-                yargs.option('projectVersion', {
-                    type: 'string',
-                    default: '',
-                    describe: 'version of project',
-                });
-            },
-            (argv) => {
-                const projectName = argv.projectName as string || 'snapshot-util';
-                const projectVersion = argv.projectVersion as string || '0.1';
-
-                const snapshotRoot = argv.directory as string;
-                const snapshotName = argv.name as string;
-                const environment = argv.environment as string;
-
-                const inputDirectory = join(snapshotRoot, 'input');
-                const outputDirectory = join(snapshotRoot, 'output');
-
-                // Either read all the directories or just the one passed in by name
-                let snapshotDirectories = fs.readdirSync(inputDirectory);
-                if (snapshotName) {
-                    snapshotDirectories = [snapshotName];
-                }
-
-                for (const snapshotDir of snapshotDirectories) {
-                    const projectRoot = join(inputDirectory, snapshotDir);
-                    if (!fs.lstatSync(projectRoot).isDirectory()) {
-                      continue;
-                    }
-
-                    console.log('Snapshotting: ', projectRoot);
-
-                    const lsifIndex = new lib.codeintel.lsiftyped.Index();
-                    index({
-                        workspaceRoot: projectRoot,
-                        projectRoot,
-                        projectName,
-                        projectVersion,
-                        environment,
-                        writeIndex: (partialIndex: any): void => {
-                            if (partialIndex.metadata) {
-                                lsifIndex.metadata = partialIndex.metadata;
-                            }
-                            for (const doc of partialIndex.documents) {
-                                lsifIndex.documents.push(doc);
-                            }
-                        },
-                    });
-
-                    const lsifTypedBinary = path.join(projectRoot, 'dump.lsif-typed');
-                    fs.writeFileSync(lsifTypedBinary, lsifIndex.serializeBinary());
-
-                    for (const doc of lsifIndex.documents) {
-                        if (doc.relative_path.startsWith('..')) {
-                            continue;
-                        }
-
-                        const inputPath = path.join(projectRoot, doc.relative_path);
-                        const input = Input.fromFile(inputPath);
-                        const obtained = formatSnapshot(input, doc);
-                        const relativeToInputDirectory = path.relative(projectRoot, inputPath);
-                        const outputPath = path.resolve(outputDirectory, snapshotDir, relativeToInputDirectory);
-                        writeSnapshot(outputPath, obtained);
-                    }
-                }
-            }
-        )
-        // .command(
-        //     'versions',
-        //     'display version information for current env',
-        //     () => {},
-        //     () => {
-        //         // console.log(packages.getEnvironmentPackages('', 'test'));
-        //         throw 'todo: put this back when it is ready';
-        //     }
-        // )
-        .help().argv;
+    command.parse(process.argv);
 }
 
 main();

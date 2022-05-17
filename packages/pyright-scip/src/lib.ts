@@ -5,10 +5,11 @@ import { Indexer } from './indexer';
 import { lib } from './lsif';
 import { Input } from './lsif-typescript/Input';
 import { Range } from './lsif-typescript/Range';
+import { IndexOptions } from './MainCommand';
 
 export const lsiftyped = lib.codeintel.lsiftyped;
 
-export interface LsifConfig {
+export interface ScipConfig extends IndexOptions {
     /**
      * The directory where to generate the dump.lsif-typed file.
      *
@@ -16,22 +17,12 @@ export interface LsifConfig {
      */
     workspaceRoot: string;
 
-    /** The directory containing a tsconfig.json file. */
     projectRoot: string;
-
-    /** Name of current project **/
-    projectName: string;
-
-    /** Version of current project **/
-    projectVersion: string;
-
-    /** Cached Deps **/
-    environment: string | undefined;
 
     writeIndex: (index: lib.codeintel.lsiftyped.Index) => void;
 }
 
-export function index(options: LsifConfig) {
+export function index(options: ScipConfig) {
     const indexer = new Indexer({}, options);
     indexer.index();
 }

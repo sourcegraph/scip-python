@@ -10,13 +10,16 @@ import { TreeVisitor } from './treeVisitor';
 import { FullAccessHost } from 'pyright-internal/common/fullAccessHost';
 import { glob } from 'glob';
 import * as url from 'url';
-import { lsiftyped, LsifConfig } from './lib';
+import { lsiftyped, ScipConfig } from './lib';
 import { SourceFile } from 'pyright-internal/analyzer/sourceFile';
 import { Counter } from './lsif-typescript/Counter';
 import { getTypeShedFallbackPath } from 'pyright-internal/analyzer/pythonPathUtils';
 import { PyrightFileSystem } from 'pyright-internal/pyrightFileSystem';
 import getEnvironment from './virtualenv/environment';
 import { version } from 'package.json';
+import { getFileSpec } from 'pyright-internal/common/pathUtils';
+import { FileMatcher } from './FileMatcher';
+import { withStatus } from './status';
 
 export interface Config {}
 
@@ -27,7 +30,7 @@ export class Indexer {
     pyrightConfig: ConfigOptions;
     projectFiles: Set<string>;
 
-    constructor(public readonly config: Config, public lsifConfig: LsifConfig) {
+    constructor(public readonly config: Config, public scipConfig: ScipConfig) {
         this.counter = new Counter();
 
         // TODO: Consider using the same setup that is used by pyright `[tool.pyright]`
@@ -38,24 +41,23 @@ export class Indexer {
         //  have the same methods of configuring, you might just want to change the include/exclude)
         //
         // private _getConfigOptions(host: Host, commandLineOptions: CommandLineOptions): ConfigOptions {
-        this.pyrightConfig = new ConfigOptions(lsifConfig.projectRoot);
+        this.pyrightConfig = new ConfigOptions(scipConfig.projectRoot);
         this.pyrightConfig.checkOnlyOpenFiles = false;
         this.pyrightConfig.indexing = true;
         this.pyrightConfig.useLibraryCodeForTypes = true;
 
         const fs = new PyrightFileSystem(createFromRealFileSystem());
         this.pyrightConfig.typeshedPath = getTypeShedFallbackPath(fs);
+        this.pyrightConfig.include = [getFileSpec(fs, process.cwd(), '.')];
+
+        const matcher = new FileMatcher(this.pyrightConfig, fs);
+        this.projectFiles = new Set(matcher.matchFiles(this.pyrightConfig.include, this.pyrightConfig.exclude));
 
         const host = new FullAccessHost(fs);
         this.importResolver = new ImportResolver(fs, this.pyrightConfig, host);
-        this.program = new Program(this.importResolver, this.pyrightConfig);
 
-        // TODO:
-        // - [ ] pyi files?
-        // - [ ] More configurable globbing?
-        const pyFiles = glob.sync(lsifConfig.projectRoot + '/**/*.py');
-        this.projectFiles = new Set(pyFiles.map((p) => path.resolve(p)));
-        this.program.setTrackedFiles(pyFiles);
+        this.program = new Program(this.importResolver, this.pyrightConfig);
+        this.program.setTrackedFiles([...this.projectFiles]);
     }
 
     public index(): void {
@@ -66,15 +68,15 @@ export class Indexer {
 
         const packageConfig = getEnvironment(
             this.projectFiles,
-            this.lsifConfig.projectVersion,
-            this.lsifConfig.environment
+            this.scipConfig.projectVersion,
+            this.scipConfig.environment
         );
 
         // Emit metadata
-        this.lsifConfig.writeIndex(
+        this.scipConfig.writeIndex(
             new lsiftyped.Index({
                 metadata: new lsiftyped.Metadata({
-                    project_root: url.pathToFileURL(this.lsifConfig.workspaceRoot).toString(),
+                    project_root: url.pathToFileURL(this.scipConfig.workspaceRoot).toString(),
                     text_document_encoding: lsiftyped.TextEncoding.UTF8,
                     tool_info: new lsiftyped.ToolInfo({
                         name: 'scip-python',
@@ -86,26 +88,31 @@ export class Indexer {
         );
 
         // Run program analysis once.
-        while (this.program.analyze()) {}
+        withStatus('Parse and search for dependencies', () => {
+            while (this.program.analyze()) {}
+        });
 
-        // let visitors: lib.codeintel.lsiftyped.Document[] = [];
         let projectSourceFiles: SourceFile[] = [];
-        this.program.indexWorkspace((filepath: string, _results: IndexResults) => {
-            // Filter out filepaths not part of this project
-            if (filepath.indexOf(this.lsifConfig.projectRoot) != 0) {
-                return;
-            }
+        withStatus('Index workspace and track project files', (spinner) => {
+            this.program.indexWorkspace((filepath: string, _results: IndexResults) => {
+                spinner.render();
 
-            const sourceFile = this.program.getSourceFile(filepath)!;
-            projectSourceFiles.push(sourceFile);
+                // Filter out filepaths not part of this project
+                if (filepath.indexOf(this.scipConfig.projectRoot) != 0) {
+                    return;
+                }
 
-            let requestsImport = sourceFile.getImports();
-            requestsImport.forEach((entry) =>
-                entry.resolvedPaths.forEach((value) => {
-                    this.program.addTrackedFile(value, true, false);
-                })
-            );
-        }, token);
+                const sourceFile = this.program.getSourceFile(filepath)!;
+                projectSourceFiles.push(sourceFile);
+
+                let requestsImport = sourceFile.getImports();
+                requestsImport.forEach((entry) =>
+                    entry.resolvedPaths.forEach((value) => {
+                        this.program.addTrackedFile(value, true, false);
+                    })
+                );
+            }, token);
+        });
 
         // Mark every original sourceFile as dirty so that we can
         // visit them via the program again (with all dependencies noted)
@@ -115,37 +122,41 @@ export class Indexer {
 
         while (this.program.analyze()) {}
 
-        const typeEvaluator = this.program.evaluator!;
-        projectSourceFiles.forEach((sourceFile) => {
-            const filepath = sourceFile.getFilePath();
-            let doc = new lsiftyped.Document({
-                relative_path: path.relative(this.lsifConfig.workspaceRoot, filepath),
+        withStatus('Parse and emit SCIP', (spinner) => {
+            const typeEvaluator = this.program.evaluator!;
+            projectSourceFiles.forEach((sourceFile) => {
+                spinner.render();
+
+                const filepath = sourceFile.getFilePath();
+                let doc = new lsiftyped.Document({
+                    relative_path: path.relative(this.scipConfig.workspaceRoot, filepath),
+                });
+
+                const parseResults = sourceFile.getParseResults();
+                const tree = parseResults?.parseTree!;
+
+                let visitor = new TreeVisitor({
+                    document: doc,
+                    sourceFile: sourceFile,
+                    evaluator: typeEvaluator,
+                    program: this.program,
+                    pyrightConfig: this.pyrightConfig,
+                    scipConfig: this.scipConfig,
+                    pythonEnvironment: packageConfig,
+                });
+                visitor.walk(tree);
+
+                if (doc.occurrences.length === 0) {
+                    console.log(`file:${filepath} had no occurrences`);
+                    return;
+                }
+
+                this.scipConfig.writeIndex(
+                    new lsiftyped.Index({
+                        documents: [doc],
+                    })
+                );
             });
-
-            const parseResults = sourceFile.getParseResults();
-            const tree = parseResults?.parseTree!;
-
-            let visitor = new TreeVisitor({
-                document: doc,
-                sourceFile: sourceFile,
-                evaluator: typeEvaluator,
-                program: this.program,
-                pyrightConfig: this.pyrightConfig,
-                lsifConfig: this.lsifConfig,
-                pythonEnvironment: packageConfig,
-            });
-            visitor.walk(tree);
-
-            if (doc.occurrences.length === 0) {
-                console.log(`file:${filepath} had no occurrences`);
-                return;
-            }
-
-            this.lsifConfig.writeIndex(
-                new lsiftyped.Index({
-                    documents: [doc],
-                })
-            );
         });
     }
 }
