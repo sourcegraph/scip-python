@@ -66,11 +66,11 @@ import { assert } from 'pyright-internal/common/debug';
 var errorLevel = 0;
 function softAssert(expression: any, message: string, ...exprs: any) {
     if (!expression) {
-        if (errorLevel) {
+        if (errorLevel > 1) {
             console.log(message, ...exprs);
             assert(expression, message);
-        } else {
-            console.warn('Failed with:', message, ...exprs);
+        } else if (errorLevel === 1) {
+            console.warn(message, ...exprs);
         }
     }
 
@@ -125,13 +125,18 @@ export interface TreeVisitorConfig {
     pyrightConfig: ConfigOptions;
     scipConfig: ScipConfig;
     pythonEnvironment: PythonEnvironment;
+    globalSymbols: Map<number, ScipSymbol>;
 }
 
 export class TreeVisitor extends ParseTreeWalker {
     private fileInfo: AnalyzerFileInfo | undefined;
     private _imports: Map<number, ParseNode>;
-    private _symbols: Map<number, ScipSymbol>;
     private symbolInformationForNode: Set<string>;
+
+    /// maps node.id -> ScipSymbol, for document local symbols
+    private documentSymbols: Map<number, ScipSymbol>;
+    /// maps node.id: ScipSymbol, for globally accesible symbols
+    private globalSymbols: Map<number, ScipSymbol>;
 
     private _docstringWriter: TypeStubExtendedWriter;
 
@@ -174,7 +179,8 @@ export class TreeVisitor extends ParseTreeWalker {
             []
         );
 
-        this._symbols = new Map();
+        this.documentSymbols = new Map();
+        this.globalSymbols = this.config.globalSymbols;
         this._imports = new Map();
         this.symbolInformationForNode = new Set();
 
@@ -529,7 +535,7 @@ export class TreeVisitor extends ParseTreeWalker {
         return true;
     }
 
-    override visitImportFromAs(node: ImportFromAsNode): boolean {
+    override visitImportFromAs(_node: ImportFromAsNode): boolean {
         // const decls = this.evaluator.getDeclarationsForNameNode(node.name);
         // if (!decls) {
         //     return false;
@@ -679,7 +685,7 @@ export class TreeVisitor extends ParseTreeWalker {
 
                     if (hoverResult) {
                         const symbol = this.typeToSymbol(node, declNode, resolvedType);
-                        this.rawSetLsifSymbol(declNode, symbol);
+                        this.rawSetLsifSymbol(declNode, symbol, symbol.isLocal());
 
                         this.emitSymbolInformationOnce(node, symbol, _formatHover(hoverResult));
                     }
@@ -748,7 +754,7 @@ export class TreeVisitor extends ParseTreeWalker {
             }
 
             const builtinType = this.evaluator.getBuiltInType(node, node.value);
-            const pyrightSymbol = this.evaluator.lookUpSymbolRecursive(node, node.value, true);
+            // const pyrightSymbol = this.evaluator.lookUpSymbolRecursive(node, node.value, true);
 
             if (!Types.isUnknown(builtinType)) {
                 // TODO: We could expose this and try to use it, but for now, let's skip that.
@@ -818,11 +824,15 @@ export class TreeVisitor extends ParseTreeWalker {
     }
 
     private rawGetLsifSymbol(node: ParseNode): ScipSymbol | undefined {
-        return this._symbols.get(node.id);
+        return this.globalSymbols.get(node.id) || this.documentSymbols.get(node.id);
     }
 
-    private rawSetLsifSymbol(node: ParseNode, sym: ScipSymbol): void {
-        this._symbols.set(node.id, sym);
+    private rawSetLsifSymbol(node: ParseNode, sym: ScipSymbol, isLocal: boolean): void {
+        if (isLocal) {
+            this.documentSymbols.set(node.id, sym);
+        } else {
+            this.globalSymbols.set(node.id, sym);
+        }
     }
 
     private getLsifSymbol(node: ParseNode): ScipSymbol {
@@ -860,13 +870,13 @@ export class TreeVisitor extends ParseTreeWalker {
 
             // let newSymbol = this.makeLsifSymbol(this.projectPackage, "_", node);
             const newSymbol = ScipSymbol.local(this.counter.next());
-            this.rawSetLsifSymbol(node, newSymbol);
+            this.rawSetLsifSymbol(node, newSymbol, true);
             this.emitSymbolInformationOnce(node, newSymbol);
             return newSymbol;
         }
 
         let newSymbol = this.makeLsifSymbol(pythonPackage, moduleName, node);
-        this.rawSetLsifSymbol(node, newSymbol);
+        this.rawSetLsifSymbol(node, newSymbol, true);
 
         return newSymbol;
     }
@@ -1272,7 +1282,7 @@ export class TreeVisitor extends ParseTreeWalker {
         let symbol = this.rawGetLsifSymbol(declNode);
         if (!symbol) {
             symbol = this.typeToSymbol(node, declNode, typeObj);
-            this.rawSetLsifSymbol(declNode, symbol);
+            this.rawSetLsifSymbol(declNode, symbol, symbol.isLocal());
         }
 
         this.pushNewOccurrence(node, symbol);
@@ -1285,7 +1295,7 @@ export class TreeVisitor extends ParseTreeWalker {
         }
 
         const symbol = ScipSymbol.local(this.counter.next());
-        this.rawSetLsifSymbol(node, symbol);
+        this.rawSetLsifSymbol(node, symbol, true);
         return symbol;
     }
 
@@ -1496,7 +1506,7 @@ export class TreeVisitor extends ParseTreeWalker {
         }
 
         const symbol = finder();
-        this.rawSetLsifSymbol(node, symbol);
+        this.rawSetLsifSymbol(node, symbol, symbol.isLocal());
         return symbol;
     }
 }

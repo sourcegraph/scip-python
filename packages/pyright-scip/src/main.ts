@@ -8,6 +8,7 @@ import { Input } from './lsif-typescript/Input';
 import { join } from 'path';
 import { mainCommand } from './MainCommand';
 import { withStatus, statusConfig } from './status';
+import getEnvironment from './virtualenv/environment';
 
 // TODO: I should make this closer to PyrightConfigOptions
 
@@ -19,7 +20,7 @@ export function main(): void {
             }
 
             const workspaceRoot = options.cwd;
-            let snapshotDir = options.snapshotDir;
+            const snapshotDir = options.snapshotDir;
             const environment = options.environment;
 
             const projectRoot = workspaceRoot;
@@ -149,6 +150,11 @@ export function main(): void {
                     writeSnapshot(outputPath, obtained);
                 }
             }
+        },
+        (_) => {
+            throw 'not yet implemented';
+            // console.log('ENVIRONMENT OPTIONS', options);
+            // console.log(getEnvironment(new Set(), '', undefined));
         }
     );
 

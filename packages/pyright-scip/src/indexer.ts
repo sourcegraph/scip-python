@@ -8,7 +8,6 @@ import { ConfigOptions } from 'pyright-internal/common/configOptions';
 import { IndexResults } from 'pyright-internal/languageService/documentSymbolProvider';
 import { TreeVisitor } from './treeVisitor';
 import { FullAccessHost } from 'pyright-internal/common/fullAccessHost';
-import { glob } from 'glob';
 import * as url from 'url';
 import { lsiftyped, ScipConfig } from './lib';
 import { SourceFile } from 'pyright-internal/analyzer/sourceFile';
@@ -48,7 +47,20 @@ export class Indexer {
 
         const fs = new PyrightFileSystem(createFromRealFileSystem());
         this.pyrightConfig.typeshedPath = getTypeShedFallbackPath(fs);
-        this.pyrightConfig.include = [getFileSpec(fs, process.cwd(), '.')];
+
+        if (this.scipConfig.include) {
+            this.pyrightConfig.include = this.scipConfig.include
+                .split(',')
+                .map((pathspec) => getFileSpec(fs, process.cwd(), pathspec));
+        } else {
+            this.pyrightConfig.include = [getFileSpec(fs, process.cwd(), '.')];
+        }
+
+        if (this.scipConfig.exclude) {
+            this.pyrightConfig.exclude = this.scipConfig.exclude
+                .split(',')
+                .map((pathspec) => getFileSpec(fs, process.cwd(), pathspec));
+        }
 
         const matcher = new FileMatcher(this.pyrightConfig, fs);
         this.projectFiles = new Set(matcher.matchFiles(this.pyrightConfig.include, this.pyrightConfig.exclude));
@@ -71,6 +83,8 @@ export class Indexer {
             this.scipConfig.projectVersion,
             this.scipConfig.environment
         );
+
+        const globalSymbols = new Map();
 
         // Emit metadata
         this.scipConfig.writeIndex(
@@ -143,6 +157,7 @@ export class Indexer {
                     pyrightConfig: this.pyrightConfig,
                     scipConfig: this.scipConfig,
                     pythonEnvironment: packageConfig,
+                    globalSymbols,
                 });
                 visitor.walk(tree);
 
