@@ -16,9 +16,12 @@ class ClassWithInferredField:
 #                   > ```
 #                ^^^^ definition  snapshot-util 0.1 inferred_field_docstring/ClassWithInferredField#__init__().(self)
 #                      ^ definition  snapshot-util 0.1 inferred_field_docstring/ClassWithInferredField#__init__().(b)
-#                         ^^^ reference local 0
+#                         ^^^ reference  python-stdlib 3.10 builtins/int#
+#                         documentation ```python
+#                                     > (class) int
+#                                     > ```
         self.b = b
 #       ^^^^ reference  snapshot-util 0.1 inferred_field_docstring/ClassWithInferredField#__init__().(self)
-#            ^ definition local 1
+#            ^ definition  snapshot-util 0.1 inferred_field_docstring/ClassWithInferredField#b.
 #                ^ reference  snapshot-util 0.1 inferred_field_docstring/ClassWithInferredField#__init__().(b)
 

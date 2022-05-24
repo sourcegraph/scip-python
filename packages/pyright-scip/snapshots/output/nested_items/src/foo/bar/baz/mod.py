@@ -11,5 +11,8 @@ class SuchNestedMuchWow:
 #   documentation ```python
 #               > (variable) class_item: Literal[42]
 #               > ```
-#               ^^^ reference local 0
+#               ^^^ reference  python-stdlib 3.10 builtins/int#
+#               documentation ```python
+#                           > (class) int
+#                           > ```
 

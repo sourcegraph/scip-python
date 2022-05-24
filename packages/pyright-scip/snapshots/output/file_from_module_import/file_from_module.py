@@ -1,11 +1,11 @@
-# < definition scip-python pypi snapshot-util 0.1 src/__init__:
-#documentation (module) src
+# < definition scip-python pypi snapshot-util 0.1 file_from_module/__init__:
+#documentation (module) file_from_module
 
-import leftpad
-#      ^^^^^^^ reference  leftpad 0.1.2 leftpad/__init__:
-#      ^^^^^^^ reference  leftpad 0.1.2 leftpad/__init__:
+from xyz import nested_file
+#    ^^^ reference  snapshot-util 0.1 xyz/__init__:
+#               ^^^^^^^^^^^ reference  snapshot-util 0.1 `xyz.nested_file`/__init__:
 
-print(leftpad)
+print(nested_file.X)
 #^^^^ reference  python-stdlib 3.10 builtins/__init__:print().
 #documentation ```python
 #            > (function)
@@ -13,5 +13,6 @@ print(leftpad)
 #            > 
 #            > print(*values: object, sep: str | None = ..., end: str | None = ..., file: _SupportsWriteAndFlush[str] | None = ..., flush: bool) -> None
 #            > ```
-#     ^^^^^^^ reference  leftpad 0.1.2 leftpad/__init__:
+#     ^^^^^^^^^^^ reference  snapshot-util 0.1 `xyz.nested_file`/__init__:
+#                 ^ reference  snapshot-util 0.1 `xyz.nested_file`/X.
 

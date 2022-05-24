@@ -17,7 +17,7 @@ $ npm install -g @sourcegraph/scip-python
 $ npm install @sourcegraph/scip-python
 
 $ # NOTE: make sure to activate your virtual environment before running
-$ scip-python index . --projectName $MY_PROJECT
+$ scip-python index . --project-name $MY_PROJECT
 
 $ # Make sure to point towards the sourcegraph instance you're interested in uploading to.
 $ #     more information at https://github.com/sourcegraph/src-cli
@@ -35,7 +35,7 @@ $ src lsif upload
                 "curl -Lo lsif-typed https://github.com/sourcegraph/lsif-typescript/releases/download/v0.1.13/lsif-typed",
                 "chmod +x ./lsif-typed",
                 "npm install -g @sourcegraph/scip-python",
-                "scip-python index . --projectName tjdevries-sam --projectVersion 0.1",
+                "scip-python index . --project-name my_project --project-version 0.1 --include my_project",
                 "./lsif-typed dump.lsif-typed > dump.lsif",
             ],
             "indexer_args": [],

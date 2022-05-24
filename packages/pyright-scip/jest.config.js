@@ -12,7 +12,7 @@ const { compilerOptions } = require('./tsconfig');
 
 module.exports = {
     testEnvironment: 'node',
-    roots: ['<rootDir>/src/tests'],
+    roots: ['<rootDir>/src/'],
     transform: {
         '^.+\\.tsx?$': 'ts-jest',
     },
