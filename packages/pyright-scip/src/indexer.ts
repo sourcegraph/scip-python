@@ -101,12 +101,7 @@ export class Indexer {
 
         // Run program analysis once.
         withStatus('Parse and search for dependencies', () => {
-            while (
-                this.program.analyze({
-                    openFilesTimeInMs: 10,
-                    noOpenFilesTimeInMs: 10,
-                })
-            ) {}
+            while (this.program.analyze()) {}
         });
 
         let projectSourceFiles: SourceFile[] = [];
