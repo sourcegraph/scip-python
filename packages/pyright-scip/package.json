@@ -7,8 +7,8 @@
     "build": "webpack --mode production --progress",
     "clean": "shx rm -rf ./dist ./out README.md LICENSE.txt",
     "prepack": "npm run clean && shx cp ../../README.md . && shx cp ../../LICENSE.txt . && npm run build",
-    "check-snapshots": "node ./index.js snapshot-dir snapshots --envCacheFile snapshots/testEnv.json --diff",
-    "update-snapshots": "node ./index.js snapshot-dir snapshots --envCacheFile snapshots/testEnv.json",
+    "check-snapshots": "npm run update-snapshots --diff",
+    "update-snapshots": "node ./index.js snapshot-dir snapshots --environment snapshots/testEnv.json --no-progress-bar",
     "test": "jest --forceExit --detectOpenHandles",
     "webpack": "webpack --mode development --progress",
     "watch": "webpack --mode development --progress --watch"

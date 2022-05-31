@@ -3,14 +3,13 @@ import * as path from 'path';
 import * as child_process from 'child_process';
 
 import { lib } from './lsif';
-import { index, formatSnapshot, writeSnapshot } from './lib';
+import { formatSnapshot, writeSnapshot } from './lib';
 import { Input } from './lsif-typescript/Input';
 import { join } from 'path';
 import { mainCommand } from './MainCommand';
 import { withStatus, statusConfig } from './status';
 import getEnvironment from './virtualenv/environment';
-
-// TODO: I should make this closer to PyrightConfigOptions
+import { Indexer } from './indexer';
 
 export function main(): void {
     const command = mainCommand(
@@ -51,7 +50,7 @@ export function main(): void {
             console.log('Indexing Dir:', projectRoot, ' // version:', projectVersion);
 
             try {
-                index({
+                let indexer = new Indexer({
                     ...options,
                     workspaceRoot,
                     projectRoot,
@@ -67,6 +66,8 @@ export function main(): void {
                         }
                     },
                 });
+
+                indexer.index();
             } catch (e) {
                 console.warn('Experienced Fatal Error While Indexing: Please create an issue:', e);
                 return;
@@ -95,12 +96,12 @@ export function main(): void {
         (snapshotRoot, options) => {
             const projectName = options.projectName;
             const projectVersion = options.projectVersion;
-            const environment = options.environment;
+            const environment = path.resolve(options.environment);
 
             const snapshotOnly = options.only;
 
-            const inputDirectory = join(snapshotRoot, 'input');
-            const outputDirectory = join(snapshotRoot, 'output');
+            const inputDirectory = path.resolve(join(snapshotRoot, 'input'));
+            const outputDirectory = path.resolve(join(snapshotRoot, 'output'));
 
             // Either read all the directories or just the one passed in by name
             let snapshotDirectories = fs.readdirSync(inputDirectory);
@@ -109,15 +110,19 @@ export function main(): void {
             }
 
             for (const snapshotDir of snapshotDirectories) {
-                const projectRoot = join(inputDirectory, snapshotDir);
+                let projectRoot = join(inputDirectory, snapshotDir);
                 if (!fs.lstatSync(projectRoot).isDirectory()) {
                     continue;
                 }
+                console.log('PROJECT ROOT', path.resolve(projectRoot));
+
+                projectRoot = path.resolve(projectRoot);
+                process.chdir(projectRoot);
 
                 console.log('Creating Snapshot For: ', projectRoot);
-
                 const scipIndex = new lib.codeintel.lsiftyped.Index();
-                index({
+
+                let indexer = new Indexer({
                     ...options,
                     workspaceRoot: projectRoot,
                     projectRoot,
@@ -133,7 +138,9 @@ export function main(): void {
                         }
                     },
                 });
+                indexer.index();
 
+                console.log('done indexing');
                 const scipBinaryFile = path.join(projectRoot, options.output);
                 fs.writeFileSync(scipBinaryFile, scipIndex.serializeBinary());
 

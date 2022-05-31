@@ -1,7 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
 
-import { Indexer } from './indexer';
 import { lib } from './lsif';
 import { Input } from './lsif-typescript/Input';
 import { Range } from './lsif-typescript/Range';
@@ -20,11 +19,6 @@ export interface ScipConfig extends IndexOptions {
     projectRoot: string;
 
     writeIndex: (index: lib.codeintel.lsiftyped.Index) => void;
-}
-
-export function index(options: ScipConfig) {
-    const indexer = new Indexer({}, options);
-    indexer.index();
 }
 
 function getSymbolTable(doc: lib.codeintel.lsiftyped.Document): Map<string, lib.codeintel.lsiftyped.SymbolInformation> {

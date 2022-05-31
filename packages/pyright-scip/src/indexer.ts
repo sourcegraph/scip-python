@@ -20,8 +20,6 @@ import { getFileSpec } from 'pyright-internal/common/pathUtils';
 import { FileMatcher } from './FileMatcher';
 import { withStatus } from './status';
 
-export interface Config {}
-
 export class Indexer {
     program: Program;
     importResolver: ImportResolver;
@@ -29,7 +27,7 @@ export class Indexer {
     pyrightConfig: ConfigOptions;
     projectFiles: Set<string>;
 
-    constructor(public readonly config: Config, public scipConfig: ScipConfig) {
+    constructor(public scipConfig: ScipConfig) {
         this.counter = new Counter();
 
         // TODO: Consider using the same setup that is used by pyright `[tool.pyright]`
@@ -103,7 +101,12 @@ export class Indexer {
 
         // Run program analysis once.
         withStatus('Parse and search for dependencies', () => {
-            while (this.program.analyze()) {}
+            while (
+                this.program.analyze({
+                    openFilesTimeInMs: 10,
+                    noOpenFilesTimeInMs: 10,
+                })
+            ) {}
         });
 
         let projectSourceFiles: SourceFile[] = [];
