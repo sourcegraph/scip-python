@@ -167,7 +167,7 @@ export function diffSnapshot(outputPath: string, obtained: string): void {
         return;
     }
 
-    throw new Error(
+    console.error(
         createTwoFilesPatch(
             outputPath,
             outputPath,
@@ -177,6 +177,7 @@ export function diffSnapshot(outputPath: string, obtained: string): void {
             '(what the current code produces). Run the command "npm run update-snapshots" to accept the new behavior.'
         )
     );
+    exit(1);
 }
 
 function occurrencesByLine(a: lib.codeintel.lsiftyped.Occurrence, b: lib.codeintel.lsiftyped.Occurrence): number {
