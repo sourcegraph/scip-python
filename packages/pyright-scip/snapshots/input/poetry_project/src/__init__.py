@@ -1,3 +1,0 @@
-import leftpad
-
-print(leftpad)

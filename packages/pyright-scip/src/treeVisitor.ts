@@ -1013,18 +1013,23 @@ export class TreeVisitor extends ParseTreeWalker {
                                 const typeVar = type.type;
                                 const bound = typeVar.details.boundType! as ClassType;
 
-                                // TODO:
-                                const pythonPackage = this.getPackageInfo(node, bound.details.moduleName)!;
-                                return ScipSymbol.global(
-                                    ScipSymbol.global(
+                                return this.getSymbolOnce(node, () => {
+                                    // TODO:
+                                    const pythonPackage = this.getPackageInfo(node, bound.details.moduleName)!;
+                                    let symbol = ScipSymbol.global(
                                         ScipSymbol.global(
-                                            ScipSymbol.package(pythonPackage.name, pythonPackage.version),
-                                            packageDescriptor(bound.details.moduleName)
+                                            ScipSymbol.global(
+                                                ScipSymbol.package(pythonPackage.name, pythonPackage.version),
+                                                packageDescriptor(bound.details.moduleName)
+                                            ),
+                                            typeDescriptor(bound.details.name)
                                         ),
-                                        typeDescriptor(bound.details.name)
-                                    ),
-                                    termDescriptor(node.value)
-                                );
+                                        termDescriptor(node.value)
+                                    );
+
+                                    this.emitSymbolInformationOnce(node, symbol);
+                                    return symbol;
+                                });
                             default:
                         }
                     // }

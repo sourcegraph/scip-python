@@ -1,7 +1,8 @@
+import { createTwoFilesPatch, diffLines } from 'diff';
 import * as fs from 'fs';
 import * as path from 'path';
+import { exit } from 'process';
 
-import { Indexer } from './indexer';
 import { lib } from './lsif';
 import { Input } from './lsif-typescript/Input';
 import { Range } from './lsif-typescript/Range';
@@ -20,11 +21,6 @@ export interface ScipConfig extends IndexOptions {
     projectRoot: string;
 
     writeIndex: (index: lib.codeintel.lsiftyped.Index) => void;
-}
-
-export function index(options: ScipConfig) {
-    const indexer = new Indexer({}, options);
-    indexer.index();
 }
 
 function getSymbolTable(doc: lib.codeintel.lsiftyped.Document): Map<string, lib.codeintel.lsiftyped.SymbolInformation> {
@@ -163,6 +159,25 @@ export function writeSnapshot(outputPath: string, obtained: string): void {
     });
     // eslint-disable-next-line no-sync
     fs.writeFileSync(outputPath, obtained, { flag: 'w' });
+}
+
+export function diffSnapshot(outputPath: string, obtained: string): void {
+    let existing = fs.readFileSync(outputPath, { encoding: 'utf8' });
+    if (obtained === existing) {
+        return;
+    }
+
+    console.error(
+        createTwoFilesPatch(
+            outputPath,
+            outputPath,
+            existing,
+            obtained,
+            '(what the snapshot tests expect)',
+            '(what the current code produces). Run the command "npm run update-snapshots" to accept the new behavior.'
+        )
+    );
+    exit(1);
 }
 
 function occurrencesByLine(a: lib.codeintel.lsiftyped.Occurrence, b: lib.codeintel.lsiftyped.Occurrence): number {

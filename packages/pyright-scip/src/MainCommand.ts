@@ -17,6 +17,7 @@ export interface IndexOptions {
 
 export interface SnapshotOptions extends IndexOptions {
     only: string;
+    check: boolean;
 }
 
 export interface EnvironmentOptions {
@@ -52,10 +53,13 @@ export function mainCommand(
     command
         .command('snapshot-dir')
         .argument('<path>', 'the directory containing `input` directories')
+        .option('--check', 'whether to update or check', false)
         .option('--only <name>', 'only generate snapshots for <name>')
         .option('--project-name <name>', 'the name of the current project, pypi name if applicable', 'snapshot-util')
         .option('--project-version <version>', 'the name of the current project, pypi name if applicable', '0.1')
+        .option('--output <path>', 'path to the output file', DEFAULT_OUTPUT_FILE)
         .option('--environment <json-file>', 'the environment json file (experimental)')
+        .option('--no-progress-bar', 'whether to disable the progress bar')
         .action((dir, parsedOptions) => {
             snapshotAction(dir, parsedOptions as SnapshotOptions);
         });

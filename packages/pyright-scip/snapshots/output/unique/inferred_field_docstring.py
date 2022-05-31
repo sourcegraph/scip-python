@@ -23,5 +23,8 @@ class ClassWithInferredField:
         self.b = b
 #       ^^^^ reference  snapshot-util 0.1 inferred_field_docstring/ClassWithInferredField#__init__().(self)
 #            ^ definition  snapshot-util 0.1 inferred_field_docstring/ClassWithInferredField#b.
+#            documentation ```python
+#                        > (variable) b: int
+#                        > ```
 #                ^ reference  snapshot-util 0.1 inferred_field_docstring/ClassWithInferredField#__init__().(b)
 

@@ -20,8 +20,6 @@ import { getFileSpec } from 'pyright-internal/common/pathUtils';
 import { FileMatcher } from './FileMatcher';
 import { withStatus } from './status';
 
-export interface Config {}
-
 export class Indexer {
     program: Program;
     importResolver: ImportResolver;
@@ -29,7 +27,7 @@ export class Indexer {
     pyrightConfig: ConfigOptions;
     projectFiles: Set<string>;
 
-    constructor(public readonly config: Config, public scipConfig: ScipConfig) {
+    constructor(public scipConfig: ScipConfig) {
         this.counter = new Counter();
 
         // TODO: Consider using the same setup that is used by pyright `[tool.pyright]`
