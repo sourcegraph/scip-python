@@ -152,6 +152,7 @@ export function main(): void {
                     const outputPath = path.resolve(outputDirectory, snapshotDir, relativeToInputDirectory);
 
                     if (options.check) {
+                        console.log('CHECKING');
                         diffSnapshot(outputPath, obtained);
                     } else {
                         writeSnapshot(outputPath, obtained);

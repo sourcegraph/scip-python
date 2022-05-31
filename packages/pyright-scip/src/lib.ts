@@ -1,4 +1,4 @@
-import { diffLines } from 'diff';
+import { createTwoFilesPatch, diffLines } from 'diff';
 import * as fs from 'fs';
 import * as path from 'path';
 import { exit } from 'process';
@@ -167,11 +167,16 @@ export function diffSnapshot(outputPath: string, obtained: string): void {
         return;
     }
 
-    let diffed = diffLines(obtained, obtained);
-    if (diffed.length > 0) {
-        console.log(diffed);
-        exit(1);
-    }
+    throw new Error(
+        createTwoFilesPatch(
+            outputPath,
+            outputPath,
+            existing,
+            obtained,
+            '(what the snapshot tests expect)',
+            '(what the current code produces). Run the command "npm run update-snapshots" to accept the new behavior.'
+        )
+    );
 }
 
 function occurrencesByLine(a: lib.codeintel.lsiftyped.Occurrence, b: lib.codeintel.lsiftyped.Occurrence): number {
