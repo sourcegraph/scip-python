@@ -1014,7 +1014,6 @@ export class TreeVisitor extends ParseTreeWalker {
                                 const bound = typeVar.details.boundType! as ClassType;
 
                                 return this.getSymbolOnce(node, () => {
-                                    console.log('Yo, we here:', node.value);
                                     // TODO:
                                     const pythonPackage = this.getPackageInfo(node, bound.details.moduleName)!;
                                     let symbol = ScipSymbol.global(

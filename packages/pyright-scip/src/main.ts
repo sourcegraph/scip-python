@@ -114,14 +114,11 @@ export function main(): void {
                 if (!fs.lstatSync(projectRoot).isDirectory()) {
                     continue;
                 }
-                console.log('PROJECT ROOT', path.resolve(projectRoot));
 
                 projectRoot = path.resolve(projectRoot);
                 process.chdir(projectRoot);
 
-                console.log('Creating Snapshot For: ', projectRoot);
                 const scipIndex = new lib.codeintel.lsiftyped.Index();
-
                 let indexer = new Indexer({
                     ...options,
                     workspaceRoot: projectRoot,
@@ -140,7 +137,6 @@ export function main(): void {
                 });
                 indexer.index();
 
-                console.log('done indexing');
                 const scipBinaryFile = path.join(projectRoot, options.output);
                 fs.writeFileSync(scipBinaryFile, scipIndex.serializeBinary());
 
