@@ -1,4 +1,4 @@
-name: scip-build
+name: scip-snapshots
 
 env:
   NODE_VERSION: '16.7.0'
@@ -35,3 +35,5 @@ jobs:
       - run: npm install
 
       - run: cd ./packages/pyright-scip/ && npm install && npm run build
+
+      - run: cd ./packages/pyright-scip/ && npm run check-snapshots

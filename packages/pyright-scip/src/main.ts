@@ -3,7 +3,7 @@ import * as path from 'path';
 import * as child_process from 'child_process';
 
 import { lib } from './lsif';
-import { formatSnapshot, writeSnapshot } from './lib';
+import { diffSnapshot, formatSnapshot, writeSnapshot } from './lib';
 import { Input } from './lsif-typescript/Input';
 import { join } from 'path';
 import { mainCommand } from './MainCommand';
@@ -150,7 +150,12 @@ export function main(): void {
                     const obtained = formatSnapshot(input, doc);
                     const relativeToInputDirectory = path.relative(projectRoot, inputPath);
                     const outputPath = path.resolve(outputDirectory, snapshotDir, relativeToInputDirectory);
-                    writeSnapshot(outputPath, obtained);
+
+                    if (options.check) {
+                        diffSnapshot(outputPath, obtained);
+                    } else {
+                        writeSnapshot(outputPath, obtained);
+                    }
                 }
             }
         },

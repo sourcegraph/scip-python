@@ -5,7 +5,7 @@ from .foo import this_class
 
 if True:
     exported_function()
-#   ^^^^^^^^^^^^^^^^^ reference  foo test exported_function().
+#   ^^^^^^^^^^^^^^^^^ reference  foo test exported_function()
 
     this_class.exported_function()
 #   ^^^^^^^^^^ reference  foo test this_class#

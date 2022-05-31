@@ -1,5 +1,7 @@
+import { diffLines } from 'diff';
 import * as fs from 'fs';
 import * as path from 'path';
+import { exit } from 'process';
 
 import { lib } from './lsif';
 import { Input } from './lsif-typescript/Input';
@@ -157,6 +159,19 @@ export function writeSnapshot(outputPath: string, obtained: string): void {
     });
     // eslint-disable-next-line no-sync
     fs.writeFileSync(outputPath, obtained, { flag: 'w' });
+}
+
+export function diffSnapshot(outputPath: string, obtained: string): void {
+    let existing = fs.readFileSync(outputPath, { encoding: 'utf8' });
+    if (obtained === existing) {
+        return;
+    }
+
+    let diffed = diffLines(obtained, obtained);
+    if (diffed.length > 0) {
+        console.log(diffed);
+        exit(1);
+    }
 }
 
 function occurrencesByLine(a: lib.codeintel.lsiftyped.Occurrence, b: lib.codeintel.lsiftyped.Occurrence): number {
