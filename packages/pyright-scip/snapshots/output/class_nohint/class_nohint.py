@@ -30,6 +30,9 @@ class Example:
         self.x = in_val
 #       ^^^^ reference  snapshot-util 0.1 class_nohint/Example#__init__().(self)
 #            ^ definition  snapshot-util 0.1 class_nohint/Example#x.
+#            documentation ```python
+#                        > (variable) x: Unknown
+#                        > ```
 #                ^^^^^^ reference  snapshot-util 0.1 class_nohint/Example#__init__().(in_val)
         self.x = self.x + 1
 #       ^^^^ reference  snapshot-util 0.1 class_nohint/Example#__init__().(self)
