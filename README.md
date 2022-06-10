@@ -1,6 +1,6 @@
 # scip-python
 
-Sourcegraph fork of [pyright](https://github.com/microsoft/pyright) focused on generating SCIP for python projects.
+Sourcegraph fork of [pyright](https://github.com/microsoft/pyright) focused on generating [SCIP](https://github.com/sourcegraph/scip) for python projects.
 
 Project is primarily an addition to Pyright. At this time, there are no substantial changes to the `pyright` library.
 
