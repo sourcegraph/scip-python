@@ -6,7 +6,7 @@ export interface IndexOptions {
     projectName: string;
     projectVersion: string;
     snapshotDir: string;
-    environment: string;
+    environment?: string;
     dev: boolean;
     include: string;
     exclude: string;
@@ -18,6 +18,7 @@ export interface IndexOptions {
 export interface SnapshotOptions extends IndexOptions {
     only: string;
     check: boolean;
+    index: boolean;
 }
 
 export interface EnvironmentOptions {
@@ -59,6 +60,7 @@ export function mainCommand(
         .option('--project-version <version>', 'the name of the current project, pypi name if applicable', '0.1')
         .option('--output <path>', 'path to the output file', DEFAULT_OUTPUT_FILE)
         .option('--environment <json-file>', 'the environment json file (experimental)')
+        .option('--no-index', 'skip indexing (and just use existing index.scip)')
         .option('--no-progress-bar', 'whether to disable the progress bar')
         .action((dir, parsedOptions) => {
             snapshotAction(dir, parsedOptions as SnapshotOptions);

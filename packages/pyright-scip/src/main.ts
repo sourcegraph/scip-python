@@ -2,13 +2,12 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as child_process from 'child_process';
 
-import { lib } from './lsif';
+import { scip } from './scip';
 import { diffSnapshot, formatSnapshot, writeSnapshot } from './lib';
 import { Input } from './lsif-typescript/Input';
 import { join } from 'path';
 import { mainCommand } from './MainCommand';
 import { withStatus, statusConfig } from './status';
-import getEnvironment from './virtualenv/environment';
 import { Indexer } from './indexer';
 
 export function main(): void {
@@ -45,7 +44,7 @@ export function main(): void {
                 }
             }
 
-            const scipIndex = new lib.codeintel.lsiftyped.Index();
+            const scipIndex = new scip.Index();
 
             console.log('Indexing Dir:', projectRoot, ' // version:', projectVersion);
 
@@ -94,9 +93,11 @@ export function main(): void {
             }
         },
         (snapshotRoot, options) => {
+            console.log('... Snapshotting ... ');
             const projectName = options.projectName;
             const projectVersion = options.projectVersion;
-            const environment = path.resolve(options.environment);
+            console.log('asdf');
+            const environment = options.environment ? path.resolve(options.environment) : undefined;
 
             const snapshotOnly = options.only;
 
@@ -118,27 +119,32 @@ export function main(): void {
                 projectRoot = path.resolve(projectRoot);
                 process.chdir(projectRoot);
 
-                const scipIndex = new lib.codeintel.lsiftyped.Index();
-                let indexer = new Indexer({
-                    ...options,
-                    workspaceRoot: projectRoot,
-                    projectRoot,
-                    projectName,
-                    projectVersion,
-                    environment,
-                    writeIndex: (partialIndex: any): void => {
-                        if (partialIndex.metadata) {
-                            scipIndex.metadata = partialIndex.metadata;
-                        }
-                        for (const doc of partialIndex.documents) {
-                            scipIndex.documents.push(doc);
-                        }
-                    },
-                });
-                indexer.index();
-
                 const scipBinaryFile = path.join(projectRoot, options.output);
-                fs.writeFileSync(scipBinaryFile, scipIndex.serializeBinary());
+
+                let scipIndex = new scip.Index();
+                if (options.index) {
+                    let indexer = new Indexer({
+                        ...options,
+                        workspaceRoot: projectRoot,
+                        projectRoot,
+                        projectName,
+                        projectVersion,
+                        environment,
+                        writeIndex: (partialIndex: any): void => {
+                            if (partialIndex.metadata) {
+                                scipIndex.metadata = partialIndex.metadata;
+                            }
+                            for (const doc of partialIndex.documents) {
+                                scipIndex.documents.push(doc);
+                            }
+                        },
+                    });
+                    indexer.index();
+                    fs.writeFileSync(scipBinaryFile, scipIndex.serializeBinary());
+                } else {
+                    const contents = fs.readFileSync(scipBinaryFile);
+                    scipIndex = scip.Index.deserializeBinary(contents);
+                }
 
                 for (const doc of scipIndex.documents) {
                     if (doc.relative_path.startsWith('..')) {

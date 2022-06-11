@@ -1,14 +1,14 @@
-import { createTwoFilesPatch, diffLines } from 'diff';
+import { createTwoFilesPatch } from 'diff';
 import * as fs from 'fs';
 import * as path from 'path';
 import { exit } from 'process';
 
-import { lib } from './lsif';
+import { scip } from './scip';
 import { Input } from './lsif-typescript/Input';
 import { Range } from './lsif-typescript/Range';
 import { IndexOptions } from './MainCommand';
 
-export const lsiftyped = lib.codeintel.lsiftyped;
+export const lsiftyped = scip;
 
 export interface ScipConfig extends IndexOptions {
     /**
@@ -20,10 +20,10 @@ export interface ScipConfig extends IndexOptions {
 
     projectRoot: string;
 
-    writeIndex: (index: lib.codeintel.lsiftyped.Index) => void;
+    writeIndex: (index: scip.Index) => void;
 }
 
-function getSymbolTable(doc: lib.codeintel.lsiftyped.Document): Map<string, lib.codeintel.lsiftyped.SymbolInformation> {
+function getSymbolTable(doc: scip.Document): Map<string, scip.SymbolInformation> {
     let symbolTable = new Map();
     for (const symbol of doc.symbols) {
         symbolTable.set(symbol.symbol, symbol);
@@ -34,7 +34,7 @@ function getSymbolTable(doc: lib.codeintel.lsiftyped.Document): Map<string, lib.
 const packageName = 'scip-python pypi';
 const commentSyntax = '#';
 
-export function formatSnapshot(input: Input, doc: lib.codeintel.lsiftyped.Document): string {
+export function formatSnapshot(input: Input, doc: scip.Document): string {
     const out: string[] = [];
     const symbolTable = getSymbolTable(doc);
 
@@ -180,6 +180,6 @@ export function diffSnapshot(outputPath: string, obtained: string): void {
     exit(1);
 }
 
-function occurrencesByLine(a: lib.codeintel.lsiftyped.Occurrence, b: lib.codeintel.lsiftyped.Occurrence): number {
+function occurrencesByLine(a: scip.Occurrence, b: scip.Occurrence): number {
     return Range.fromLsif(a.range).compare(Range.fromLsif(b.range));
 }

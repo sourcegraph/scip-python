@@ -23,7 +23,7 @@ import {
     TypeAnnotationNode,
 } from 'pyright-internal/parser/parseNodes';
 
-import * as lsif from './lsif';
+import { scip } from './scip';
 import * as Symbols from './symbols';
 import {
     metaDescriptor,
@@ -118,7 +118,7 @@ function parseNodeToRange(name: ParseNode, lines: TextRangeCollection<TextRange>
 }
 
 export interface TreeVisitorConfig {
-    document: lsif.lib.codeintel.lsiftyped.Document;
+    document: scip.Document;
     sourceFile: SourceFile;
     evaluator: TypeEvaluator;
     program: Program;
@@ -146,7 +146,7 @@ export class TreeVisitor extends ParseTreeWalker {
     private stdlibPackage: PythonPackage;
     private counter: Counter;
 
-    public document: lsif.lib.codeintel.lsiftyped.Document;
+    public document: scip.Document;
     public evaluator: TypeEvaluator;
     public program: Program;
 
