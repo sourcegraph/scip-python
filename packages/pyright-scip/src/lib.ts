@@ -31,7 +31,7 @@ function getSymbolTable(doc: scip.Document): Map<string, scip.SymbolInformation>
     return symbolTable;
 }
 
-const packageName = 'scip-python pypi';
+const packageName = 'scip-python python';
 const commentSyntax = '#';
 
 export function formatSnapshot(input: Input, doc: scip.Document): string {

@@ -1,12 +1,9 @@
-# < definition scip-python pypi snapshot-util 0.1 property_access/__init__:
+# < definition scip-python python snapshot-util 0.1 property_access/__init__:
 #documentation (module) property_access
 
 from typing import Sequence
 #    ^^^^^^ reference  snapshot-util 0.1 typing/__init__:
 #                  ^^^^^^^^ reference  snapshot-util 0.1 typing/Sequence#
-#                  documentation ```python
-#                              > (class) Sequence
-#                              > ```
 
 class PropertyClass:
 #     ^^^^^^^^^^^^^ definition  snapshot-util 0.1 property_access/PropertyClass#
@@ -25,9 +22,6 @@ class PropertyClass:
 
     @property
 #    ^^^^^^^^ reference  python-stdlib 3.10 builtins/property#
-#    documentation ```python
-#                > (class) property
-#                > ```
     def prop_ref(self):
 #       ^^^^^^^^ definition  snapshot-util 0.1 property_access/PropertyClass#prop_ref().
 #       documentation ```python
@@ -67,12 +61,6 @@ def usage(xs: Sequence[PropertyClass]):
 #                ^^ reference  snapshot-util 0.1 property_access/usage().(xs)
             print(x.prop_ref)
 #           ^^^^^ reference  python-stdlib 3.10 builtins/__init__:print().
-#           documentation ```python
-#                       > (function)
-#                       > print(*values: object, sep: str | None = ..., end: str | None = ..., file: SupportsWrite[str] | None = ..., flush: Literal[False] = ...) -> None
-#                       > 
-#                       > print(*values: object, sep: str | None = ..., end: str | None = ..., file: _SupportsWriteAndFlush[str] | None = ..., flush: bool) -> None
-#                       > ```
 #                 ^ reference local 0
 #                   ^^^^^^^^ reference  snapshot-util 0.1 property_access/PropertyClass#prop_ref().
 

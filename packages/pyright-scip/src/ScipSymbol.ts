@@ -11,6 +11,6 @@ export class ScipSymbol extends TypescriptScipSymbol {
         name = name.trim();
 
         // @ts-ignore
-        return new TypescriptScipSymbol(`scip-python pypi ${name} ${version} `);
+        return new TypescriptScipSymbol(`scip-python python ${name} ${version} `);
     }
 }

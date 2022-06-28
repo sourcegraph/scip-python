@@ -1,4 +1,4 @@
-# < definition scip-python pypi snapshot-util 0.1 `src.single_function`/__init__:
+# < definition scip-python python snapshot-util 0.1 `src.single_function`/__init__:
 #documentation (module) src.single_function
 
 def my_cool_function(a: str) -> str:
@@ -10,9 +10,6 @@ def my_cool_function(a: str) -> str:
 #               > ```
 #                    ^ definition  snapshot-util 0.1 `src.single_function`/my_cool_function().(a)
 #                       ^^^ reference  python-stdlib 3.10 builtins/str#
-#                       documentation ```python
-#                                   > (class) str
-#                                   > ```
 #                               ^^^ reference  python-stdlib 3.10 builtins/str#
     x = ", world"
 #   ^ definition local 0

@@ -1,4 +1,4 @@
-# < definition scip-python pypi snapshot-util 0.1 field_docstring/__init__:
+# < definition scip-python python snapshot-util 0.1 field_docstring/__init__:
 #documentation (module) field_docstring
 
 class ClassWithField:
@@ -16,8 +16,5 @@ class ClassWithField:
 #               > 
 #   documentation Hello world, this is a
 #      ^^^ reference  python-stdlib 3.10 builtins/int#
-#      documentation ```python
-#                  > (class) int
-#                  > ```
     """Hello world, this is a"""
 

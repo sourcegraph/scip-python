@@ -19,6 +19,7 @@ import { version } from 'package.json';
 import { getFileSpec } from 'pyright-internal/common/pathUtils';
 import { FileMatcher } from './FileMatcher';
 import { withStatus } from './status';
+import { scip } from './scip';
 
 export class Indexer {
     program: Program;
@@ -134,6 +135,7 @@ export class Indexer {
 
         while (this.program.analyze()) {}
 
+        let externalSymbols: scip.SymbolInformation[] = [];
         withStatus('Parse and emit SCIP', (spinner) => {
             const typeEvaluator = this.program.evaluator!;
             projectSourceFiles.forEach((sourceFile) => {
@@ -149,6 +151,7 @@ export class Indexer {
 
                 let visitor = new TreeVisitor({
                     document: doc,
+                    externalSymbols,
                     sourceFile: sourceFile,
                     evaluator: typeEvaluator,
                     program: this.program,
