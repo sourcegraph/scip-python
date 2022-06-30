@@ -428,9 +428,9 @@ export class TreeVisitor extends ParseTreeWalker {
         return true;
     }
 
-    // from foo.bar import baz
-    //      ^^^^^^^ node.module
-    //                     ^^^ node.imports
+    // from foo.bar import baz, bat
+    //      ^^^^^^^ node.module (one single token)
+    //                     ^^^  ^^^ node.imports (individual tokens)
     //
     // We don't want to walk each individual name part for the node.module,
     // because that leads to some confusing behavior. Instead, walk only the imports
