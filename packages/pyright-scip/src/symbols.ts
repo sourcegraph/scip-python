@@ -33,24 +33,6 @@ export function makeModule(moduleName: string, pythonPackage: PythonPackage): Sc
     );
 }
 
-export function makeModuleName(node: NameNode, decl: Declaration, evaluator: TypeEvaluator): ScipSymbol | undefined {
-    if (node.parent!.nodeType !== ParseNodeType.ModuleName) {
-        throw 'Expected ModuleName';
-    }
-
-    // const resolved = evaluator.resolveAliasDeclaration(decl, true);
-    // console.log(node.token.value, decl, resolved);
-
-    // return LsifSymbol.global(
-    //     LsifSymbol.global(
-    //         LsifSymbol.package(pythonPackage.name, pythonPackage.version),
-    //         packageDescriptor(node.nameParts.map((namePart) => namePart.value).join('.'))
-    //     ),
-    //     metaDescriptor('__init__')
-    // );
-    return undefined;
-}
-
 export function makeClass(pythonPackage: PythonPackage, moduleName: string, name: string) {
     return ScipSymbol.global(
         ScipSymbol.global(makePackage(pythonPackage), packageDescriptor(moduleName)),

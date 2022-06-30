@@ -91,7 +91,6 @@ export function main(): void {
             console.log('... Snapshotting ... ');
             const projectName = options.projectName;
             const projectVersion = options.projectVersion;
-            console.log('asdf');
             const environment = options.environment ? path.resolve(options.environment) : undefined;
 
             const snapshotOnly = options.only;

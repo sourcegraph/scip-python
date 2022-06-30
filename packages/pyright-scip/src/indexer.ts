@@ -135,7 +135,7 @@ export class Indexer {
 
         while (this.program.analyze()) {}
 
-        let externalSymbols: scip.SymbolInformation[] = [];
+        let externalSymbols: Map<string, scip.SymbolInformation> = new Map();
         withStatus('Parse and emit SCIP', (spinner) => {
             const typeEvaluator = this.program.evaluator!;
             projectSourceFiles.forEach((sourceFile) => {

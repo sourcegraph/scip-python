@@ -61,7 +61,7 @@ import { assert } from 'pyright-internal/common/debug';
 //      import { getModuleDocString } from 'pyright-internal/analyzer/typeDocStringUtils';
 //      this.evaluator.printType(...)
 
-var errorLevel = 0;
+var errorLevel = 1;
 function softAssert(expression: any, message: string, ...exprs: any) {
     if (!expression) {
         if (errorLevel > 1) {
@@ -117,7 +117,7 @@ function parseNodeToRange(name: ParseNode, lines: TextRangeCollection<TextRange>
 
 export interface TreeVisitorConfig {
     document: scip.Document;
-    externalSymbols: scip.SymbolInformation[];
+    externalSymbols: Map<string, scip.SymbolInformation>;
     sourceFile: SourceFile;
     evaluator: TypeEvaluator;
     program: Program;
@@ -145,7 +145,7 @@ export class TreeVisitor extends ParseTreeWalker {
     private counter: Counter;
 
     public document: scip.Document;
-    public externalSymbols: scip.SymbolInformation[];
+    public externalSymbols: Map<string, scip.SymbolInformation>;
     public evaluator: TypeEvaluator;
     public program: Program;
 
@@ -190,6 +190,9 @@ export class TreeVisitor extends ParseTreeWalker {
         this._docstringWriter = new TypeStubExtendedWriter(this.config.sourceFile, this.evaluator);
     }
 
+    // We have to do this in visitModule because there won't necessarily be a name
+    // associated with the module. So this is where we can declare the definition
+    // site of a module (which we can use in imports or usages)
     override visitModule(node: ModuleNode): boolean {
         const fileInfo = getFileInfo(node);
         this.fileInfo = fileInfo;
@@ -425,18 +428,32 @@ export class TreeVisitor extends ParseTreeWalker {
         return true;
     }
 
+    // from foo.bar import baz
+    //      ^^^^^^^ node.module
+    //                     ^^^ node.imports
+    //
+    // We don't want to walk each individual name part for the node.module,
+    // because that leads to some confusing behavior. Instead, walk only the imports
+    // and then declare the new symbol for the entire module. This gives us better
+    // clicking for goto-def in Sourcegraph
     override visitImportFrom(node: ImportFromNode): boolean {
         const role = lsiftyped.SymbolRole.ReadAccess;
         const symbol = this.getLsifSymbol(node.module);
-        // this.document.occurrences.push(
-        //     new lsiftyped.Occurrence({
-        //         symbol_roles: role,
-        //         symbol: symbol.value,
-        //         range: parseNodeToRange(node.module, this.fileInfo!.lines).toLsif(),
-        //     })
-        // );
+        this.document.occurrences.push(
+            new lsiftyped.Occurrence({
+                symbol_roles: role,
+                symbol: symbol.value,
+                range: parseNodeToRange(node.module, this.fileInfo!.lines).toLsif(),
+            })
+        );
 
-        return true;
+        // Walk the imports, but don't walk the named node of ImportFromtNode,
+        //  we have already handled that.
+        for (let imp of node.imports) {
+            this.walk(imp);
+        }
+
+        return false;
     }
 
     // import aliased as A
@@ -471,25 +488,6 @@ export class TreeVisitor extends ParseTreeWalker {
         return true;
     }
 
-    override visitImportFromAs(_node: ImportFromAsNode): boolean {
-        // const decls = this.evaluator.getDeclarationsForNameNode(node.name);
-        // if (!decls) {
-        //     return false;
-        // }
-        // const decl = decls[0];
-        // // console.log("ImportFromAs", node.name.token, decls);
-        //
-        // const resolved = this.evaluator.resolveAliasDeclaration(decl, true);
-        // if (!resolved) {
-        //     return false;
-        // }
-        //
-        // const type_ = this.evaluator.getTypeForDeclaration(resolved);
-        // console.log("  ", type_);
-
-        return true;
-    }
-
     override visitName(node: NameNode): boolean {
         if (!node.parent) {
             throw `No parent for named node: ${node.token.value}`;
@@ -505,13 +503,35 @@ export class TreeVisitor extends ParseTreeWalker {
             const decl = decls[0];
             if (!decl.node) {
                 switch (parent.nodeType) {
+                    // `ModuleName`s do not have nodes for definitions
+                    // because they aren't a syntax node, they are basically
+                    // a file location node.
+                    //
+                    // (as far as I know, they are the only thing to have something
+                    // like this)
                     case ParseNodeType.ModuleName:
-                        let symbol = Symbols.makeModuleName(node, decl, this.evaluator);
+                        const symbol = softAssert(
+                            this.getLsifSymbol(node.parent),
+                            'Should have found symbol for ModuleName'
+                        );
+
                         if (symbol) {
-                            this.pushNewOccurrence(node, symbol);
+                            if (hasAncestor(node, ParseNodeType.ImportAs, ParseNodeType.ImportFrom)) {
+                                console.log('SKIPPING IMPORT AS');
+                                // return true;
+                            } else {
+                                console.log('MODULE NAME:', symbol.value);
+                                let x: ParseNode | undefined = node.parent;
+                                while (x) {
+                                    console.log('  ', ParseTreeUtils.printParseNodeType(x.nodeType));
+                                    x = x.parent;
+                                }
+                                this.pushNewOccurrence(node, symbol);
+
+                                return true;
+                            }
                         }
 
-                        return true;
                     default:
                         softAssert(false, 'unhandled missing node for declaration');
                         return true;
@@ -693,7 +713,6 @@ export class TreeVisitor extends ParseTreeWalker {
             const builtinType = this.evaluator.getBuiltInType(node, node.value);
             // const pyrightSymbol = this.evaluator.lookUpSymbolRecursive(node, node.value, true);
 
-            const shouldEmitBuiltinSymbols = false;
             if (!Types.isUnknown(builtinType)) {
                 // TODO: We could expose this and try to use it, but for now, let's skip that.
                 // _getSymbolCategory
@@ -705,26 +724,20 @@ export class TreeVisitor extends ParseTreeWalker {
                     const symbol = this.getIntrinsicSymbol(node);
                     this.pushNewOccurrence(node, symbol);
 
-                    if (shouldEmitBuiltinSymbols) {
-                        const doc = builtinType.details.docString;
-                        this.emitSymbolInformationOnce(node, symbol, doc ? [doc] : undefined);
-                    }
+                    const doc = builtinType.details.docString;
+                    this.emitExternalSymbolInformation(node, symbol, doc ? [doc] : []);
                 } else if (Types.isOverloadedFunction(builtinType)) {
                     const overloadedSymbol = this.getLsifSymbol(decl.node);
                     this.pushNewOccurrence(node, overloadedSymbol);
 
-                    if (shouldEmitBuiltinSymbols) {
-                        const doc = builtinType.overloads[0].details.docString;
-                        this.emitSymbolInformationOnce(node, overloadedSymbol, doc ? [doc] : undefined);
-                    }
+                    const doc = builtinType.overloads[0].details.docString;
+                    this.emitExternalSymbolInformation(node, overloadedSymbol, doc ? [doc] : []);
                 } else if (Types.isClass(builtinType)) {
                     const symbol = Symbols.makeClass(this.stdlibPackage, 'builtins', node.value);
                     this.pushNewOccurrence(node, symbol);
 
-                    if (shouldEmitBuiltinSymbols) {
-                        const doc = builtinType.details.docString;
-                        this.emitSymbolInformationOnce(node, symbol, doc ? [doc] : undefined);
-                    }
+                    const doc = builtinType.details.docString;
+                    this.emitExternalSymbolInformation(node, symbol, doc ? [doc] : []);
                 } else if (Types.isModule(builtinType)) {
                     // const pythonPackage = this.getPackageInfo(node, builtinType.moduleName)!;
                     const symbol = ScipSymbol.global(
@@ -734,10 +747,8 @@ export class TreeVisitor extends ParseTreeWalker {
 
                     this.pushNewOccurrence(node, symbol);
 
-                    if (shouldEmitBuiltinSymbols) {
-                        // TODO: Get module documentaiton
-                        this.emitSymbolInformationOnce(node, symbol);
-                    }
+                    // TODO: Get module documentaiton
+                    // this.emitExternalSymbolInformation(node, symbol);
                 } else {
                     // TODO: IntrinsicRefactor
                     softAssert(false, 'unhandled intrinsic', node);
@@ -754,7 +765,18 @@ export class TreeVisitor extends ParseTreeWalker {
             return true;
         }
 
-        if (node && (ParseTreeUtils.isImportModuleName(node) || ParseTreeUtils.isFromImportModuleName(node))) {
+        // We know for certain that some items will not have declarations
+        switch (parent.nodeType) {
+            case ParseNodeType.ModuleName:
+                // console.log(node);
+                return true;
+            // throw 'OH NO NO';
+        }
+
+        if (
+            node &&
+            (ParseTreeUtils.isImportModuleName(node) || ParseTreeUtils.isFromImportModuleName(node) || ParseTreeUtils)
+        ) {
             return true;
         }
 
@@ -1268,6 +1290,27 @@ export class TreeVisitor extends ParseTreeWalker {
         return this.config.pythonEnvironment.getPackageForModule(moduleName);
     }
 
+    private emitExternalSymbolInformation(_node: ParseNode, symbol: ScipSymbol, documentation: string[]) {
+        if (documentation.length === 0) {
+            return;
+        }
+
+        if (this.externalSymbols.has(symbol.value)) {
+            return;
+        }
+
+        // TODO: Could consider adding the documentation finder stuff
+        // from emitSymbolInformationOnce, but at this point we don't
+        // need that.
+        this.externalSymbols.set(
+            symbol.value,
+            new scip.SymbolInformation({
+                symbol: symbol.value,
+                documentation: documentation,
+            })
+        );
+    }
+
     private emitSymbolInformationOnce(
         node: ParseNode,
         symbol: ScipSymbol,
@@ -1476,4 +1519,19 @@ function _formatHover(hoverResults: HoverResults): string[] {
             return part.text;
         }
     });
+}
+
+function hasAncestor(node: ParseNode, ...types: ParseNodeType[]): boolean {
+    let type = new Set(types);
+
+    let ancestor: ParseNode | undefined = node;
+    while (ancestor) {
+        if (type.has(ancestor.nodeType)) {
+            return true;
+        }
+
+        ancestor = ancestor.parent;
+    }
+
+    return false;
 }
