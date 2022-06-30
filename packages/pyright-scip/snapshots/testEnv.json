@@ -10,5 +10,10 @@
         "name": "requests",
         "version": "2.0.0",
         "files": []
+    },
+    {
+        "name": "sqlparse",
+        "version": "0.4.2",
+        "files": []
     }
 ]

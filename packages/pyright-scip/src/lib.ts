@@ -115,6 +115,11 @@ export function formatSnapshot(input: Input, doc: scip.Document): string {
         while (occurrenceIndex < doc.occurrences.length && doc.occurrences[occurrenceIndex].range[0] === lineNumber) {
             const occurrence = doc.occurrences[occurrenceIndex];
             occurrenceIndex++;
+
+            if (occurrence.symbol === undefined) {
+                continue;
+            }
+
             if (occurrence.range.length > 3) {
                 throw 'not yet implemented, multi-line ranges';
             }

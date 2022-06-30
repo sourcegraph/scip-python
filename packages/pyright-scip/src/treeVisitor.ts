@@ -61,7 +61,6 @@ import { assert } from 'pyright-internal/common/debug';
 //      import { getModuleDocString } from 'pyright-internal/analyzer/typeDocStringUtils';
 //      this.evaluator.printType(...)
 
-// TODO: Make this a command line flag
 var errorLevel = 0;
 function softAssert(expression: any, message: string, ...exprs: any) {
     if (!expression) {
@@ -130,7 +129,6 @@ export interface TreeVisitorConfig {
 
 export class TreeVisitor extends ParseTreeWalker {
     private fileInfo: AnalyzerFileInfo | undefined;
-    private _imports: Map<number, ParseNode>;
     private symbolInformationForNode: Set<string>;
 
     /// maps node.id -> ScipSymbol, for document local symbols
@@ -175,29 +173,24 @@ export class TreeVisitor extends ParseTreeWalker {
         this.externalSymbols = config.externalSymbols;
         this.counter = new Counter();
 
+        this.documentSymbols = new Map();
+        this.globalSymbols = this.config.globalSymbols;
+        this.symbolInformationForNode = new Set();
+
+        this.execEnv = this.config.pyrightConfig.getExecutionEnvironments()[0];
+        this.stdlibPackage = new PythonPackage('python-stdlib', versionToString(this.execEnv.pythonVersion), []);
         this.projectPackage = new PythonPackage(
             this.config.scipConfig.projectName,
             this.config.scipConfig.projectVersion,
             []
         );
 
-        this.documentSymbols = new Map();
-        this.globalSymbols = this.config.globalSymbols;
-        this._imports = new Map();
-        this.symbolInformationForNode = new Set();
+        this.cwd = path.resolve(process.cwd());
 
         this._docstringWriter = new TypeStubExtendedWriter(this.config.sourceFile, this.evaluator);
-
-        this.execEnv = this.config.pyrightConfig.getExecutionEnvironments()[0];
-        this.stdlibPackage = new PythonPackage('python-stdlib', versionToString(this.execEnv.pythonVersion), []);
-
-        this.cwd = path.resolve(process.cwd());
     }
 
     override visitModule(node: ModuleNode): boolean {
-        // TODO: Assert that this is within the project? I don't think
-        // that I ever do anything like this _outside_ of the project.
-
         const fileInfo = getFileInfo(node);
         this.fileInfo = fileInfo;
 
@@ -232,7 +225,7 @@ export class TreeVisitor extends ParseTreeWalker {
             // TODO: We could put a symbol here, but just as a readaccess, not as a definition
             //       But I'm not sure that's the correct thing -- this is only when we _visit_
             //       a module, so I don't think we should have to do that.
-            softAssert(false, 'Unhandled edge: read access');
+            softAssert(false, 'Unable to find module for node');
         }
 
         return true;
@@ -419,13 +412,13 @@ export class TreeVisitor extends ParseTreeWalker {
                     metaDescriptor('__init__')
                 );
 
-                this.document.occurrences.push(
-                    new lsiftyped.Occurrence({
-                        symbol_roles: lsiftyped.SymbolRole.ReadAccess,
-                        symbol: symbol.value,
-                        range: parseNodeToRange(listNode, this.fileInfo!.lines).toLsif(),
-                    })
-                );
+                // this.document.occurrences.push(
+                //     new lsiftyped.Occurrence({
+                //         symbol_roles: lsiftyped.SymbolRole.ReadAccess,
+                //         symbol: symbol.value,
+                //         range: parseNodeToRange(listNode, this.fileInfo!.lines).toLsif(),
+                //     })
+                // );
             }
         }
 
@@ -435,17 +428,13 @@ export class TreeVisitor extends ParseTreeWalker {
     override visitImportFrom(node: ImportFromNode): boolean {
         const role = lsiftyped.SymbolRole.ReadAccess;
         const symbol = this.getLsifSymbol(node.module);
-        this.document.occurrences.push(
-            new lsiftyped.Occurrence({
-                symbol_roles: role,
-                symbol: symbol.value,
-                range: parseNodeToRange(node.module, this.fileInfo!.lines).toLsif(),
-            })
-        );
-
-        for (const importNode of node.imports) {
-            this._imports.set(importNode.id, importNode);
-        }
+        // this.document.occurrences.push(
+        //     new lsiftyped.Occurrence({
+        //         symbol_roles: role,
+        //         symbol: symbol.value,
+        //         range: parseNodeToRange(node.module, this.fileInfo!.lines).toLsif(),
+        //     })
+        // );
 
         return true;
     }
@@ -531,6 +520,7 @@ export class TreeVisitor extends ParseTreeWalker {
 
             log.debug('    decl type::', ParseTreeUtils.printParseNodeType(decl.node.nodeType));
 
+            const isDefinition = decl.node.id === node.parent!.id;
             const declNode = decl.node;
             switch (declNode.nodeType) {
                 case ParseNodeType.ImportAs:
@@ -594,6 +584,19 @@ export class TreeVisitor extends ParseTreeWalker {
                     }
 
                     break;
+
+                case ParseNodeType.Function:
+                    // Only push an occurrence directly if it's a reference,
+                    // otherwise handle below.
+                    if (isDefinition) {
+                        break;
+                    }
+
+                    this.pushNewOccurrence(node, this.getLsifSymbol(declNode));
+                    return true;
+
+                default:
+                    break;
             }
 
             if (isIntrinsicDeclaration(decl)) {
@@ -641,16 +644,6 @@ export class TreeVisitor extends ParseTreeWalker {
                 this.pushNewOccurrence(node, this.getLsifSymbol(decl.node));
                 return true;
             }
-
-            // if (this._imports.has(decl.node.id)) {
-            //     // TODO: ExpressionNode cast is required?
-            //     const evalutedType = this.evaluator.getType(decl.node as ExpressionNode);
-            //     if (evalutedType) {
-            //         this.pushTypeReference(node, decl.node, evalutedType!);
-            //     }
-            //
-            //     return true;
-            // }
 
             // TODO: Write a more rigorous check for if this node is a
             // definition node. Probably some util somewhere already for
@@ -950,8 +943,6 @@ export class TreeVisitor extends ParseTreeWalker {
                 switch (parent.nodeType) {
                     case ParseNodeType.MemberAccess:
                         const type = this.evaluator.getTypeOfExpression(parent.leftExpression);
-                        log.debug('Left Expression Type:', type);
-
                         switch (type.type.category) {
                             case TypeCategory.TypeVar:
                                 const typeVar = type.type;

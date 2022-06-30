@@ -44,7 +44,8 @@ export function main(): void {
                 }
             }
 
-            const scipIndex = new scip.Index();
+            const outputFile = path.join(projectRoot, options.output);
+            const output = fs.openSync(outputFile, 'w');
 
             console.log('Indexing Dir:', projectRoot, ' // version:', projectVersion);
 
@@ -56,13 +57,8 @@ export function main(): void {
                     projectName,
                     projectVersion,
                     environment,
-                    writeIndex: (partialIndex: any): void => {
-                        if (partialIndex.metadata) {
-                            scipIndex.metadata = partialIndex.metadata;
-                        }
-                        for (const doc of partialIndex.documents) {
-                            scipIndex.documents.push(doc);
-                        }
+                    writeIndex: (partialIndex: scip.Index): void => {
+                        fs.writeSync(output, partialIndex.serializeBinary());
                     },
                 });
 
@@ -72,11 +68,10 @@ export function main(): void {
                 return;
             }
 
-            withStatus('Writing to ' + path.join(projectRoot, options.output), () => {
-                fs.writeFileSync(path.join(projectRoot, options.output), scipIndex.serializeBinary());
-            });
+            fs.close(output);
 
             if (snapshotDir) {
+                const scipIndex = scip.Index.deserializeBinary(fs.readFileSync(options.output));
                 for (const doc of scipIndex.documents) {
                     if (doc.relative_path.startsWith('..')) {
                         console.log('Skipping Doc:', doc.relative_path);
