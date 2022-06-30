@@ -2,8 +2,8 @@
 #documentation (module) property_access
 
 from typing import Sequence
-#    ^^^^^^ reference  snapshot-util 0.1 typing/__init__:
-#                  ^^^^^^^^ reference  snapshot-util 0.1 typing/Sequence#
+#    ^^^^^^ reference  python-stdlib 3.10 typing/__init__:
+#                  ^^^^^^^^ reference  python-stdlib 3.10 typing/Sequence#
 
 class PropertyClass:
 #     ^^^^^^^^^^^^^ definition  snapshot-util 0.1 property_access/PropertyClass#
@@ -49,7 +49,7 @@ def usage(xs: Sequence[PropertyClass]):
 #               > ): # -> None:
 #               > ```
 #         ^^ definition  snapshot-util 0.1 property_access/usage().(xs)
-#             ^^^^^^^^ reference  snapshot-util 0.1 typing/Sequence#
+#             ^^^^^^^^ reference  python-stdlib 3.10 typing/Sequence#
 #                      ^^^^^^^^^^^^^ reference  snapshot-util 0.1 property_access/PropertyClass#
     def nested():
 #       ^^^^^^ definition  snapshot-util 0.1 property_access/usage().nested().

@@ -9,7 +9,7 @@ import { IndexResults } from 'pyright-internal/languageService/documentSymbolPro
 import { TreeVisitor } from './treeVisitor';
 import { FullAccessHost } from 'pyright-internal/common/fullAccessHost';
 import * as url from 'url';
-import { lsiftyped, ScipConfig } from './lib';
+import { ScipConfig } from './lib';
 import { SourceFile } from 'pyright-internal/analyzer/sourceFile';
 import { Counter } from './lsif-typescript/Counter';
 import { getTypeShedFallbackPath } from 'pyright-internal/analyzer/pythonPathUtils';
@@ -87,11 +87,11 @@ export class Indexer {
 
         // Emit metadata
         this.scipConfig.writeIndex(
-            new lsiftyped.Index({
-                metadata: new lsiftyped.Metadata({
+            new scip.Index({
+                metadata: new scip.Metadata({
                     project_root: url.pathToFileURL(this.scipConfig.workspaceRoot).toString(),
-                    text_document_encoding: lsiftyped.TextEncoding.UTF8,
-                    tool_info: new lsiftyped.ToolInfo({
+                    text_document_encoding: scip.TextEncoding.UTF8,
+                    tool_info: new scip.ToolInfo({
                         name: 'scip-python',
                         version,
                         arguments: [],
@@ -142,7 +142,7 @@ export class Indexer {
                 spinner.render();
 
                 const filepath = sourceFile.getFilePath();
-                let doc = new lsiftyped.Document({
+                let doc = new scip.Document({
                     relative_path: path.relative(this.scipConfig.workspaceRoot, filepath),
                 });
 
@@ -168,7 +168,7 @@ export class Indexer {
                 }
 
                 this.scipConfig.writeIndex(
-                    new lsiftyped.Index({
+                    new scip.Index({
                         documents: [doc],
                     })
                 );

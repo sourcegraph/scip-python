@@ -2,7 +2,6 @@
 #documentation (module) 
 
 import sqlparse
-#      ^^^^^^^^ reference  sqlparse 0.4.2 sqlparse/__init__:
 
 print(sqlparse.format)
 #^^^^ reference  python-stdlib 3.10 builtins/__init__:print().

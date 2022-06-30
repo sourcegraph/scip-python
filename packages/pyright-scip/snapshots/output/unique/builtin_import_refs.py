@@ -2,7 +2,7 @@
 #documentation (module) builtin_import_refs
 
 from typing import Any
-#    ^^^^^^ reference  snapshot-util 0.1 typing/__init__:
+#    ^^^^^^ reference  python-stdlib 3.10 typing/__init__:
 #                  ^^^ reference  python-stdlib 3.10 typing/Any.
 
 print(Any)

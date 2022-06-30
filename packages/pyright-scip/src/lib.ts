@@ -8,8 +8,6 @@ import { Input } from './lsif-typescript/Input';
 import { Range } from './lsif-typescript/Range';
 import { IndexOptions } from './MainCommand';
 
-export const lsiftyped = scip;
-
 export interface ScipConfig extends IndexOptions {
     /**
      * The directory where to generate the dump.lsif-typed file.
@@ -40,7 +38,7 @@ export function formatSnapshot(input: Input, doc: scip.Document): string {
 
     const symbolsWithDefinitions: Set<string> = new Set();
     for (let occurrence of doc.occurrences) {
-        const isDefinition = (occurrence.symbol_roles & lsiftyped.SymbolRole.Definition) > 0;
+        const isDefinition = (occurrence.symbol_roles & scip.SymbolRole.Definition) > 0;
         if (isDefinition) {
             symbolsWithDefinitions.add(occurrence.symbol);
         }
@@ -96,7 +94,7 @@ export function formatSnapshot(input: Input, doc: scip.Document): string {
             // This is essentially a "file-based" item.
             //  This guarantees that this sits above everything else in the file.
             if (range.start.character == 0 && range.end.character == 0) {
-                const isDefinition = (occurrence.symbol_roles & lsiftyped.SymbolRole.Definition) > 0;
+                const isDefinition = (occurrence.symbol_roles & scip.SymbolRole.Definition) > 0;
                 out.push(commentSyntax);
                 out.push(' < ');
                 out.push(isDefinition ? 'definition' : 'reference');
@@ -143,7 +141,7 @@ export function formatSnapshot(input: Input, doc: scip.Document): string {
             }
             out.push('^'.repeat(caretLength));
             out.push(' ');
-            const isDefinition = (occurrence.symbol_roles & lsiftyped.SymbolRole.Definition) > 0;
+            const isDefinition = (occurrence.symbol_roles & scip.SymbolRole.Definition) > 0;
             out.push(isDefinition ? 'definition' : 'reference');
             out.push(' ');
             const symbol = occurrence.symbol.startsWith(packageName)
