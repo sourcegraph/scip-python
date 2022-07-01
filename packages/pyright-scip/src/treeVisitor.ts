@@ -61,7 +61,7 @@ import { assert } from 'pyright-internal/common/debug';
 //      import { getModuleDocString } from 'pyright-internal/analyzer/typeDocStringUtils';
 //      this.evaluator.printType(...)
 
-var errorLevel = 1;
+var errorLevel = 0;
 function softAssert(expression: any, message: string, ...exprs: any) {
     if (!expression) {
         if (errorLevel > 1) {
@@ -609,7 +609,11 @@ export class TreeVisitor extends ParseTreeWalker {
                 case ParseNodeType.Name:
                     // Don't allow scope to leak from list/dict comprehensions
                     //  (dict comprehensions are also considered ListComprehensionFor)
-                    console.log(node.value);
+                    //
+                    // TODO: hasAncestor should perhaps also contain the ability to quit when hitting certain nodes
+                    //  I don't know that it's great to loop all the way back up for this all the time
+                    //  We could provide a list of items that have their own scope that would be OK to be leaked
+                    //  because they aren't statements
                     if (hasAncestor(declNode, ParseNodeType.ListComprehensionFor)) {
                         this.getLocalForDeclaration(declNode);
                     }
