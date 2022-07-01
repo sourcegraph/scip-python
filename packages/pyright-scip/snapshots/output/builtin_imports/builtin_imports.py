@@ -2,6 +2,7 @@
 #documentation (module) builtin_imports
 
 import re
+#      ^^ reference  python-stdlib 3.10 re/__init__:
 from typing import Callable, Match, Optional
 #    ^^^^^^ reference  python-stdlib 3.10 typing/__init__:
 #                  ^^^^^^^^ reference  python-stdlib 3.10 typing/Callable.

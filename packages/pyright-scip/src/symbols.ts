@@ -7,19 +7,11 @@ import { ScipSymbol } from './ScipSymbol';
 import { TreeVisitor } from './treeVisitor';
 import PythonPackage from './virtualenv/PythonPackage';
 
-export function pythonModule(visitor: TreeVisitor, node: ParseNode, moduleName: string): ScipSymbol {
-    let pythonPackage = visitor.getPackageInfo(node, moduleName);
-    if (pythonPackage) {
-        return ScipSymbol.global(
-            ScipSymbol.global(
-                ScipSymbol.package(pythonPackage.name, pythonPackage.version),
-                packageDescriptor(moduleName)
-            ),
-            metaDescriptor('__init__')
-        );
-    } else {
-        throw 'could not find package information';
-    }
+export function pythonModule(pythonPackage: PythonPackage, moduleName: string): ScipSymbol {
+    return ScipSymbol.global(
+        ScipSymbol.global(ScipSymbol.package(pythonPackage.name, pythonPackage.version), packageDescriptor(moduleName)),
+        metaDescriptor('__init__')
+    );
 }
 
 export function makePackage(pythonPackage: PythonPackage): ScipSymbol {
