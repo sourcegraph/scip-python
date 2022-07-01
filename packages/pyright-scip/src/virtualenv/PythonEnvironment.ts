@@ -6,7 +6,7 @@ export default class PythonEnvironment {
     private _moduleNameToIndex: Map<string, number>;
     private _filepathToIndex: Map<string, number>;
 
-    constructor(private projectFiles: Set<string>, private projectVersion: string, public packages: PythonPackage[]) {
+    constructor(_projectFiles: Set<string>, _projectVersion: string, public packages: PythonPackage[]) {
         this._moduleNameToIndex = new Map();
         this._filepathToIndex = new Map();
 
@@ -26,11 +26,6 @@ export default class PythonEnvironment {
                 return this.packages[index];
             }
         }
-        // let index = this._moduleNameToIndex.get(first);
-        // console.log("~~", this._moduleNameToIndex, first)
-        // if (index !== undefined) {
-        //     return this.packages[index];
-        // }
 
         return undefined;
     }

@@ -1,10 +1,7 @@
-import { Declaration } from 'pyright-internal/analyzer/declaration';
-import { TypeEvaluator } from 'pyright-internal/analyzer/typeEvaluatorTypes';
-import { NameNode, ParseNode, ParseNodeType } from 'pyright-internal/parser/parseNodes';
+import { ParseNode } from 'pyright-internal/parser/parseNodes';
 import { Counter } from './lsif-typescript/Counter';
 import { metaDescriptor, packageDescriptor, typeDescriptor } from './lsif-typescript/Descriptor';
 import { ScipSymbol } from './ScipSymbol';
-import { TreeVisitor } from './treeVisitor';
 import PythonPackage from './virtualenv/PythonPackage';
 
 export function pythonModule(pythonPackage: PythonPackage, moduleName: string): ScipSymbol {
@@ -32,6 +29,6 @@ export function makeClass(pythonPackage: PythonPackage, moduleName: string, name
     );
 }
 
-export function make(node: ParseNode, counter: Counter): ScipSymbol {
+export function make(_node: ParseNode, counter: Counter): ScipSymbol {
     return ScipSymbol.local(counter.next());
 }
