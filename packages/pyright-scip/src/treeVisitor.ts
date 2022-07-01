@@ -377,66 +377,68 @@ export class TreeVisitor extends ParseTreeWalker {
             node.list.map((x) => x.module.nameParts.map((y) => y.value))
         );
 
-        for (const listNode of node.list) {
-            let symbolNameNode: NameNode;
-            if (listNode.alias) {
-                // The symbol name is defined by the alias.
-                symbolNameNode = listNode.alias;
-            } else {
-                // There was no alias, so we need to use the first element of
-                // the name parts as the symbol.
-                symbolNameNode = listNode.module.nameParts[0];
-            }
+        // for (const listNode of node.list) {
+        //     let symbolNameNode: NameNode;
+        //     if (listNode.alias) {
+        //         // The symbol name is defined by the alias.
+        //         symbolNameNode = listNode.alias;
+        //     } else {
+        //         // There was no alias, so we need to use the first element of
+        //         // the name parts as the symbol.
+        //         symbolNameNode = listNode.module.nameParts[0];
+        //     }
+        //
+        //     if (!symbolNameNode) {
+        //         // This can happen in certain cases where there are parse errors.
+        //         continue;
+        //     }
+        //
+        //     // Look up the symbol to find the alias declaration.
+        //     let symbolType = this.getAliasedSymbolTypeForName(listNode, symbolNameNode.value);
+        //     if (symbolType) {
+        //         if (symbolType.category == TypeCategory.Unknown) {
+        //             continue;
+        //         }
+        //
+        //         if (symbolType.category !== TypeCategory.Module) {
+        //             throw 'only modules should be modules' + symbolType.category;
+        //         }
+        //
+        //         // TODO: get the right package
+        //         // const pythonPackage = this.getPackageInfo(listNode, symbolType.moduleName);
+        //
+        //         // if (!pythonPackage) {
+        //         //     throw "YAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+        //         //     continue;
+        //         // }
+        //
+        //         // let symbol = ScipSymbol.global(
+        //         //     ScipSymbol.global(
+        //         //         ScipSymbol.package(pythonPackage.name, pythonPackage.version),
+        //         //         packageDescriptor(symbolType.moduleName)
+        //         //     ),
+        //         //     metaDescriptor('__init__')
+        //         // );
+        //
+        //         // console.log(':: SymbolType', symbolType);
+        //         const pythonPackage = this.guessPackage(symbolType.moduleName, symbolType.filePath);
+        //         console.log('   PYTHON PACKAGE::', { moduleName: symbolType.moduleName, pythonPackage: pythonPackage });
+        //         let symbol = this.getScipSymbol(listNode, {
+        //             moduleName: symbolType.moduleName,
+        //             pythonPackage: pythonPackage,
+        //         });
+        //
+        //         this.document.occurrences.push(
+        //             new scip.Occurrence({
+        //                 symbol_roles: scip.SymbolRole.ReadAccess,
+        //                 symbol: symbol.value,
+        //                 range: parseNodeToRange(listNode, this.fileInfo!.lines).toLsif(),
+        //             })
+        //         );
+        //     }
+        // }
 
-            if (!symbolNameNode) {
-                // This can happen in certain cases where there are parse errors.
-                continue;
-            }
-
-            // Look up the symbol to find the alias declaration.
-            let symbolType = this.getAliasedSymbolTypeForName(listNode, symbolNameNode.value);
-            if (symbolType) {
-                if (symbolType.category == TypeCategory.Unknown) {
-                    continue;
-                }
-
-                if (symbolType.category !== TypeCategory.Module) {
-                    throw 'only modules should be modules' + symbolType.category;
-                }
-
-                // TODO: get the right package
-                // const pythonPackage = this.getPackageInfo(listNode, symbolType.moduleName);
-
-                // if (!pythonPackage) {
-                //     throw "YAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
-                //     continue;
-                // }
-
-                // let symbol = ScipSymbol.global(
-                //     ScipSymbol.global(
-                //         ScipSymbol.package(pythonPackage.name, pythonPackage.version),
-                //         packageDescriptor(symbolType.moduleName)
-                //     ),
-                //     metaDescriptor('__init__')
-                // );
-
-                // console.log(':: SymbolType', symbolType);
-                const pythonPackage = this.guessPackage(symbolType.moduleName, symbolType.filePath);
-                console.log('   PYTHON PACKAGE::', { moduleName: symbolType.moduleName, pythonPackage: pythonPackage });
-                let symbol = this.getScipSymbol(listNode, {
-                    moduleName: symbolType.moduleName,
-                    pythonPackage: pythonPackage,
-                });
-
-                this.document.occurrences.push(
-                    new scip.Occurrence({
-                        symbol_roles: scip.SymbolRole.ReadAccess,
-                        symbol: symbol.value,
-                        range: parseNodeToRange(listNode, this.fileInfo!.lines).toLsif(),
-                    })
-                );
-            }
-        }
+        node.list.forEach((child) => this.walk(child));
 
         return false;
     }
@@ -465,7 +467,6 @@ export class TreeVisitor extends ParseTreeWalker {
         // console.log(resolved ? this.evaluator.getTypeForDeclaration(resolved) : undefined);
         const role = scip.SymbolRole.ReadAccess;
         const symbol = this.getScipSymbol(node.module);
-        console.log('  Symbol:', symbol.value);
         this.document.occurrences.push(
             new scip.Occurrence({
                 symbol_roles: role,
@@ -474,14 +475,9 @@ export class TreeVisitor extends ParseTreeWalker {
             })
         );
 
-        console.log('=> IMPORTS');
-
         // Walk the imports, but don't walk the named node of ImportFromtNode,
         //  we have already handled that.
-        for (let imp of node.imports) {
-            this.walk(imp);
-        }
-
+        node.imports.forEach(imp => this.walk(imp));
         return false;
     }
 
@@ -494,7 +490,6 @@ export class TreeVisitor extends ParseTreeWalker {
     //        ^^^^^^^ node.module (create new reference)
     //                   ^ node.alias (create new local definition)
     override visitImportAs(node: ImportAsNode): boolean {
-        console.log('VISIT IMPORT AS');
         const moduleName = _formatModuleName(node.module);
         const importInfo = getImportInfo(node.module);
         if (
