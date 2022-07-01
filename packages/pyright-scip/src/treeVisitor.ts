@@ -452,31 +452,14 @@ export class TreeVisitor extends ParseTreeWalker {
     // and then declare the new symbol for the entire module. This gives us better
     // clicking for goto-def in Sourcegraph
     override visitImportFrom(node: ImportFromNode): boolean {
-        console.log(
-            'VISIT IMPORT FROM',
-            node.id,
-            '//',
-            node.module.id,
-            '=>',
-            node.module.nameParts.map((x) => x.value)
-        );
-        // const decls = this.evaluator.getDeclarationsForNameNode(node.module.nameParts[node.module.nameParts.length - 1])!;
-        // const decl = decls[0];
-        // const resolved = this.evaluator.resolveAliasDeclaration(decl, true, true);
-        // console.log("   DECL ::", isAliasDeclaration(decl), resolved);
-        // console.log(resolved ? this.evaluator.getTypeForDeclaration(resolved) : undefined);
-        const role = scip.SymbolRole.ReadAccess;
-        const symbol = this.getScipSymbol(node.module);
         this.document.occurrences.push(
             new scip.Occurrence({
-                symbol_roles: role,
-                symbol: symbol.value,
+                symbol_roles: scip.SymbolRole.ReadAccess,
+                symbol: this.getScipSymbol(node.module).value,
                 range: parseNodeToRange(node.module, this.fileInfo!.lines).toLsif(),
             })
         );
 
-        // Walk the imports, but don't walk the named node of ImportFromtNode,
-        //  we have already handled that.
         node.imports.forEach(imp => this.walk(imp));
         return false;
     }
@@ -624,17 +607,11 @@ export class TreeVisitor extends ParseTreeWalker {
                     return true;
 
                 case ParseNodeType.Name:
-                    const parent = declNode.parent!;
-                    if (!parent) {
-                        break;
-                    }
-
-                    // Don't allow scope to leak from list comprehensions
-                    // TODO: Dict comprehensions
-                    // TODO: Consider getting scope var and checking with that?
-                    if (parent.nodeType === ParseNodeType.ListComprehensionFor) {
+                    // Don't allow scope to leak from list/dict comprehensions
+                    //  (dict comprehensions are also considered ListComprehensionFor)
+                    console.log(node.value);
+                    if (hasAncestor(declNode, ParseNodeType.ListComprehensionFor)) {
                         this.getLocalForDeclaration(declNode);
-                        break;
                     }
 
                     break;
@@ -851,7 +828,7 @@ export class TreeVisitor extends ParseTreeWalker {
         }
 
         if (moduleName === undefined) {
-            const nodeFileInfo = getScopedFileInfo(node);
+            const nodeFileInfo = getFileInfo(node);
             if (!nodeFileInfo) {
                 throw 'no file info';
             }
@@ -907,9 +884,6 @@ export class TreeVisitor extends ParseTreeWalker {
 
     // the pythonPackage is for the
     private makeScipSymbol(pythonPackage: PythonPackage, moduleName: string, node: ParseNode): ScipSymbol {
-        console.log('  Making Scip Symbol', moduleName, ParseTreeUtils.printParseNodeType(node.nodeType));
-        // const nodeFilePath = path.resolve(nodeFileInfo.filePath);
-
         switch (node.nodeType) {
             case ParseNodeType.Module:
                 moduleName = getFileInfo(node).moduleName;
@@ -945,7 +919,15 @@ export class TreeVisitor extends ParseTreeWalker {
                 // from .modulename import X
                 //      ^^^^^^^^^^^ -> modulename/__init__
 
-                console.log('=> MODULE NAME TIME');
+                if (node.nameParts.length === 0) {
+                    if (node.leadingDots > 0) {
+                        return ScipSymbol.local(this.counter.next());
+                    }
+
+                    softAssert(false, "Unknown ModuleNamer to handle", node);
+                    return ScipSymbol.local(this.counter.next());
+                }
+
                 const namePart = node.nameParts[0];
                 if (Hardcoded.stdlib_module_names.has(namePart.value)) {
                     pythonPackage = this.stdlibPackage;
@@ -996,7 +978,6 @@ export class TreeVisitor extends ParseTreeWalker {
                     );
                 }
 
-                console.log('   FUNCTION PARENT:', ParseTreeUtils.printParseNodeType(node.parent!.nodeType));
                 return ScipSymbol.global(
                     this.getScipSymbol(node.parent!),
                     methodDescriptor((node as FunctionNode).name!.value)
@@ -1581,6 +1562,7 @@ function hasAncestor(node: ParseNode, ...types: ParseNodeType[]): boolean {
 
     let ancestor: ParseNode | undefined = node;
     while (ancestor) {
+        console.log(ParseTreeUtils.printParseNodeType( ancestor.nodeType));
         if (type.has(ancestor.nodeType)) {
             return true;
         }
@@ -1589,14 +1571,4 @@ function hasAncestor(node: ParseNode, ...types: ParseNodeType[]): boolean {
     }
 
     return false;
-}
-
-function getScopedFileInfo(node: ParseNode): AnalyzerFileInfo {
-    switch (node.nodeType) {
-        case ParseNodeType.Module:
-            console.log('   getScopedFileInfo:', getFileInfo(node).moduleName);
-            return getFileInfo(node);
-        default:
-            return getFileInfo(node);
-    }
 }
