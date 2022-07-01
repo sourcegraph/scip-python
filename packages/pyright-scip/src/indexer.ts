@@ -173,6 +173,10 @@ export class Indexer {
                     })
                 );
             });
+
+            const externalSymbolIndex = new scip.Index();
+            externalSymbolIndex.external_symbols = Array.from(externalSymbols.values());
+            this.scipConfig.writeIndex(externalSymbolIndex);
         });
     }
 }

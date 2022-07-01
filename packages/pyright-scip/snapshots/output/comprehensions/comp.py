@@ -47,9 +47,6 @@ for var in asdf:
     print(var)
 #   ^^^^^ reference  python-stdlib 3.10 builtins/__init__:print().
 #         ^^^ reference  snapshot-util 0.1 comp/var.
-print(var)
-#^^^^ reference  python-stdlib 3.10 builtins/__init__:print().
-#     ^^^ reference  snapshot-util 0.1 comp/var.
 
 # TODO: ListComprehensions with if
 # TODO: Dictionary comprehensions

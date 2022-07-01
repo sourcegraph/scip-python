@@ -372,10 +372,10 @@ export class TreeVisitor extends ParseTreeWalker {
     //         ^^^^^^^^  reference requests
     override visitImport(node: ImportNode): boolean {
         this._docstringWriter.visitImport(node);
-        console.log(
-            'VISIT IMPORT',
-            node.list.map((x) => x.module.nameParts.map((y) => y.value))
-        );
+        // console.log(
+        //     'VISIT IMPORT',
+        //     node.list.map((x) => x.module.nameParts.map((y) => y.value))
+        // );
 
         // for (const listNode of node.list) {
         //     let symbolNameNode: NameNode;
@@ -420,9 +420,7 @@ export class TreeVisitor extends ParseTreeWalker {
         //         //     metaDescriptor('__init__')
         //         // );
         //
-        //         // console.log(':: SymbolType', symbolType);
         //         const pythonPackage = this.guessPackage(symbolType.moduleName, symbolType.filePath);
-        //         console.log('   PYTHON PACKAGE::', { moduleName: symbolType.moduleName, pythonPackage: pythonPackage });
         //         let symbol = this.getScipSymbol(listNode, {
         //             moduleName: symbolType.moduleName,
         //             pythonPackage: pythonPackage,
@@ -460,7 +458,7 @@ export class TreeVisitor extends ParseTreeWalker {
             })
         );
 
-        node.imports.forEach(imp => this.walk(imp));
+        node.imports.forEach((imp) => this.walk(imp));
         return false;
     }
 
@@ -627,6 +625,7 @@ export class TreeVisitor extends ParseTreeWalker {
                         break;
                     }
 
+                    console.log('FUNCTION::', node.value);
                     this.pushNewOccurrence(node, this.getScipSymbol(declNode));
                     return true;
 
@@ -736,6 +735,7 @@ export class TreeVisitor extends ParseTreeWalker {
                 // so that's a bit of a shame...
 
                 if (Types.isFunction(builtinType)) {
+                    console.log('  BUILTIN TYPE', node.value);
                     const symbol = this.getIntrinsicSymbol(node);
                     this.pushNewOccurrence(node, symbol);
 
@@ -826,7 +826,6 @@ export class TreeVisitor extends ParseTreeWalker {
         let moduleName: string | undefined = undefined;
         let pythonPackage: PythonPackage | undefined = undefined;
         if (opts) {
-            console.log('USING OPTS:', opts);
             moduleName = opts.moduleName;
             pythonPackage = opts.pythonPackage;
         }
@@ -879,9 +878,60 @@ export class TreeVisitor extends ParseTreeWalker {
         return ScipSymbol.local(this.counter.next());
     }
 
-    private makeBuiltinScipSymbol(node: ParseNode, _info: AnalyzerFileInfo): ScipSymbol {
+    private makeBuiltinScipSymbol(builtinNode: ParseNode, _info: AnalyzerFileInfo): ScipSymbol {
         // TODO: Can handle special cases here if we need to.
         //  Hopefully we will not need any though.
+        const node = builtinNode as NameNode;
+        const builtinType = this.evaluator.getBuiltInType(node, node.value);
+        console.log("BUILTIN TYPE", ParseTreeUtils.printParseNodeType(builtinNode.nodeType),  builtinType);
+        // const pyrightSymbol = this.evaluator.lookUpSymbolRecursive(node, node.value, true);
+
+
+        if (!Types.isUnknown(builtinType)) {
+            // TODO: We could expose this and try to use it, but for now, let's skip that.
+            // _getSymbolCategory
+
+            // TODO: We're still missing documentation for builtin functions,
+            // so that's a bit of a shame...
+
+            if (Types.isFunction(builtinType)) {
+                console.log('  BUILTIN TYPE', node.value);
+                const symbol = this.getIntrinsicSymbol(node);
+                this.pushNewOccurrence(node, symbol);
+
+                const doc = builtinType.details.docString;
+                this.emitExternalSymbolInformation(node, symbol, doc ? [doc] : []);
+            } else if (Types.isOverloadedFunction(builtinType)) {
+                const overloadedSymbol = this.getScipSymbol(decl.node);
+                this.pushNewOccurrence(node, overloadedSymbol);
+
+                const doc = builtinType.overloads[0].details.docString;
+                this.emitExternalSymbolInformation(node, overloadedSymbol, doc ? [doc] : []);
+            } else if (Types.isClass(builtinType)) {
+                const symbol = Symbols.makeClass(this.stdlibPackage, 'builtins', node.value);
+                this.pushNewOccurrence(node, symbol);
+
+                const doc = builtinType.details.docString;
+                this.emitExternalSymbolInformation(node, symbol, doc ? [doc] : []);
+            } else if (Types.isModule(builtinType)) {
+                // const pythonPackage = this.getPackageInfo(node, builtinType.moduleName)!;
+                const symbol = ScipSymbol.global(
+                    ScipSymbol.package(builtinType.moduleName, this.stdlibPackage.version),
+                    metaDescriptor('__init__')
+                );
+
+                this.pushNewOccurrence(node, symbol);
+
+                // TODO: Get module documentaiton
+                // this.emitExternalSymbolInformation(node, symbol);
+            } else {
+                // TODO: IntrinsicRefactor
+                softAssert(false, 'unhandled intrinsic', node);
+                this.pushNewOccurrence(node, this.getIntrinsicSymbol(node));
+            }
+
+            return true;
+        }
 
         return this.makeScipSymbol(this.stdlibPackage, 'builtins', node);
     }
@@ -928,7 +978,7 @@ export class TreeVisitor extends ParseTreeWalker {
                         return ScipSymbol.local(this.counter.next());
                     }
 
-                    softAssert(false, "Unknown ModuleNamer to handle", node);
+                    softAssert(false, 'Unknown ModuleNamer to handle', node);
                     return ScipSymbol.local(this.counter.next());
                 }
 
@@ -967,7 +1017,6 @@ export class TreeVisitor extends ParseTreeWalker {
                 return ScipSymbol.global(this.getScipSymbol(node.parent!), parameterDescriptor(node.name.value));
 
             case ParseNodeType.Class:
-                console.log('   THIS IS A CLASS');
                 return ScipSymbol.global(
                     this.getScipSymbol(node.parent!),
                     typeDescriptor((node as ClassNode).name.value)
@@ -1307,6 +1356,7 @@ export class TreeVisitor extends ParseTreeWalker {
     }
 
     private emitExternalSymbolInformation(_node: ParseNode, symbol: ScipSymbol, documentation: string[]) {
+        console.log('EMIT EXTNERAL SYMBOL', symbol, documentation);
         if (documentation.length === 0) {
             return;
         }
@@ -1566,7 +1616,6 @@ function hasAncestor(node: ParseNode, ...types: ParseNodeType[]): boolean {
 
     let ancestor: ParseNode | undefined = node;
     while (ancestor) {
-        console.log(ParseTreeUtils.printParseNodeType( ancestor.nodeType));
         if (type.has(ancestor.nodeType)) {
             return true;
         }

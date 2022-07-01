@@ -32,9 +32,18 @@ function getSymbolTable(doc: scip.Document): Map<string, scip.SymbolInformation>
 const packageName = 'scip-python python';
 const commentSyntax = '#';
 
-export function formatSnapshot(input: Input, doc: scip.Document): string {
+export function formatSnapshot(
+    input: Input,
+    doc: scip.Document,
+    externalSymbols: scip.SymbolInformation[] = []
+): string {
     const out: string[] = [];
     const symbolTable = getSymbolTable(doc);
+
+    const externalSymbolTable = new Map();
+    for (let externalSymbol of externalSymbols) {
+        externalSymbolTable.set(externalSymbol.symbol, externalSymbol);
+    }
 
     const symbolsWithDefinitions: Set<string> = new Set();
     for (let occurrence of doc.occurrences) {
@@ -60,22 +69,27 @@ export function formatSnapshot(input: Input, doc: scip.Document): string {
 
         emittedDocstrings.add(symbol);
 
-        const info = symbolTable.get(symbol);
-        if (info) {
-            let docPrefix = '\n' + commentSyntax;
-            if (!isStartOfLine) {
-                docPrefix += ' '.repeat(range.start.character - 1);
-            }
+        const externalSymbol = externalSymbolTable.get(symbol);
+        if (externalSymbol) {
+            throw 'asdfasdf external symbol';
+        } else {
+            const info = symbolTable.get(symbol);
+            if (info) {
+                let docPrefix = '\n' + commentSyntax;
+                if (!isStartOfLine) {
+                    docPrefix += ' '.repeat(range.start.character - 1);
+                }
 
-            for (const documentation of info.documentation) {
-                for (const [idx, line] of documentation.split('\n').entries()) {
-                    out.push(docPrefix);
-                    if (idx == 0) {
-                        out.push('documentation ');
-                    } else {
-                        out.push('            > ');
+                for (const documentation of info.documentation) {
+                    for (const [idx, line] of documentation.split('\n').entries()) {
+                        out.push(docPrefix);
+                        if (idx == 0) {
+                            out.push('documentation ');
+                        } else {
+                            out.push('            > ');
+                        }
+                        out.push(line);
                     }
-                    out.push(line);
                 }
             }
         }

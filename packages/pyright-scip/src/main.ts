@@ -80,7 +80,7 @@ export function main(): void {
 
                     const inputPath = path.join(projectRoot, doc.relative_path);
                     const input = Input.fromFile(inputPath);
-                    const obtained = formatSnapshot(input, doc);
+                    const obtained = formatSnapshot(input, doc, scipIndex.external_symbols);
                     const relativeToInputDirectory = path.relative(projectRoot, inputPath);
                     const outputPath = path.resolve(snapshotDir, relativeToInputDirectory);
                     writeSnapshot(outputPath, obtained);
@@ -147,7 +147,7 @@ export function main(): void {
 
                     const inputPath = path.join(projectRoot, doc.relative_path);
                     const input = Input.fromFile(inputPath);
-                    const obtained = formatSnapshot(input, doc);
+                    const obtained = formatSnapshot(input, doc, scipIndex.external_symbols);
                     const relativeToInputDirectory = path.relative(projectRoot, inputPath);
                     const outputPath = path.resolve(outputDirectory, snapshotDir, relativeToInputDirectory);
 
