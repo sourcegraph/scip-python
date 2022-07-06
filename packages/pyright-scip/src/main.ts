@@ -9,6 +9,7 @@ import { join } from 'path';
 import { mainCommand } from './MainCommand';
 import { withStatus, statusConfig } from './status';
 import { Indexer } from './indexer';
+import { exit } from 'process';
 
 export function main(): void {
     const command = mainCommand(
@@ -65,7 +66,7 @@ export function main(): void {
                 indexer.index();
             } catch (e) {
                 console.warn('Experienced Fatal Error While Indexing: Please create an issue:', e);
-                return;
+                exit(1);
             }
 
             fs.close(output);

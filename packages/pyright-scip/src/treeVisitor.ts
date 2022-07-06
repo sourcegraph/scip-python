@@ -60,6 +60,7 @@ import { Event } from 'vscode-languageserver';
 import { HoverResults } from 'pyright-internal/languageService/hoverProvider';
 import { convertDocStringToMarkdown } from 'pyright-internal/analyzer/docStringConversion';
 import { assert } from 'pyright-internal/common/debug';
+import { getNameFromDeclaration } from 'pyright-internal/analyzer/declarationUtils';
 
 //  Useful functions for later, but haven't gotten far enough yet to use them.
 //      extractParameterDocumentation
@@ -438,6 +439,248 @@ export class TreeVisitor extends ParseTreeWalker {
         return false;
     }
 
+    private emitDeclarationWithoutNode(node: NameNode, decl: Declaration): boolean {
+        const parent = node.parent!;
+
+        switch (parent.nodeType) {
+            // `ModuleName`s do not have nodes for definitions
+            // because they aren't a syntax node, they are basically
+            // a file location node.
+            //
+            // (as far as I know, they are the only thing to have something
+            // like this)
+            case ParseNodeType.ModuleName: {
+                const symbol = this.getScipSymbol(parent);
+
+                if (symbol) {
+                    if (hasAncestor(node, ParseNodeType.ImportAs, ParseNodeType.ImportFrom)) {
+                        softAssert(false, 'Should never see ImportAs or ImportFrom in visitName');
+                        return true;
+                    }
+
+                    this.pushNewOccurrence(node, symbol);
+                    return true;
+                }
+            }
+            default: {
+                softAssert(false, 'unhandled missing node for declaration');
+                return true;
+            }
+        }
+    }
+
+    private emiteDeclaration(node: NameNode, decl: Declaration): boolean {
+        const parent = node.parent!;
+
+        if (!decl.node) {
+            return this.emitDeclarationWithoutNode(node, decl);
+        }
+
+        const existingSymbol = this.rawGetLsifSymbol(decl.node);
+        if (existingSymbol) {
+            if (decl.node.id === parent.id || decl.node.id === node.id) {
+                this.pushNewOccurrence(node, existingSymbol, scip.SymbolRole.Definition);
+            } else {
+                this.pushNewOccurrence(node, existingSymbol);
+            }
+            return true;
+        }
+
+        const isDefinition = decl.node.id === parent.id;
+        log.debug('  declaration type:', ParseTreeUtils.printParseNodeType(decl.node.nodeType), isDefinition);
+
+        const builtinType = this.evaluator.getBuiltInType(node, node.value);
+        if (this.isStdlib(decl, builtinType)) {
+            this.emitBuiltinScipSymbol(node, builtinType, decl);
+            return true;
+        }
+
+        const declNode = decl.node;
+        switch (declNode.nodeType) {
+            case ParseNodeType.ImportAs: {
+                // If we see that the declaration is for an alias, then we want to just use the
+                // imported alias local definition. This prevents these from leaking out (which
+                // I think is the desired behavior)
+                if (declNode.alias) {
+                    this.pushNewOccurrence(node, this.getScipSymbol(declNode.alias));
+                    return true;
+                }
+
+                const moduleName = _formatModuleName(declNode.module);
+                const symbol = this.getSymbolOnce(declNode, () => {
+                    const pythonPackage = this.moduleNameNodeToPythonPackage(declNode.module);
+                    if (!pythonPackage) {
+                        return this.getLocalForDeclaration(node);
+                    }
+
+                    assert(declNode != node.parent, 'Must not be the definition');
+                    assert(pythonPackage, 'Must have a python package: ' + moduleName);
+
+                    return Symbols.makeModule(moduleName, pythonPackage);
+                });
+
+                // TODO: We could maybe cache this to not always be asking for these names & decls
+                let nodeForRange: ParseNode = node;
+                while (nodeForRange.parent && nodeForRange.parent.nodeType === ParseNodeType.MemberAccess) {
+                    const member = nodeForRange.parent.memberName;
+                    const memberDecl = this.evaluator.getDeclarationsForNameNode(member, false);
+
+                    // OK, so I think _only_ Modules won't have a declaration,
+                    // so keep going until we find something that _has_ a declaration.
+                    //
+                    // That seems a bit goofy, but that lets us get the correct range here:
+                    //
+                    // importlib.resources.read_text('pre_commit.resources', 'filename')
+                    // #^^^^^^^^^^^^^^^^^^ reference  python-stdlib 3.10 `importlib.resources`/__init__:
+                    // #                   ^^^^^^^^^ reference  snapshot-util 0.1 `importlib.resources`/read_text().
+                    if (memberDecl && memberDecl.length > 0) {
+                        break;
+                    }
+
+                    nodeForRange = nodeForRange.parent;
+                }
+
+                this.pushNewOccurrence(nodeForRange, symbol);
+                return true;
+            }
+            case ParseNodeType.Function: {
+                // Only push an occurrence directly if it's a reference,
+                // otherwise handle below.
+                if (isDefinition) {
+                    break;
+                }
+
+                this.pushNewOccurrence(node, this.getScipSymbol(declNode));
+                return true;
+            }
+            case ParseNodeType.Name: {
+                // Don't allow scope to leak from list/dict comprehensions
+                //  (dict comprehensions are also considered ListComprehensionFor)
+                //
+                // TODO: hasAncestor should perhaps also contain the ability to quit when hitting certain nodes
+                //  I don't know that it's great to loop all the way back up for this all the time
+                //  We could provide a list of items that have their own scope that would be OK to be leaked
+                //  because they aren't statements
+                if (hasAncestor(declNode, ParseNodeType.ListComprehensionFor)) {
+                    this.getLocalForDeclaration(declNode);
+                }
+
+                break;
+            }
+            default:
+                break;
+        }
+
+        if (isIntrinsicDeclaration(decl)) {
+            this.pushNewOccurrence(node, this.getIntrinsicSymbol(node));
+            return true;
+        }
+
+        const type = this.evaluator.getTypeForDeclaration(decl);
+        if (isAliasDeclaration(decl)) {
+            const resolved = this.evaluator.resolveAliasDeclaration(decl, true, true);
+            const resolvedType = resolved ? this.evaluator.getTypeForDeclaration(resolved) : undefined;
+
+            if (!resolved) {
+                log.info('Missing dependency for:', node);
+            }
+
+            if (type) {
+                this.pushTypeReference(node, decl.node, type);
+                return true;
+            }
+
+            if (resolved && resolvedType) {
+                const isDefinition = node.id === resolved?.node.id;
+                const resolvedInfo = getFileInfo(node);
+                const hoverResult = this.program.getHoverForPosition(
+                    resolvedInfo.filePath,
+                    convertOffsetToPosition(node.start, resolvedInfo.lines),
+                    'markdown',
+                    token
+                );
+
+                if (hoverResult) {
+                    const symbol = this.typeToSymbol(node, declNode, resolvedType);
+                    this.rawSetLsifSymbol(declNode, symbol, symbol.isLocal());
+
+                    if (isDefinition) {
+                        this.emitSymbolInformationOnce(node, symbol, _formatHover(hoverResult));
+                    }
+                }
+
+                this.pushTypeReference(node, resolved.node, resolvedType);
+                return true;
+            }
+
+            this.pushNewOccurrence(node, this.getScipSymbol(decl.node));
+            return true;
+        }
+
+        if (isDefinition) {
+            if (parent.nodeType == ParseNodeType.Class) {
+                const symbol = this.getScipSymbol(parent);
+
+                const documentation = [];
+                const stub = this._docstringWriter.docstrings.get(parent.id)!;
+                if (stub) {
+                    documentation.push('```python\n' + stub.join('\n') + '\n```');
+                }
+
+                const doc = ParseTreeUtils.getDocString(parent.suite.statements)?.trim();
+                if (doc) {
+                    documentation.push(convertDocStringToMarkdown(doc));
+                }
+
+                this.document.symbols.push(
+                    new scip.SymbolInformation({
+                        symbol: symbol.value,
+                        documentation,
+                    })
+                );
+
+                // this.walk(node.name);
+                // this.walk(node.suite);
+            }
+
+            this.pushNewOccurrence(node, this.getScipSymbol(decl.node), scip.SymbolRole.Definition);
+            return true;
+        }
+
+        if (decl.node.id == node.id) {
+            const symbol = this.getScipSymbol(decl.node);
+            this.pushNewOccurrence(node, symbol, scip.SymbolRole.Definition);
+            return true;
+        }
+
+        const existingLsifSymbol = this.rawGetLsifSymbol(decl.node);
+        if (existingLsifSymbol) {
+            this.pushNewOccurrence(node, existingLsifSymbol, scip.SymbolRole.ReadAccess);
+            return true;
+        }
+
+        const symbol = this.getScipSymbol(decl.node);
+        this.pushNewOccurrence(node, symbol);
+        return true;
+    }
+
+    private isStdlib(decl: Declaration, builtinType: Type): boolean {
+        if (Types.isUnknown(builtinType)) {
+            return false;
+        }
+
+        switch (builtinType.category) {
+            case TypeCategory.Class:
+                return ClassType.isBuiltIn(builtinType) || ClassType.isSpecialBuiltIn(builtinType);
+            case TypeCategory.Function:
+                return isBuiltinModuleName(decl.moduleName);
+            case TypeCategory.OverloadedFunction:
+                return this.isStdlib(decl, builtinType.overloads[0]);
+        }
+
+        throw new Error('Method not implemented.');
+    }
+
     override visitName(node: NameNode): boolean {
         if (!node.parent) {
             throw `No parent for named node: ${node.token.value}`;
@@ -448,234 +691,17 @@ export class TreeVisitor extends ParseTreeWalker {
         }
 
         const parent = node.parent;
-        log.debug(node.token.value, 'parent:', ParseTreeUtils.printParseNodeType(parent.nodeType));
-
         const decls = this.evaluator.getDeclarationsForNameNode(node) || [];
-        if (decls.length > 0) {
-            // TODO(multi_decls)
-            const decl = decls[0];
-            if (!decl.node) {
-                switch (parent.nodeType) {
-                    // `ModuleName`s do not have nodes for definitions
-                    // because they aren't a syntax node, they are basically
-                    // a file location node.
-                    //
-                    // (as far as I know, they are the only thing to have something
-                    // like this)
-                    case ParseNodeType.ModuleName:
-                        const symbol = this.getScipSymbol(node.parent);
 
-                        if (symbol) {
-                            if (hasAncestor(node, ParseNodeType.ImportAs, ParseNodeType.ImportFrom)) {
-                                softAssert(false, 'Should never see ImportAs or ImportFrom in visitName');
-                                return true;
-                            }
-
-                            this.pushNewOccurrence(node, symbol);
-                            return true;
-                        }
-
-                    default:
-                        softAssert(false, 'unhandled missing node for declaration');
-                        return true;
-                }
-            }
-
-            const existingSymbol = this.rawGetLsifSymbol(decl.node);
-            if (existingSymbol) {
-                if (decl.node.id === parent.id || decl.node.id === node.id) {
-                    this.pushNewOccurrence(node, existingSymbol, scip.SymbolRole.Definition);
-                } else {
-                    this.pushNewOccurrence(node, existingSymbol);
-                }
-                return true;
-            }
-
-            log.debug('    decl type::', ParseTreeUtils.printParseNodeType(decl.node.nodeType));
-
-            const isDefinition = decl.node.id === node.parent!.id;
-
-            const builtinType = this.evaluator.getBuiltInType(node, node.value);
-            const isBuiltinType = !Types.isUnknown(builtinType);
-            if (isBuiltinType) {
-                const builtinSymbol = this.emitBuiltinScipSymbol(node, builtinType, decl);
-                this.emitExternalSymbolInformation(node, builtinSymbol, []);
-                return true;
-            }
-
-            const declNode = decl.node;
-            switch (declNode.nodeType) {
-                case ParseNodeType.ImportAs:
-                    // If we see that the declaration is for an alias, then we want to just use the
-                    // imported alias local definition. This prevents these from leaking out (which
-                    // I think is the desired behavior)
-                    if (declNode.alias) {
-                        this.pushNewOccurrence(node, this.getScipSymbol(declNode.alias));
-                        return true;
-                    }
-
-                    const moduleName = _formatModuleName(declNode.module);
-                    const symbol = this.getSymbolOnce(declNode, () => {
-                        const pythonPackage = this.moduleNameNodeToPythonPackage(declNode.module);
-                        if (!pythonPackage) {
-                            return this.getLocalForDeclaration(node);
-                        }
-
-                        assert(declNode != node.parent, 'Must not be the definition');
-                        assert(pythonPackage, 'Must have a python package: ' + moduleName);
-
-                        return Symbols.makeModule(moduleName, pythonPackage);
-                    });
-
-                    // TODO: We could maybe cache this to not always be asking for these names & decls
-                    let nodeForRange: ParseNode = node;
-                    while (nodeForRange.parent && nodeForRange.parent.nodeType === ParseNodeType.MemberAccess) {
-                        const member = nodeForRange.parent.memberName;
-                        const memberDecl = this.evaluator.getDeclarationsForNameNode(member, false);
-
-                        // OK, so I think _only_ Modules won't have a declaration,
-                        // so keep going until we find something that _has_ a declaration.
-                        //
-                        // That seems a bit goofy, but that lets us get the correct range here:
-                        //
-                        // importlib.resources.read_text('pre_commit.resources', 'filename')
-                        // #^^^^^^^^^^^^^^^^^^ reference  python-stdlib 3.10 `importlib.resources`/__init__:
-                        // #                   ^^^^^^^^^ reference  snapshot-util 0.1 `importlib.resources`/read_text().
-                        if (memberDecl && memberDecl.length > 0) {
-                            break;
-                        }
-
-                        nodeForRange = nodeForRange.parent;
-                    }
-
-                    this.pushNewOccurrence(nodeForRange, symbol);
-                    return true;
-
-                case ParseNodeType.Name:
-                    // Don't allow scope to leak from list/dict comprehensions
-                    //  (dict comprehensions are also considered ListComprehensionFor)
-                    //
-                    // TODO: hasAncestor should perhaps also contain the ability to quit when hitting certain nodes
-                    //  I don't know that it's great to loop all the way back up for this all the time
-                    //  We could provide a list of items that have their own scope that would be OK to be leaked
-                    //  because they aren't statements
-                    if (hasAncestor(declNode, ParseNodeType.ListComprehensionFor)) {
-                        this.getLocalForDeclaration(declNode);
-                    }
-
-                    break;
-
-                case ParseNodeType.Function:
-                    // Only push an occurrence directly if it's a reference,
-                    // otherwise handle below.
-                    if (isDefinition) {
-                        break;
-                    }
-
-                    this.pushNewOccurrence(node, this.getScipSymbol(declNode));
-                    return true;
-
-                default:
-                    break;
-            }
-
-            if (isIntrinsicDeclaration(decl)) {
-                this.pushNewOccurrence(node, this.getIntrinsicSymbol(node));
-                return true;
-            }
-
-            const type = this.evaluator.getTypeForDeclaration(decl);
-            if (isAliasDeclaration(decl)) {
-                const resolved = this.evaluator.resolveAliasDeclaration(decl, true, true);
-                const resolvedType = resolved ? this.evaluator.getTypeForDeclaration(resolved) : undefined;
-
-                if (!resolved) {
-                    log.info('Missing dependency for:', node);
-                }
-
-                if (type) {
-                    this.pushTypeReference(node, decl.node, type);
-                    return true;
-                }
-
-                if (resolved && resolvedType) {
-                    const isDefinition = node.id === resolved?.node.id;
-                    const resolvedInfo = getFileInfo(node);
-                    const hoverResult = this.program.getHoverForPosition(
-                        resolvedInfo.filePath,
-                        convertOffsetToPosition(node.start, resolvedInfo.lines),
-                        'markdown',
-                        token
-                    );
-
-                    if (hoverResult) {
-                        const symbol = this.typeToSymbol(node, declNode, resolvedType);
-                        this.rawSetLsifSymbol(declNode, symbol, symbol.isLocal());
-
-                        if (isDefinition) {
-                            this.emitSymbolInformationOnce(node, symbol, _formatHover(hoverResult));
-                        }
-                    }
-
-                    this.pushTypeReference(node, resolved.node, resolvedType);
-                    return true;
-                }
-
-                this.pushNewOccurrence(node, this.getScipSymbol(decl.node));
-                return true;
-            }
-
-            // TODO: Write a more rigorous check for if this node is a
-            // definition node. Probably some util somewhere already for
-            // that (need to explore pyright some more)
-            if (decl.node.id == parent.id) {
-                if (parent.nodeType == ParseNodeType.Class) {
-                    const symbol = this.getScipSymbol(parent);
-
-                    const documentation = [];
-                    const stub = this._docstringWriter.docstrings.get(parent.id)!;
-                    if (stub) {
-                        documentation.push('```python\n' + stub.join('\n') + '\n```');
-                    }
-
-                    const doc = ParseTreeUtils.getDocString(parent.suite.statements)?.trim();
-                    if (doc) {
-                        documentation.push(convertDocStringToMarkdown(doc));
-                    }
-
-                    this.document.symbols.push(
-                        new scip.SymbolInformation({
-                            symbol: symbol.value,
-                            documentation,
-                        })
-                    );
-
-                    // this.walk(node.name);
-                    // this.walk(node.suite);
-                }
-
-                this.pushNewOccurrence(node, this.getScipSymbol(decl.node), scip.SymbolRole.Definition);
-                return true;
-            }
-
-            if (decl.node.id == node.id) {
-                const symbol = this.getScipSymbol(decl.node);
-                this.pushNewOccurrence(node, symbol, scip.SymbolRole.Definition);
-                return true;
-            }
-
-            const existingLsifSymbol = this.rawGetLsifSymbol(decl.node);
-            if (existingLsifSymbol) {
-                this.pushNewOccurrence(node, existingLsifSymbol, scip.SymbolRole.ReadAccess);
-                return true;
-            }
-
-            const symbol = this.getScipSymbol(decl.node);
-            this.pushNewOccurrence(node, symbol);
+        log.debug(node.token.value, '->', ParseTreeUtils.printParseNodeType(parent.nodeType));
+        if (decls.length === 0) {
+            log.debug('     missing declaration');
             return true;
         }
 
-        return true;
+        // TODO(multi_decls)
+        const decl = decls[0];
+        return this.emiteDeclaration(node, decl);
     }
 
     private rawGetLsifSymbol(node: ParseNode): ScipSymbol | undefined {
@@ -764,105 +790,101 @@ export class TreeVisitor extends ParseTreeWalker {
         builtinType: Type | undefined = undefined,
         decl: Declaration | undefined = undefined
     ): ScipSymbol {
-        // TODO: Can handle special cases here if we need to.
-        //  Hopefully we will not need any though.
         const node = builtinNode as NameNode;
         if (builtinType === undefined) {
             builtinType = this.evaluator.getBuiltInType(node, node.value);
         }
 
         if (!Types.isUnknown(builtinType)) {
-            // TODO: We could expose this and try to use it, but for now, let's skip that.
-            // _getSymbolCategory
+            switch (builtinType.category) {
+                case TypeCategory.Function: {
+                    const symbol = this.getIntrinsicSymbol(node);
+                    this.pushNewOccurrence(node, symbol);
 
-            // TODO: We're still missing documentation for builtin functions,
-            // so that's a bit of a shame...
+                    const doc = builtinType.details.docString;
+                    this.emitExternalSymbolInformation(node, symbol, doc ? [doc] : []);
+                    return symbol;
+                }
+                case TypeCategory.OverloadedFunction: {
+                    if (!decl) {
+                        break;
+                    }
 
-            if (Types.isFunction(builtinType)) {
-                const symbol = this.getIntrinsicSymbol(node);
-                this.pushNewOccurrence(node, symbol);
+                    const overloadedSymbol = this.getScipSymbol(decl.node);
+                    this.pushNewOccurrence(node, overloadedSymbol);
 
-                const doc = builtinType.details.docString;
-                this.emitExternalSymbolInformation(node, symbol, doc ? [doc] : []);
-                return symbol;
-            } else if (Types.isOverloadedFunction(builtinType)) {
-                // TODO: Not s ure how we got this situation here w/ the decls not existing
-                const overloadedSymbol = this.getScipSymbol(decl!.node);
-                this.pushNewOccurrence(node, overloadedSymbol);
+                    const doc = builtinType.overloads.filter((overload) => overload.details.docString);
+                    const docstring = [];
+                    if (doc.length > 0 && doc[1].details.docString) {
+                        docstring.push(doc[1].details.docString);
+                    }
 
-                const doc = builtinType.overloads.filter((overload) => overload.details.docString);
-                const docstring = [];
-                if (doc.length > 0 && doc[1].details.docString) {
-                    docstring.push(doc[1].details.docString);
+                    this.emitExternalSymbolInformation(node, overloadedSymbol, docstring);
+                    return overloadedSymbol;
+                }
+                case TypeCategory.Class: {
+                    const symbol = Symbols.makeClass(this.stdlibPackage, 'builtins', node.value);
+                    this.pushNewOccurrence(node, symbol);
+
+                    const doc = builtinType.details.docString;
+                    this.emitExternalSymbolInformation(node, symbol, doc ? [doc] : []);
+                    return symbol;
+                }
+                case TypeCategory.Module: {
+                    const symbol = ScipSymbol.global(
+                        ScipSymbol.package(builtinType.moduleName, this.stdlibPackage.version),
+                        metaDescriptor('__init__')
+                    );
+
+                    this.pushNewOccurrence(node, symbol);
+
+                    // const pythonPackage = this.getPackageInfo(node, builtinType.moduleName)!;
+                    this.emitExternalSymbolInformation(node, symbol, []);
+                    return symbol;
+                }
+                case TypeCategory.None: {
+                    return ScipSymbol.empty();
+                }
+                case TypeCategory.Union: {
+                    const subType = builtinType.subtypes[0];
+                    return this.emitBuiltinScipSymbol(builtinNode, subType, decl);
                 }
 
-                this.emitExternalSymbolInformation(node, overloadedSymbol, docstring);
-                return overloadedSymbol;
-            } else if (Types.isClass(builtinType)) {
-                const symbol = Symbols.makeClass(this.stdlibPackage, 'builtins', node.value);
-                this.pushNewOccurrence(node, symbol);
+                // Not sure what to do with TypeVars to be honeest, so fail in dev mode.
+                //  We will do our best with makeScipSymbol later
+                case TypeCategory.TypeVar: {
+                    softAssert(false, 'unexpected TypeVar', builtinNode, builtinType, decl);
+                    break;
+                }
 
-                const doc = builtinType.details.docString;
-                this.emitExternalSymbolInformation(node, symbol, doc ? [doc] : []);
-                return symbol;
-            } else if (Types.isModule(builtinType)) {
-                // const pythonPackage = this.getPackageInfo(node, builtinType.moduleName)!;
-                const symbol = ScipSymbol.global(
-                    ScipSymbol.package(builtinType.moduleName, this.stdlibPackage.version),
-                    metaDescriptor('__init__')
-                );
+                // `Any` can be for things like __spec__ or other builtins that don't have a required type
+                // (or that pyright doesn't recognize). In this case, we'll follow the default behavior.
+                case TypeCategory.Any:
+                    break;
 
-                this.pushNewOccurrence(node, symbol);
-                return symbol;
-
-                // TODO: Get module documentaiton
-                // this.emitExternalSymbolInformation(node, symbol);
-            } else {
-                // TODO: IntrinsicRefactor
-                softAssert(false, 'unhandled intrinsic', node);
-                this.pushNewOccurrence(node, this.getIntrinsicSymbol(node));
+                case TypeCategory.Never:
+                case TypeCategory.Unbound:
+                    return ScipSymbol.local(this.counter.next());
             }
-
-            return ScipSymbol.local(this.counter.next());
         }
 
         return this.makeScipSymbol(this.stdlibPackage, 'builtins', node);
     }
 
-    // the pythonPackage is for the
     private makeScipSymbol(pythonPackage: PythonPackage, moduleName: string, node: ParseNode): ScipSymbol {
         switch (node.nodeType) {
-            case ParseNodeType.Module:
+            case ParseNodeType.Module: {
                 moduleName = getFileInfo(node).moduleName;
                 if (moduleName === 'builtins') {
                     return Symbols.makeModule('builtins', this.stdlibPackage);
-                }
-
-                // const version = this.getPackageInfo(node, moduleName);
-                // if (version) {
-                //     return LsifSymbol.package(moduleName, version);
-                // } else {
-                //     return LsifSymbol.local(this.counter.next());
-                // }
-                if (moduleName !== 'builtins') {
+                } else {
                     return ScipSymbol.global(
                         ScipSymbol.package(pythonPackage.name, pythonPackage.version),
                         packageDescriptor(moduleName)
                     );
                 }
-
-                // const version = this.getPackageInfo(node, moduleName);
-                const version = this.config.pythonEnvironment.getPackageForModule(moduleName)!;
-                if (!version) {
-                    return ScipSymbol.local(this.counter.next());
-                }
-
-                return ScipSymbol.global(
-                    ScipSymbol.package(version.name, version.version),
-                    packageDescriptor(moduleName)
-                );
-
-            case ParseNodeType.ModuleName:
+            }
+            case ParseNodeType.ModuleName: {
                 // from .modulename import X
                 //      ^^^^^^^^^^^ -> modulename/__init__
 
@@ -887,35 +909,26 @@ export class TreeVisitor extends ParseTreeWalker {
                     ),
                     metaDescriptor('__init__')
                 );
-
-            case ParseNodeType.MemberAccess:
-                // return this.getLsifSymbol(node.parent!);
-                log.debug('Member Access:', node.leftExpression.nodeType, node);
-                const left = node.leftExpression;
-
-                switch (left.nodeType) {
-                    case ParseNodeType.Name:
-                    // return this.getLsifSymbol(left);
-                }
-
+            }
+            case ParseNodeType.MemberAccess: {
                 softAssert(false, 'Not supposed to get a member access');
                 return ScipSymbol.empty();
-
-            case ParseNodeType.Parameter:
+            }
+            case ParseNodeType.Parameter: {
                 if (!node.name) {
                     log.debug('Paramerter with no name', node);
                     return ScipSymbol.local(this.counter.next());
                 }
 
                 return ScipSymbol.global(this.getScipSymbol(node.parent!), parameterDescriptor(node.name.value));
-
-            case ParseNodeType.Class:
+            }
+            case ParseNodeType.Class: {
                 return ScipSymbol.global(
                     this.getScipSymbol(node.parent!),
                     typeDescriptor((node as ClassNode).name.value)
                 );
-
-            case ParseNodeType.Function:
+            }
+            case ParseNodeType.Function: {
                 let cls = ParseTreeUtils.getEnclosingClass(node, false);
                 if (cls) {
                     return ScipSymbol.global(
@@ -928,8 +941,8 @@ export class TreeVisitor extends ParseTreeWalker {
                     this.getScipSymbol(node.parent!),
                     methodDescriptor((node as FunctionNode).name!.value)
                 );
-
-            case ParseNodeType.Suite:
+            }
+            case ParseNodeType.Suite: {
                 if (node.parent) {
                     return this.getScipSymbol(node.parent!);
                 }
@@ -937,18 +950,18 @@ export class TreeVisitor extends ParseTreeWalker {
                 // TODO: Not sure what to do about this...
                 //  I don't know if we ever need to include this at all.
                 return ScipSymbol.global(this.getScipSymbol(node.parent!), metaDescriptor('#'));
-
-            case ParseNodeType.Name:
+            }
+            case ParseNodeType.Name: {
                 const parent = node.parent;
                 if (!parent) {
                     throw 'must have parent';
                 }
 
                 switch (parent.nodeType) {
-                    case ParseNodeType.MemberAccess:
+                    case ParseNodeType.MemberAccess: {
                         const type = this.evaluator.getTypeOfExpression(parent.leftExpression);
                         switch (type.type.category) {
-                            case TypeCategory.TypeVar:
+                            case TypeCategory.TypeVar: {
                                 const typeVar = type.type;
                                 const bound = typeVar.details.boundType! as ClassType;
 
@@ -969,27 +982,11 @@ export class TreeVisitor extends ParseTreeWalker {
                                     this.emitSymbolInformationOnce(node, symbol);
                                     return symbol;
                                 });
+                            }
                             default:
                         }
+                    }
                 }
-
-                // const enclosingSuite = undefined;
-                // switch (parent.nodeType) {
-                //     case ParseNodeType.MemberAccess:
-                //         break;
-                //     default:
-                //         enclosingSuite = ParseTreeUtils.getEnclosingSuite(node as ParseNode);
-                //         if (enclosingSuite) {
-                //             const enclosingParent = enclosingSuite.parent;
-                //             if (enclosingParent) {
-                //                 switch (enclosingParent.nodeType) {
-                //                     case ParseNodeType.Function:
-                //                     case ParseNodeType.Lambda:
-                //                         return LsifSymbol.local(this.counter.next());
-                //                 }
-                //             }
-                //         }
-                // }
 
                 const enclosingSuite = ParseTreeUtils.getEnclosingSuite(node as ParseNode);
                 if (enclosingSuite) {
@@ -1007,31 +1004,33 @@ export class TreeVisitor extends ParseTreeWalker {
                     this.getScipSymbol(enclosingSuite || node.parent!),
                     termDescriptor((node as NameNode).value)
                 );
-
-            case ParseNodeType.TypeAnnotation:
+            }
+            case ParseNodeType.TypeAnnotation: {
                 switch (node.valueExpression.nodeType) {
-                    case ParseNodeType.Name:
+                    case ParseNodeType.Name: {
                         return ScipSymbol.global(
                             this.getScipSymbol(ParseTreeUtils.getEnclosingSuite(node) || node.parent!),
                             termDescriptor(node.valueExpression.value)
                         );
-                    default:
+                    }
+                    default: {
                         softAssert(false, 'Unhandled type annotation');
                         return ScipSymbol.local(this.counter.next());
+                    }
                 }
-
-            case ParseNodeType.FunctionAnnotation:
+            }
+            case ParseNodeType.FunctionAnnotation: {
                 return ScipSymbol.global(
                     this.getScipSymbol(node.parent!),
                     // Descriptor.term((node as TypeAnnotationNode).typeAnnotation)
                     termDescriptor('FuncAnnotation')
                 );
-
-            case ParseNodeType.Decorator:
+            }
+            case ParseNodeType.Decorator: {
                 softAssert(false, 'Should not handle decorators directly');
                 return ScipSymbol.local(this.counter.next());
-
-            case ParseNodeType.Assignment:
+            }
+            case ParseNodeType.Assignment: {
                 // TODO: Check if we have more information
                 //  Might even want to use enclosingModule
                 const enclosing = ParseTreeUtils.getEnclosingClassOrFunction(node);
@@ -1045,18 +1044,19 @@ export class TreeVisitor extends ParseTreeWalker {
 
                 return this.getScipSymbol(node.parent!);
 
-            // TODO: Handle imports better
-            // TODO: `ImportAs` is pretty broken it looks like
-            case ParseNodeType.ImportAs:
+                // TODO: Handle imports better
+                // TODO: `ImportAs` is pretty broken it looks like
+            }
+            case ParseNodeType.ImportAs: {
                 return Symbols.pythonModule(pythonPackage, moduleName);
-
-            case ParseNodeType.ImportFrom:
+            }
+            case ParseNodeType.ImportFrom: {
                 // node
                 // TODO(0.2): Resolve all these weird import things.
                 log.info('ImportFrom');
                 return ScipSymbol.empty();
-
-            case ParseNodeType.ImportFromAs:
+            }
+            case ParseNodeType.ImportFromAs: {
                 // TODO(0.2): Resolve all these weird import things.
                 const decls = this.evaluator.getDeclarationsForNameNode(node.name);
                 if (decls) {
@@ -1076,12 +1076,12 @@ export class TreeVisitor extends ParseTreeWalker {
                 const type = this.getAliasedSymbolTypeForName(node, node.name.value);
                 if (type) {
                     switch (type.category) {
-                        case TypeCategory.Module:
+                        case TypeCategory.Module: {
                             const parent = node.parent;
                             assert(parent);
 
                             switch (parent.nodeType) {
-                                case ParseNodeType.ImportFrom:
+                                case ParseNodeType.ImportFrom: {
                                     const pythonPackage =
                                         this.moduleNameNodeToPythonPackage(parent.module) || this.projectPackage;
 
@@ -1089,21 +1089,24 @@ export class TreeVisitor extends ParseTreeWalker {
                                         [...parent.module.nameParts, node.name].map((part) => part.value).join('.'),
                                         pythonPackage
                                     );
+                                }
                             }
+                        }
                     }
                 }
 
                 return ScipSymbol.local(this.counter.next());
-
-            case ParseNodeType.Lambda:
+            }
+            case ParseNodeType.Lambda: {
                 return ScipSymbol.local(this.counter.next());
-
-            case ParseNodeType.ListComprehensionFor:
+            }
+            case ParseNodeType.ListComprehensionFor: {
                 return ScipSymbol.local(this.counter.next());
-
-            case ParseNodeType.ListComprehension:
+            }
+            case ParseNodeType.ListComprehension: {
                 softAssert(false, 'Should never enter ListComprehension directly');
                 return ScipSymbol.empty();
+            }
 
             // Some nodes, it just makes sense to return whatever their parent is.
             case ParseNodeType.With:
@@ -1125,7 +1128,7 @@ export class TreeVisitor extends ParseTreeWalker {
             case ParseNodeType.StringList:
                 return this.getScipSymbol(node.parent!);
 
-            default:
+            default: {
                 softAssert(
                     false,
                     `Unhandled: ${node.nodeType}: ${ParseTreeUtils.printParseNodeType(node.nodeType)}`,
@@ -1136,6 +1139,7 @@ export class TreeVisitor extends ParseTreeWalker {
                     return ScipSymbol.local(this.counter.next());
                 }
                 return this.getScipSymbol(node.parent!);
+            }
         }
     }
 
@@ -1526,6 +1530,18 @@ function hasAncestor(node: ParseNode, ...types: ParseNodeType[]): boolean {
         }
 
         ancestor = ancestor.parent;
+    }
+
+    return false;
+}
+
+function isBuiltinModuleName(moduleName: string): boolean {
+    if (moduleName == 'builtins') {
+        return true;
+    }
+
+    if (Hardcoded.stdlib_module_names.has(moduleName)) {
+        return true;
     }
 
     return false;
