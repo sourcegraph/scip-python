@@ -66,7 +66,7 @@ import { assert } from 'pyright-internal/common/debug';
 //      import { getModuleDocString } from 'pyright-internal/analyzer/typeDocStringUtils';
 //      this.evaluator.printType(...)
 
-var errorLevel = 3;
+var errorLevel = 0;
 function softAssert(expression: any, message: string, ...exprs: any) {
     if (!expression) {
         if (errorLevel > 1) {
@@ -639,7 +639,6 @@ export class TreeVisitor extends ParseTreeWalker {
                         break;
                     }
 
-                    console.log('FUNCTION::', node.value);
                     this.pushNewOccurrence(node, this.getScipSymbol(declNode));
                     return true;
 
@@ -865,7 +864,6 @@ export class TreeVisitor extends ParseTreeWalker {
             // so that's a bit of a shame...
 
             if (Types.isFunction(builtinType)) {
-                console.log('  BUILTIN TYPE', node.value);
                 const symbol = this.getIntrinsicSymbol(node);
                 this.pushNewOccurrence(node, symbol);
 
@@ -883,7 +881,6 @@ export class TreeVisitor extends ParseTreeWalker {
                     docstring.push(doc[1].details.docString);
                 }
 
-                console.log('==> DOC:', docstring);
                 this.emitExternalSymbolInformation(node, overloadedSymbol, docstring);
                 return overloadedSymbol;
             } else if (Types.isClass(builtinType)) {
@@ -1145,7 +1142,6 @@ export class TreeVisitor extends ParseTreeWalker {
                 return ScipSymbol.empty();
 
             case ParseNodeType.ImportFromAs:
-                console.log('    IMPORT FROM AS NODE');
                 // TODO(0.2): Resolve all these weird import things.
                 const decls = this.evaluator.getDeclarationsForNameNode(node.name);
                 if (decls) {
@@ -1337,7 +1333,6 @@ export class TreeVisitor extends ParseTreeWalker {
     }
 
     private emitExternalSymbolInformation(node: ParseNode, symbol: ScipSymbol, documentation: string[]) {
-        console.log('EMIT EXTNERAL SYMBOL', symbol, documentation);
         if (this.externalSymbols.has(symbol.value)) {
             return;
         }
