@@ -58,9 +58,6 @@ export function main(): void {
                     projectVersion,
                     environment,
                     writeIndex: (partialIndex: scip.Index): void => {
-                        if (partialIndex.external_symbols.length > 0) {
-                            throw 'writing some externals';
-                        }
                         fs.writeSync(output, partialIndex.serializeBinary());
                     },
                 });
