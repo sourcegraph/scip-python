@@ -12,6 +12,9 @@ class SuchNestedMuchWow:
 #               > (variable) class_item: Literal[42]
 #               > ```
 #               ^^^ reference  python-stdlib 3.10 builtins/int#
+#               external documentation ```python
+#                           > (class) int
+#                           > ```
 
 class AnotherNestedMuchWow:
 #     ^^^^^^^^^^^^^^^^^^^^ definition  snapshot-util 0.1 `src.foo.bar.baz.mod`/AnotherNestedMuchWow#

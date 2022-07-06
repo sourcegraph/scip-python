@@ -30,7 +30,13 @@ _ = {k: x for (k, x) in enumerate(range(10))}
 #              ^ definition local 3
 #                 ^ definition local 4
 #                       ^^^^^^^^^ reference  python-stdlib 3.10 builtins/enumerate#
+#                       external documentation ```python
+#                                   > (class) enumerate(iterable: Iterable[int...
+#                                   > ```
 #                                 ^^^^^ reference  python-stdlib 3.10 builtins/range#
+#                                 external documentation ```python
+#                                             > (class) range
+#                                             > ```
 
 
 asdf = (var for var in [1, 2, 3] if var % 2 == 0)
@@ -46,6 +52,12 @@ for var in asdf:
 #          ^^^^ reference  snapshot-util 0.1 comp/asdf.
     print(var)
 #   ^^^^^ reference  python-stdlib 3.10 builtins/__init__:print().
+#   external documentation ```python
+#               > (function)
+#               > print(*values: object, sep: str | None =...
+#               > 
+#               > print(*values: object, sep: str | None =...
+#               > ```
 #         ^^^ reference  snapshot-util 0.1 comp/var.
 
 # TODO: ListComprehensions with if

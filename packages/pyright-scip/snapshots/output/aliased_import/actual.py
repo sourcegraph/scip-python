@@ -9,6 +9,12 @@ import aliased as A
 
 print(A.SOME_CONSTANT)
 #^^^^ reference  python-stdlib 3.10 builtins/__init__:print().
+#external documentation ```python
+#            > (function)
+#            > print(*values: object, sep: str | None =...
+#            > 
+#            > print(*values: object, sep: str | None =...
+#            > ```
 #     ^ reference local 0
 #       ^^^^^^^^^^^^^ reference  snapshot-util 0.1 aliased/SOME_CONSTANT.
 

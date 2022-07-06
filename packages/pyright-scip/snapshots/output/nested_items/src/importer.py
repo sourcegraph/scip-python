@@ -11,6 +11,12 @@ from foo.bar.baz.mod import SuchNestedMuchWow, AnotherNestedMuchWow
 
 print(SuchNestedMuchWow().class_item)
 #^^^^ reference  python-stdlib 3.10 builtins/__init__:print().
+#external documentation ```python
+#            > (function)
+#            > print(*values: object, sep: str | None =...
+#            > 
+#            > print(*values: object, sep: str | None =...
+#            > ```
 #     ^^^^^^^^^^^^^^^^^ reference  snapshot-util 0.1 `src.foo.bar.baz.mod`/SuchNestedMuchWow#
 #                         ^^^^^^^^^^ reference  snapshot-util 0.1 `src.foo.bar.baz.mod`/SuchNestedMuchWow#class_item.
 print(AnotherNestedMuchWow().other_item)

@@ -11,6 +11,12 @@ from typing import Callable, Match, Optional
 
 print(re, Callable, Match, Optional)
 #^^^^ reference  python-stdlib 3.10 builtins/__init__:print().
+#external documentation ```python
+#            > (function)
+#            > print(*values: object, sep: str | None =...
+#            > 
+#            > print(*values: object, sep: str | None =...
+#            > ```
 #     ^^ reference  python-stdlib 3.10 re/__init__:
 #         ^^^^^^^^ reference  python-stdlib 3.10 typing/Callable.
 #                   ^^^^^ reference  python-stdlib 3.10 typing/Match#

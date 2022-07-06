@@ -40,7 +40,7 @@ export function formatSnapshot(
     const out: string[] = [];
     const symbolTable = getSymbolTable(doc);
 
-    const externalSymbolTable = new Map();
+    const externalSymbolTable: Map<string, scip.SymbolInformation> = new Map();
     for (let externalSymbol of externalSymbols) {
         externalSymbolTable.set(externalSymbol.symbol, externalSymbol);
     }
@@ -71,7 +71,25 @@ export function formatSnapshot(
 
         const externalSymbol = externalSymbolTable.get(symbol);
         if (externalSymbol) {
-            throw 'asdfasdf external symbol';
+            let docPrefix = '\n' + commentSyntax;
+            if (!isStartOfLine) {
+                docPrefix += ' '.repeat(range.start.character - 1);
+            }
+
+            for (const documentation of externalSymbol.documentation) {
+                for (const [idx, line] of documentation.split('\n').entries()) {
+                    out.push(docPrefix);
+                    if (idx == 0) {
+                        out.push('external documentation ');
+                    } else {
+                        out.push('            > ');
+                    }
+                    out.push(line.slice(0, 40));
+                    if (line.length > 40) {
+                        out.push('...');
+                    }
+                }
+            }
         } else {
             const info = symbolTable.get(symbol);
             if (info) {

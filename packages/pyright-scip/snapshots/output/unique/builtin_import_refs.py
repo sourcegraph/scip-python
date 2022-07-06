@@ -7,5 +7,11 @@ from typing import Any
 
 print(Any)
 #^^^^ reference  python-stdlib 3.10 builtins/__init__:print().
+#external documentation ```python
+#            > (function)
+#            > print(*values: object, sep: str | None =...
+#            > 
+#            > print(*values: object, sep: str | None =...
+#            > ```
 #     ^^^ reference  python-stdlib 3.10 typing/Any.
 

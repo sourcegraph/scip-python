@@ -13,6 +13,9 @@ class Example:
 #               > (variable) y: int
 #               > ```
 #      ^^^ reference  python-stdlib 3.10 builtins/int#
+#      external documentation ```python
+#                  > (class) int
+#                  > ```
 
     def __init__(self, in_val):
 #       ^^^^^^^^ definition  snapshot-util 0.1 class_nohint/Example#__init__().
@@ -51,6 +54,12 @@ class Example:
 #                 ^^^^ definition  snapshot-util 0.1 class_nohint/Example#something().(self)
         print(self.x)
 #       ^^^^^ reference  python-stdlib 3.10 builtins/__init__:print().
+#       external documentation ```python
+#                   > (function)
+#                   > print(*values: object, sep: str | None =...
+#                   > 
+#                   > print(*values: object, sep: str | None =...
+#                   > ```
 #             ^^^^ reference  snapshot-util 0.1 class_nohint/Example#something().(self)
 #                  ^ reference  snapshot-util 0.1 class_nohint/Example#x.
         print(self.y)

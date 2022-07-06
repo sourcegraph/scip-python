@@ -7,6 +7,12 @@ from xyz import nested_file
 
 print(nested_file.X)
 #^^^^ reference  python-stdlib 3.10 builtins/__init__:print().
+#external documentation ```python
+#            > (function)
+#            > print(*values: object, sep: str | None =...
+#            > 
+#            > print(*values: object, sep: str | None =...
+#            > ```
 #     ^^^^^^^^^^^ reference  snapshot-util 0.1 `xyz.nested_file`/__init__:
 #                 ^ reference  snapshot-util 0.1 `xyz.nested_file`/X.
 

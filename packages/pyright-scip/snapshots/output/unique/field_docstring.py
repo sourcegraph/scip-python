@@ -16,5 +16,8 @@ class ClassWithField:
 #               > 
 #   documentation Hello world, this is a
 #      ^^^ reference  python-stdlib 3.10 builtins/int#
+#      external documentation ```python
+#                  > (class) int
+#                  > ```
     """Hello world, this is a"""
 

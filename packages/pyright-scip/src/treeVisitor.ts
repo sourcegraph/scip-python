@@ -43,7 +43,12 @@ import * as Types from 'pyright-internal/analyzer/types';
 import { TypeStubExtendedWriter } from './TypeStubExtendedWriter';
 import { SourceFile } from 'pyright-internal/analyzer/sourceFile';
 import { extractParameterDocumentation } from 'pyright-internal/analyzer/docStringUtils';
-import { DeclarationType, isAliasDeclaration, isIntrinsicDeclaration } from 'pyright-internal/analyzer/declaration';
+import {
+    Declaration,
+    DeclarationType,
+    isAliasDeclaration,
+    isIntrinsicDeclaration,
+} from 'pyright-internal/analyzer/declaration';
 import { ConfigOptions, ExecutionEnvironment } from 'pyright-internal/common/configOptions';
 import { versionToString } from 'pyright-internal/common/pythonVersion';
 import { Program } from 'pyright-internal/analyzer/program';
@@ -61,7 +66,7 @@ import { assert } from 'pyright-internal/common/debug';
 //      import { getModuleDocString } from 'pyright-internal/analyzer/typeDocStringUtils';
 //      this.evaluator.printType(...)
 
-var errorLevel = 0;
+var errorLevel = 3;
 function softAssert(expression: any, message: string, ...exprs: any) {
     if (!expression) {
         if (errorLevel > 1) {
@@ -501,7 +506,7 @@ export class TreeVisitor extends ParseTreeWalker {
             throw `No parent for named node: ${node.token.value}`;
         }
 
-        if (node.token.value == '_') {
+        if (node.token.value === '_') {
             return true;
         }
 
@@ -511,7 +516,6 @@ export class TreeVisitor extends ParseTreeWalker {
         const decls = this.evaluator.getDeclarationsForNameNode(node) || [];
         if (decls.length > 0) {
             // TODO(multi_decls)
-
             const decl = decls[0];
             if (!decl.node) {
                 switch (parent.nodeType) {
@@ -556,6 +560,16 @@ export class TreeVisitor extends ParseTreeWalker {
             log.debug('    decl type::', ParseTreeUtils.printParseNodeType(decl.node.nodeType));
 
             const isDefinition = decl.node.id === node.parent!.id;
+
+            const builtinType = this.evaluator.getBuiltInType(node, node.value);
+            const isBuiltinType = !Types.isUnknown(builtinType);
+            if (isBuiltinType) {
+                const builtinSymbol = this.makeBuiltinScipSymbol(node, builtinType, decl);
+                this.emitExternalSymbolInformation(node, builtinSymbol, []);
+                // this.pushNewOccurrence(node, builtinSymbol);
+                return true;
+            }
+
             const declNode = decl.node;
             switch (declNode.nodeType) {
                 case ParseNodeType.ImportAs:
@@ -724,54 +738,7 @@ export class TreeVisitor extends ParseTreeWalker {
                 return true;
             }
 
-            const builtinType = this.evaluator.getBuiltInType(node, node.value);
             // const pyrightSymbol = this.evaluator.lookUpSymbolRecursive(node, node.value, true);
-
-            if (!Types.isUnknown(builtinType)) {
-                // TODO: We could expose this and try to use it, but for now, let's skip that.
-                // _getSymbolCategory
-
-                // TODO: We're still missing documentation for builtin functions,
-                // so that's a bit of a shame...
-
-                if (Types.isFunction(builtinType)) {
-                    console.log('  BUILTIN TYPE', node.value);
-                    const symbol = this.getIntrinsicSymbol(node);
-                    this.pushNewOccurrence(node, symbol);
-
-                    const doc = builtinType.details.docString;
-                    this.emitExternalSymbolInformation(node, symbol, doc ? [doc] : []);
-                } else if (Types.isOverloadedFunction(builtinType)) {
-                    const overloadedSymbol = this.getScipSymbol(decl.node);
-                    this.pushNewOccurrence(node, overloadedSymbol);
-
-                    const doc = builtinType.overloads[0].details.docString;
-                    this.emitExternalSymbolInformation(node, overloadedSymbol, doc ? [doc] : []);
-                } else if (Types.isClass(builtinType)) {
-                    const symbol = Symbols.makeClass(this.stdlibPackage, 'builtins', node.value);
-                    this.pushNewOccurrence(node, symbol);
-
-                    const doc = builtinType.details.docString;
-                    this.emitExternalSymbolInformation(node, symbol, doc ? [doc] : []);
-                } else if (Types.isModule(builtinType)) {
-                    // const pythonPackage = this.getPackageInfo(node, builtinType.moduleName)!;
-                    const symbol = ScipSymbol.global(
-                        ScipSymbol.package(builtinType.moduleName, this.stdlibPackage.version),
-                        metaDescriptor('__init__')
-                    );
-
-                    this.pushNewOccurrence(node, symbol);
-
-                    // TODO: Get module documentaiton
-                    // this.emitExternalSymbolInformation(node, symbol);
-                } else {
-                    // TODO: IntrinsicRefactor
-                    softAssert(false, 'unhandled intrinsic', node);
-                    this.pushNewOccurrence(node, this.getIntrinsicSymbol(node));
-                }
-
-                return true;
-            }
 
             // TODO: WriteAccess isn't really implemented yet on my side
             // Now this must be a reference, so let's reference the right thing.
@@ -838,7 +805,7 @@ export class TreeVisitor extends ParseTreeWalker {
 
             moduleName = nodeFileInfo.moduleName;
             if (moduleName == 'builtins') {
-                return this.makeBuiltinScipSymbol(node, nodeFileInfo);
+                return this.makeBuiltinScipSymbol(node);
             } else if (Hardcoded.stdlib_module_names.has(moduleName)) {
                 // return this.makeBuiltinLsifSymbol(node, nodeFileInfo);
                 return this.makeScipSymbol(this.stdlibPackage, moduleName, node);
@@ -878,14 +845,17 @@ export class TreeVisitor extends ParseTreeWalker {
         return ScipSymbol.local(this.counter.next());
     }
 
-    private makeBuiltinScipSymbol(builtinNode: ParseNode, _info: AnalyzerFileInfo): ScipSymbol {
+    private makeBuiltinScipSymbol(
+        builtinNode: ParseNode,
+        builtinType: Type | undefined = undefined,
+        decl: Declaration | undefined = undefined
+    ): ScipSymbol {
         // TODO: Can handle special cases here if we need to.
         //  Hopefully we will not need any though.
         const node = builtinNode as NameNode;
-        const builtinType = this.evaluator.getBuiltInType(node, node.value);
-        console.log("BUILTIN TYPE", ParseTreeUtils.printParseNodeType(builtinNode.nodeType),  builtinType);
-        // const pyrightSymbol = this.evaluator.lookUpSymbolRecursive(node, node.value, true);
-
+        if (builtinType === undefined) {
+            builtinType = this.evaluator.getBuiltInType(node, node.value);
+        }
 
         if (!Types.isUnknown(builtinType)) {
             // TODO: We could expose this and try to use it, but for now, let's skip that.
@@ -901,18 +871,28 @@ export class TreeVisitor extends ParseTreeWalker {
 
                 const doc = builtinType.details.docString;
                 this.emitExternalSymbolInformation(node, symbol, doc ? [doc] : []);
+                return symbol;
             } else if (Types.isOverloadedFunction(builtinType)) {
-                const overloadedSymbol = this.getScipSymbol(decl.node);
+                // TODO: Not s ure how we got this situation here w/ the decls not existing
+                const overloadedSymbol = this.getScipSymbol(decl!.node);
                 this.pushNewOccurrence(node, overloadedSymbol);
 
-                const doc = builtinType.overloads[0].details.docString;
-                this.emitExternalSymbolInformation(node, overloadedSymbol, doc ? [doc] : []);
+                const doc = builtinType.overloads.filter((overload) => overload.details.docString);
+                const docstring = [];
+                if (doc.length > 0 && doc[1].details.docString) {
+                    docstring.push(doc[1].details.docString);
+                }
+
+                console.log('==> DOC:', docstring);
+                this.emitExternalSymbolInformation(node, overloadedSymbol, docstring);
+                return overloadedSymbol;
             } else if (Types.isClass(builtinType)) {
                 const symbol = Symbols.makeClass(this.stdlibPackage, 'builtins', node.value);
                 this.pushNewOccurrence(node, symbol);
 
                 const doc = builtinType.details.docString;
                 this.emitExternalSymbolInformation(node, symbol, doc ? [doc] : []);
+                return symbol;
             } else if (Types.isModule(builtinType)) {
                 // const pythonPackage = this.getPackageInfo(node, builtinType.moduleName)!;
                 const symbol = ScipSymbol.global(
@@ -921,6 +901,7 @@ export class TreeVisitor extends ParseTreeWalker {
                 );
 
                 this.pushNewOccurrence(node, symbol);
+                return symbol;
 
                 // TODO: Get module documentaiton
                 // this.emitExternalSymbolInformation(node, symbol);
@@ -930,7 +911,7 @@ export class TreeVisitor extends ParseTreeWalker {
                 this.pushNewOccurrence(node, this.getIntrinsicSymbol(node));
             }
 
-            return true;
+            return ScipSymbol.local(this.counter.next());
         }
 
         return this.makeScipSymbol(this.stdlibPackage, 'builtins', node);
@@ -1355,13 +1336,27 @@ export class TreeVisitor extends ParseTreeWalker {
         return this.config.pythonEnvironment.getPackageForModule(moduleName);
     }
 
-    private emitExternalSymbolInformation(_node: ParseNode, symbol: ScipSymbol, documentation: string[]) {
+    private emitExternalSymbolInformation(node: ParseNode, symbol: ScipSymbol, documentation: string[]) {
         console.log('EMIT EXTNERAL SYMBOL', symbol, documentation);
-        if (documentation.length === 0) {
+        if (this.externalSymbols.has(symbol.value)) {
             return;
         }
 
-        if (this.externalSymbols.has(symbol.value)) {
+        if (documentation.length === 0) {
+            const nodeFileInfo = getFileInfo(node)!;
+            const hoverResult = this.program.getHoverForPosition(
+                nodeFileInfo.filePath,
+                convertOffsetToPosition(node.start, nodeFileInfo.lines),
+                'markdown',
+                token
+            );
+
+            if (hoverResult) {
+                documentation = _formatHover(hoverResult!);
+            }
+        }
+
+        if (documentation.length === 0) {
             return;
         }
 

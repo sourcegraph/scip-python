@@ -58,6 +58,9 @@ export function main(): void {
                     projectVersion,
                     environment,
                     writeIndex: (partialIndex: scip.Index): void => {
+                        if (partialIndex.external_symbols.length > 0) {
+                            throw 'writing some externals';
+                        }
                         fs.writeSync(output, partialIndex.serializeBinary());
                     },
                 });
@@ -114,8 +117,8 @@ export function main(): void {
                 process.chdir(projectRoot);
 
                 const scipBinaryFile = path.join(projectRoot, options.output);
+                const output = fs.openSync(scipBinaryFile, 'w');
 
-                let scipIndex = new scip.Index();
                 if (options.index) {
                     let indexer = new Indexer({
                         ...options,
@@ -125,20 +128,15 @@ export function main(): void {
                         projectVersion,
                         environment,
                         writeIndex: (partialIndex: any): void => {
-                            if (partialIndex.metadata) {
-                                scipIndex.metadata = partialIndex.metadata;
-                            }
-                            for (const doc of partialIndex.documents) {
-                                scipIndex.documents.push(doc);
-                            }
+                            fs.writeSync(output, partialIndex.serializeBinary());
                         },
                     });
                     indexer.index();
-                    fs.writeFileSync(scipBinaryFile, scipIndex.serializeBinary());
-                } else {
-                    const contents = fs.readFileSync(scipBinaryFile);
-                    scipIndex = scip.Index.deserializeBinary(contents);
+                    fs.close(output);
                 }
+
+                const contents = fs.readFileSync(scipBinaryFile);
+                const scipIndex = scip.Index.deserializeBinary(contents);
 
                 for (const doc of scipIndex.documents) {
                     if (doc.relative_path.startsWith('..')) {

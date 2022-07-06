@@ -3,8 +3,17 @@
 
 
 if __name__ == '__main__':
-#  ^^^^^^^^ reference local 0
+#  ^^^^^^^^ reference  python-stdlib 3.10 builtins/__name__#
+#  external documentation ```python
+#              > __name__: str
+#              > ```
     print("main")
 #   ^^^^^ reference  python-stdlib 3.10 builtins/__init__:print().
+#   external documentation ```python
+#               > (function)
+#               > print(*values: object, sep: str | None =...
+#               > 
+#               > print(*values: object, sep: str | None =...
+#               > ```
 
 
