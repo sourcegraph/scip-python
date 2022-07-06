@@ -396,7 +396,7 @@ export class TreeVisitor extends ParseTreeWalker {
         this.document.occurrences.push(
             new scip.Occurrence({
                 symbol_roles: scip.SymbolRole.ReadAccess,
-                symbol: this.getScipSymbol(node.module).value,
+                symbol: this.getScipSymbol(node).value,
                 range: parseNodeToRange(node.module, this.fileInfo!.lines).toLsif(),
             })
         );
@@ -1043,18 +1043,17 @@ export class TreeVisitor extends ParseTreeWalker {
                 }
 
                 return this.getScipSymbol(node.parent!);
-
-                // TODO: Handle imports better
-                // TODO: `ImportAs` is pretty broken it looks like
             }
             case ParseNodeType.ImportAs: {
                 return Symbols.pythonModule(pythonPackage, moduleName);
             }
             case ParseNodeType.ImportFrom: {
-                // node
-                // TODO(0.2): Resolve all these weird import things.
-                log.info('ImportFrom');
-                return ScipSymbol.empty();
+                const importPackage = this.moduleNameNodeToPythonPackage(node.module);
+                if (!importPackage) {
+                    return this.getScipSymbol(node.module);
+                }
+
+                return this.makeScipSymbol(importPackage, _formatModuleName(node.module), node.module);
             }
             case ParseNodeType.ImportFromAs: {
                 // TODO(0.2): Resolve all these weird import things.
