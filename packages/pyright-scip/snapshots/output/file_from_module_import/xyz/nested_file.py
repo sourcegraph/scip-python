@@ -1,4 +1,4 @@
-# < definition scip-python pypi snapshot-util 0.1 `xyz.nested_file`/__init__:
+# < definition scip-python python snapshot-util 0.1 `xyz.nested_file`/__init__:
 #documentation (module) xyz.nested_file
 
 X = "a constant"

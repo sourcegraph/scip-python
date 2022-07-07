@@ -1,4 +1,4 @@
-# < definition scip-python pypi snapshot-util 0.1 `src.foo.bar`/__init__:
+# < definition scip-python python snapshot-util 0.1 `src.foo.bar`/__init__:
 #documentation (module) src.foo.bar
 
 class InitClass:

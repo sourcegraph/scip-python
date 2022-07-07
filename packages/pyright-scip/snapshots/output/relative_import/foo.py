@@ -1,4 +1,4 @@
-# < definition scip-python pypi snapshot-util 0.1 foo/__init__:
+# < definition scip-python python snapshot-util 0.1 foo/__init__:
 #documentation (module) foo
 
 def exported_function():

@@ -1,4 +1,4 @@
-# < definition scip-python pypi snapshot-util 0.1 inferred_field_docstring/__init__:
+# < definition scip-python python snapshot-util 0.1 inferred_field_docstring/__init__:
 #documentation (module) inferred_field_docstring
 
 class ClassWithInferredField:
@@ -17,7 +17,7 @@ class ClassWithInferredField:
 #                ^^^^ definition  snapshot-util 0.1 inferred_field_docstring/ClassWithInferredField#__init__().(self)
 #                      ^ definition  snapshot-util 0.1 inferred_field_docstring/ClassWithInferredField#__init__().(b)
 #                         ^^^ reference  python-stdlib 3.10 builtins/int#
-#                         documentation ```python
+#                         external documentation ```python
 #                                     > (class) int
 #                                     > ```
         self.b = b

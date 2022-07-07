@@ -1,4 +1,4 @@
-# < definition scip-python pypi snapshot-util 0.1 module_docstring/__init__:
+# < definition scip-python python snapshot-util 0.1 module_docstring/__init__:
 #documentation (module) module_docstring
 #documentation This is a docstring for this module
 

@@ -9,7 +9,7 @@ import { IndexResults } from 'pyright-internal/languageService/documentSymbolPro
 import { TreeVisitor } from './treeVisitor';
 import { FullAccessHost } from 'pyright-internal/common/fullAccessHost';
 import * as url from 'url';
-import { lsiftyped, ScipConfig } from './lib';
+import { ScipConfig } from './lib';
 import { SourceFile } from 'pyright-internal/analyzer/sourceFile';
 import { Counter } from './lsif-typescript/Counter';
 import { getTypeShedFallbackPath } from 'pyright-internal/analyzer/pythonPathUtils';
@@ -19,6 +19,7 @@ import { version } from 'package.json';
 import { getFileSpec } from 'pyright-internal/common/pathUtils';
 import { FileMatcher } from './FileMatcher';
 import { withStatus } from './status';
+import { scip } from './scip';
 
 export class Indexer {
     program: Program;
@@ -86,11 +87,11 @@ export class Indexer {
 
         // Emit metadata
         this.scipConfig.writeIndex(
-            new lsiftyped.Index({
-                metadata: new lsiftyped.Metadata({
+            new scip.Index({
+                metadata: new scip.Metadata({
                     project_root: url.pathToFileURL(this.scipConfig.workspaceRoot).toString(),
-                    text_document_encoding: lsiftyped.TextEncoding.UTF8,
-                    tool_info: new lsiftyped.ToolInfo({
+                    text_document_encoding: scip.TextEncoding.UTF8,
+                    tool_info: new scip.ToolInfo({
                         name: 'scip-python',
                         version,
                         arguments: [],
@@ -134,13 +135,14 @@ export class Indexer {
 
         while (this.program.analyze()) {}
 
+        let externalSymbols: Map<string, scip.SymbolInformation> = new Map();
         withStatus('Parse and emit SCIP', (spinner) => {
             const typeEvaluator = this.program.evaluator!;
             projectSourceFiles.forEach((sourceFile) => {
                 spinner.render();
 
                 const filepath = sourceFile.getFilePath();
-                let doc = new lsiftyped.Document({
+                let doc = new scip.Document({
                     relative_path: path.relative(this.scipConfig.workspaceRoot, filepath),
                 });
 
@@ -149,6 +151,7 @@ export class Indexer {
 
                 let visitor = new TreeVisitor({
                     document: doc,
+                    externalSymbols,
                     sourceFile: sourceFile,
                     evaluator: typeEvaluator,
                     program: this.program,
@@ -165,11 +168,15 @@ export class Indexer {
                 }
 
                 this.scipConfig.writeIndex(
-                    new lsiftyped.Index({
+                    new scip.Index({
                         documents: [doc],
                     })
                 );
             });
+
+            const externalSymbolIndex = new scip.Index();
+            externalSymbolIndex.external_symbols = Array.from(externalSymbols.values());
+            this.scipConfig.writeIndex(externalSymbolIndex);
         });
     }
 }

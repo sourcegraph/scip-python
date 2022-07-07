@@ -1,4 +1,4 @@
-# < definition scip-python pypi snapshot-util 0.1 `src.foo.bar.baz.mod`/__init__:
+# < definition scip-python python snapshot-util 0.1 `src.foo.bar.baz.mod`/__init__:
 #documentation (module) src.foo.bar.baz.mod
 
 class SuchNestedMuchWow:
@@ -12,7 +12,19 @@ class SuchNestedMuchWow:
 #               > (variable) class_item: Literal[42]
 #               > ```
 #               ^^^ reference  python-stdlib 3.10 builtins/int#
-#               documentation ```python
+#               external documentation ```python
 #                           > (class) int
 #                           > ```
+
+class AnotherNestedMuchWow:
+#     ^^^^^^^^^^^^^^^^^^^^ definition  snapshot-util 0.1 `src.foo.bar.baz.mod`/AnotherNestedMuchWow#
+#     documentation ```python
+#                 > class AnotherNestedMuchWow:
+#                 > ```
+    other_item: int = 42
+#   ^^^^^^^^^^ definition  snapshot-util 0.1 `src.foo.bar.baz.mod`/AnotherNestedMuchWow#other_item.
+#   documentation ```python
+#               > (variable) other_item: Literal[42]
+#               > ```
+#               ^^^ reference  python-stdlib 3.10 builtins/int#
 

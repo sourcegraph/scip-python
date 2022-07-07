@@ -2,14 +2,14 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as child_process from 'child_process';
 
-import { lib } from './lsif';
+import { scip } from './scip';
 import { diffSnapshot, formatSnapshot, writeSnapshot } from './lib';
 import { Input } from './lsif-typescript/Input';
 import { join } from 'path';
 import { mainCommand } from './MainCommand';
 import { withStatus, statusConfig } from './status';
-import getEnvironment from './virtualenv/environment';
 import { Indexer } from './indexer';
+import { exit } from 'process';
 
 export function main(): void {
     const command = mainCommand(
@@ -17,6 +17,7 @@ export function main(): void {
             if (!options.progressBar) {
                 statusConfig.showProgress = false;
             }
+            statusConfig.showProgress = false;
 
             const workspaceRoot = options.cwd;
             const snapshotDir = options.snapshotDir;
@@ -45,7 +46,8 @@ export function main(): void {
                 }
             }
 
-            const scipIndex = new lib.codeintel.lsiftyped.Index();
+            const outputFile = path.join(projectRoot, options.output);
+            const output = fs.openSync(outputFile, 'w');
 
             console.log('Indexing Dir:', projectRoot, ' // version:', projectVersion);
 
@@ -57,27 +59,21 @@ export function main(): void {
                     projectName,
                     projectVersion,
                     environment,
-                    writeIndex: (partialIndex: any): void => {
-                        if (partialIndex.metadata) {
-                            scipIndex.metadata = partialIndex.metadata;
-                        }
-                        for (const doc of partialIndex.documents) {
-                            scipIndex.documents.push(doc);
-                        }
+                    writeIndex: (partialIndex: scip.Index): void => {
+                        fs.writeSync(output, partialIndex.serializeBinary());
                     },
                 });
 
                 indexer.index();
             } catch (e) {
                 console.warn('Experienced Fatal Error While Indexing: Please create an issue:', e);
-                return;
+                exit(1);
             }
 
-            withStatus('Writing to ' + path.join(projectRoot, options.output), () => {
-                fs.writeFileSync(path.join(projectRoot, options.output), scipIndex.serializeBinary());
-            });
+            fs.close(output);
 
             if (snapshotDir) {
+                const scipIndex = scip.Index.deserializeBinary(fs.readFileSync(options.output));
                 for (const doc of scipIndex.documents) {
                     if (doc.relative_path.startsWith('..')) {
                         console.log('Skipping Doc:', doc.relative_path);
@@ -86,7 +82,7 @@ export function main(): void {
 
                     const inputPath = path.join(projectRoot, doc.relative_path);
                     const input = Input.fromFile(inputPath);
-                    const obtained = formatSnapshot(input, doc);
+                    const obtained = formatSnapshot(input, doc, scipIndex.external_symbols);
                     const relativeToInputDirectory = path.relative(projectRoot, inputPath);
                     const outputPath = path.resolve(snapshotDir, relativeToInputDirectory);
                     writeSnapshot(outputPath, obtained);
@@ -94,9 +90,12 @@ export function main(): void {
             }
         },
         (snapshotRoot, options) => {
+            statusConfig.showProgress = false;
+
+            console.log('... Snapshotting ... ');
             const projectName = options.projectName;
             const projectVersion = options.projectVersion;
-            const environment = path.resolve(options.environment);
+            const environment = options.environment ? path.resolve(options.environment) : undefined;
 
             const snapshotOnly = options.only;
 
@@ -118,27 +117,27 @@ export function main(): void {
                 projectRoot = path.resolve(projectRoot);
                 process.chdir(projectRoot);
 
-                const scipIndex = new lib.codeintel.lsiftyped.Index();
-                let indexer = new Indexer({
-                    ...options,
-                    workspaceRoot: projectRoot,
-                    projectRoot,
-                    projectName,
-                    projectVersion,
-                    environment,
-                    writeIndex: (partialIndex: any): void => {
-                        if (partialIndex.metadata) {
-                            scipIndex.metadata = partialIndex.metadata;
-                        }
-                        for (const doc of partialIndex.documents) {
-                            scipIndex.documents.push(doc);
-                        }
-                    },
-                });
-                indexer.index();
-
                 const scipBinaryFile = path.join(projectRoot, options.output);
-                fs.writeFileSync(scipBinaryFile, scipIndex.serializeBinary());
+                const output = fs.openSync(scipBinaryFile, 'w');
+
+                if (options.index) {
+                    let indexer = new Indexer({
+                        ...options,
+                        workspaceRoot: projectRoot,
+                        projectRoot,
+                        projectName,
+                        projectVersion,
+                        environment,
+                        writeIndex: (partialIndex: any): void => {
+                            fs.writeSync(output, partialIndex.serializeBinary());
+                        },
+                    });
+                    indexer.index();
+                    fs.close(output);
+                }
+
+                const contents = fs.readFileSync(scipBinaryFile);
+                const scipIndex = scip.Index.deserializeBinary(contents);
 
                 for (const doc of scipIndex.documents) {
                     if (doc.relative_path.startsWith('..')) {
@@ -147,7 +146,7 @@ export function main(): void {
 
                     const inputPath = path.join(projectRoot, doc.relative_path);
                     const input = Input.fromFile(inputPath);
-                    const obtained = formatSnapshot(input, doc);
+                    const obtained = formatSnapshot(input, doc, scipIndex.external_symbols);
                     const relativeToInputDirectory = path.relative(projectRoot, inputPath);
                     const outputPath = path.resolve(outputDirectory, snapshotDir, relativeToInputDirectory);
 

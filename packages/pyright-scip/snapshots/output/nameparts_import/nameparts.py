@@ -1,4 +1,4 @@
-# < definition scip-python pypi snapshot-util 0.1 nameparts/__init__:
+# < definition scip-python python snapshot-util 0.1 nameparts/__init__:
 #documentation (module) nameparts
 
 import importlib.resources
@@ -16,6 +16,6 @@ importlib.resources.read_text('pre_commit.resources', 'filename')
 #                               > ) -> str:
 #                               > ```
 importlib.resources.read_text('pre_commit.resources', 'filename')
-#^^^^^^^^^^^^^^^^^^ reference  python-stdlib 3.10 `importlib.resources`/__init__:
+#^^^^^^^^ reference  python-stdlib 3.10 `importlib.resources`/__init__:
 #                   ^^^^^^^^^ reference local 0
 

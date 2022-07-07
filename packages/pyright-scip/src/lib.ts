@@ -1,14 +1,12 @@
-import { createTwoFilesPatch, diffLines } from 'diff';
+import { createTwoFilesPatch } from 'diff';
 import * as fs from 'fs';
 import * as path from 'path';
 import { exit } from 'process';
 
-import { lib } from './lsif';
+import { scip } from './scip';
 import { Input } from './lsif-typescript/Input';
 import { Range } from './lsif-typescript/Range';
 import { IndexOptions } from './MainCommand';
-
-export const lsiftyped = lib.codeintel.lsiftyped;
 
 export interface ScipConfig extends IndexOptions {
     /**
@@ -20,10 +18,10 @@ export interface ScipConfig extends IndexOptions {
 
     projectRoot: string;
 
-    writeIndex: (index: lib.codeintel.lsiftyped.Index) => void;
+    writeIndex: (index: scip.Index) => void;
 }
 
-function getSymbolTable(doc: lib.codeintel.lsiftyped.Document): Map<string, lib.codeintel.lsiftyped.SymbolInformation> {
+function getSymbolTable(doc: scip.Document): Map<string, scip.SymbolInformation> {
     let symbolTable = new Map();
     for (const symbol of doc.symbols) {
         symbolTable.set(symbol.symbol, symbol);
@@ -31,16 +29,25 @@ function getSymbolTable(doc: lib.codeintel.lsiftyped.Document): Map<string, lib.
     return symbolTable;
 }
 
-const packageName = 'scip-python pypi';
+const packageName = 'scip-python python';
 const commentSyntax = '#';
 
-export function formatSnapshot(input: Input, doc: lib.codeintel.lsiftyped.Document): string {
+export function formatSnapshot(
+    input: Input,
+    doc: scip.Document,
+    externalSymbols: scip.SymbolInformation[] = []
+): string {
     const out: string[] = [];
     const symbolTable = getSymbolTable(doc);
 
+    const externalSymbolTable: Map<string, scip.SymbolInformation> = new Map();
+    for (let externalSymbol of externalSymbols) {
+        externalSymbolTable.set(externalSymbol.symbol, externalSymbol);
+    }
+
     const symbolsWithDefinitions: Set<string> = new Set();
     for (let occurrence of doc.occurrences) {
-        const isDefinition = (occurrence.symbol_roles & lsiftyped.SymbolRole.Definition) > 0;
+        const isDefinition = (occurrence.symbol_roles & scip.SymbolRole.Definition) > 0;
         if (isDefinition) {
             symbolsWithDefinitions.add(occurrence.symbol);
         }
@@ -62,22 +69,45 @@ export function formatSnapshot(input: Input, doc: lib.codeintel.lsiftyped.Docume
 
         emittedDocstrings.add(symbol);
 
-        const info = symbolTable.get(symbol);
-        if (info) {
+        const externalSymbol = externalSymbolTable.get(symbol);
+        if (externalSymbol) {
             let docPrefix = '\n' + commentSyntax;
             if (!isStartOfLine) {
                 docPrefix += ' '.repeat(range.start.character - 1);
             }
 
-            for (const documentation of info.documentation) {
+            for (const documentation of externalSymbol.documentation) {
                 for (const [idx, line] of documentation.split('\n').entries()) {
                     out.push(docPrefix);
                     if (idx == 0) {
-                        out.push('documentation ');
+                        out.push('external documentation ');
                     } else {
                         out.push('            > ');
                     }
-                    out.push(line);
+                    out.push(line.slice(0, 40));
+                    if (line.length > 40) {
+                        out.push('...');
+                    }
+                }
+            }
+        } else {
+            const info = symbolTable.get(symbol);
+            if (info) {
+                let docPrefix = '\n' + commentSyntax;
+                if (!isStartOfLine) {
+                    docPrefix += ' '.repeat(range.start.character - 1);
+                }
+
+                for (const documentation of info.documentation) {
+                    for (const [idx, line] of documentation.split('\n').entries()) {
+                        out.push(docPrefix);
+                        if (idx == 0) {
+                            out.push('documentation ');
+                        } else {
+                            out.push('            > ');
+                        }
+                        out.push(line);
+                    }
                 }
             }
         }
@@ -96,7 +126,7 @@ export function formatSnapshot(input: Input, doc: lib.codeintel.lsiftyped.Docume
             // This is essentially a "file-based" item.
             //  This guarantees that this sits above everything else in the file.
             if (range.start.character == 0 && range.end.character == 0) {
-                const isDefinition = (occurrence.symbol_roles & lsiftyped.SymbolRole.Definition) > 0;
+                const isDefinition = (occurrence.symbol_roles & scip.SymbolRole.Definition) > 0;
                 out.push(commentSyntax);
                 out.push(' < ');
                 out.push(isDefinition ? 'definition' : 'reference');
@@ -115,6 +145,11 @@ export function formatSnapshot(input: Input, doc: lib.codeintel.lsiftyped.Docume
         while (occurrenceIndex < doc.occurrences.length && doc.occurrences[occurrenceIndex].range[0] === lineNumber) {
             const occurrence = doc.occurrences[occurrenceIndex];
             occurrenceIndex++;
+
+            if (occurrence.symbol === undefined) {
+                continue;
+            }
+
             if (occurrence.range.length > 3) {
                 throw 'not yet implemented, multi-line ranges';
             }
@@ -138,7 +173,7 @@ export function formatSnapshot(input: Input, doc: lib.codeintel.lsiftyped.Docume
             }
             out.push('^'.repeat(caretLength));
             out.push(' ');
-            const isDefinition = (occurrence.symbol_roles & lsiftyped.SymbolRole.Definition) > 0;
+            const isDefinition = (occurrence.symbol_roles & scip.SymbolRole.Definition) > 0;
             out.push(isDefinition ? 'definition' : 'reference');
             out.push(' ');
             const symbol = occurrence.symbol.startsWith(packageName)
@@ -180,6 +215,6 @@ export function diffSnapshot(outputPath: string, obtained: string): void {
     exit(1);
 }
 
-function occurrencesByLine(a: lib.codeintel.lsiftyped.Occurrence, b: lib.codeintel.lsiftyped.Occurrence): number {
+function occurrencesByLine(a: scip.Occurrence, b: scip.Occurrence): number {
     return Range.fromLsif(a.range).compare(Range.fromLsif(b.range));
 }
