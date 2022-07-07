@@ -17,6 +17,7 @@ export function main(): void {
             if (!options.progressBar) {
                 statusConfig.showProgress = false;
             }
+            statusConfig.showProgress = false;
 
             const workspaceRoot = options.cwd;
             const snapshotDir = options.snapshotDir;
@@ -89,6 +90,8 @@ export function main(): void {
             }
         },
         (snapshotRoot, options) => {
+            statusConfig.showProgress = false;
+
             console.log('... Snapshotting ... ');
             const projectName = options.projectName;
             const projectVersion = options.projectVersion;

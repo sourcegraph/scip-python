@@ -61,6 +61,7 @@ import { HoverResults } from 'pyright-internal/languageService/hoverProvider';
 import { convertDocStringToMarkdown } from 'pyright-internal/analyzer/docStringConversion';
 import { assert } from 'pyright-internal/common/debug';
 import { getNameFromDeclaration } from 'pyright-internal/analyzer/declarationUtils';
+import { createTracePrinter } from 'pyright-internal/analyzer/tracePrinter';
 
 //  Useful functions for later, but haven't gotten far enough yet to use them.
 //      extractParameterDocumentation
@@ -82,6 +83,27 @@ function softAssert(expression: any, message: string, ...exprs: any) {
 }
 
 const _msgs = new Set<string>();
+const _printer = createTracePrinter([process.cwd()]);
+const _transform = function (exprs: any[]): any[] {
+    const result: any[] = [];
+    for (let i = 0; i < exprs.length; i++) {
+        let val = exprs[i];
+        if (typeof val === 'function') {
+            result.push(val(...exprs.slice(i + 1)));
+            break;
+        } else {
+            result.push(val);
+        }
+    }
+    return result;
+};
+
+// log is just cheap shorthand logging library
+// for debugging in --dev mode.
+//
+// If you pass a function, all the rest of the arguments will
+// be curried into that function if the logging function is called
+// (this makes it cheap to skip more expensive debugging information)
 const log = {
     once: (msg: string) => {
         if (_msgs.has(msg)) {
@@ -89,34 +111,33 @@ const log = {
         }
 
         _msgs.add(msg);
-
         console.log(msg);
     },
 
     debug: (...exprs: any[]) => {
         if (errorLevel >= 2) {
-            console.log(...exprs);
+            console.log(..._transform(exprs));
         }
     },
 
     info: (...exprs: any[]) => {
         if (errorLevel >= 1) {
-            console.log(...exprs);
+            console.log(..._transform(exprs));
         }
     },
 };
 
-const token = {
+const _cancellationToken = {
     isCancellationRequested: false,
     onCancellationRequested: Event.None,
 };
 
 function parseNodeToRange(name: ParseNode, lines: TextRangeCollection<TextRange>): Range {
-    const _start = convertOffsetToPosition(name.start, lines);
-    const start = new Position(_start.line, _start.character);
+    const posStart = convertOffsetToPosition(name.start, lines);
+    const start = new Position(posStart.line, posStart.character);
 
-    const _end = convertOffsetToPosition(name.start + name.length, lines);
-    const end = new Position(_end.line, _end.character);
+    const posEnd = convertOffsetToPosition(name.start + name.length, lines);
+    const end = new Position(posEnd.line, posEnd.character);
 
     return new Range(start, end);
 }
@@ -261,15 +282,11 @@ export class TreeVisitor extends ParseTreeWalker {
         // so we need to push a new symbol
         const enclosingClass = ParseTreeUtils.getEnclosingClass(node, true);
         if (enclosingClass) {
-            // TODO: Should this be typeExpression?
-            // const type = this.evaluator.getType(node.valueExpression);
-            // const hover = this.program.getHoverForPosition(
-
             const hoverResult = this.program.getHoverForPosition(
                 this.fileInfo!.filePath,
                 convertOffsetToPosition(node.start, this.fileInfo!.lines),
                 'markdown',
-                token
+                _cancellationToken
             );
 
             this.document.symbols.push(
@@ -324,6 +341,7 @@ export class TreeVisitor extends ParseTreeWalker {
         documentation.push('```python\n' + stubs.join('\n') + '\n```');
 
         let functionDoc = ParseTreeUtils.getDocString(node.suite.statements);
+
         if (functionDoc) {
             documentation.push(functionDoc);
         }
@@ -429,6 +447,19 @@ export class TreeVisitor extends ParseTreeWalker {
             if (pythonPackage) {
                 const symbol = Symbols.makeModule(moduleName, pythonPackage);
                 this.pushNewOccurrence(node.module, symbol);
+            } else {
+                // For python packages & modules that we cannot resolve,
+                // we'll just make a local for the file and note that we could not resolve this module.
+                //
+                // This should be pretty helpful when debugging (and for giving users feedback when they are
+                // interacting with sourcegraph).
+                //
+                // TODO: The only other question would be what we should do about references to items from this module
+                const symbol = this.getLocalForDeclaration(node);
+                this.emitSymbolInformationOnce(node.module, symbol, [
+                    `(module): ${moduleName} [unable to resolve module]`,
+                ]);
+                this.pushNewOccurrence(node.module, symbol);
             }
         }
 
@@ -469,7 +500,9 @@ export class TreeVisitor extends ParseTreeWalker {
         }
     }
 
-    private emiteDeclaration(node: NameNode, decl: Declaration): boolean {
+    private emitDeclaration(node: NameNode, decl: Declaration): boolean {
+        log.debug('  emitDeclaration:');
+        log.debug('    decl:', () => _printer.print(decl));
         const parent = node.parent!;
 
         if (!decl.node) {
@@ -487,7 +520,7 @@ export class TreeVisitor extends ParseTreeWalker {
         }
 
         const isDefinition = decl.node.id === parent.id;
-        log.debug('  declaration type:', ParseTreeUtils.printParseNodeType(decl.node.nodeType), isDefinition);
+        log.debug('  node:', ParseTreeUtils.printParseNodeType(decl.node.nodeType), isDefinition);
 
         const builtinType = this.evaluator.getBuiltInType(node, node.value);
         if (this.isStdlib(decl, builtinType)) {
@@ -508,7 +541,7 @@ export class TreeVisitor extends ParseTreeWalker {
 
                 const moduleName = _formatModuleName(declNode.module);
                 const symbol = this.getSymbolOnce(declNode, () => {
-                    const pythonPackage = this.moduleNameNodeToPythonPackage(declNode.module);
+                    const pythonPackage = this.moduleNameNodeToPythonPackage(declNode.module, decl);
                     if (!pythonPackage) {
                         return this.getLocalForDeclaration(node);
                     }
@@ -597,7 +630,7 @@ export class TreeVisitor extends ParseTreeWalker {
                     resolvedInfo.filePath,
                     convertOffsetToPosition(node.start, resolvedInfo.lines),
                     'markdown',
-                    token
+                    _cancellationToken
                 );
 
                 if (hoverResult) {
@@ -676,12 +709,40 @@ export class TreeVisitor extends ParseTreeWalker {
                 return isBuiltinModuleName(decl.moduleName);
             case TypeCategory.OverloadedFunction:
                 return this.isStdlib(decl, builtinType.overloads[0]);
+            case TypeCategory.Union:
+                return builtinType.subtypes.find((subtype) => this.isStdlib(decl, subtype)) !== undefined;
         }
 
-        throw new Error('Method not implemented.');
+        softAssert(false, 'Unhandled builtin category:', builtinType);
+        return false;
+    }
+
+    private emitNameWithoutDeclaration(node: NameNode): boolean {
+        let parent = node.parent!;
+        switch (parent.nodeType) {
+            case ParseNodeType.ModuleName:
+                softAssert(false, "I don't think that this should be possible");
+                break;
+
+            // Without a declaration, it doesn't seem useful to try and add member accesses
+            // with locals. You'll just get a new local for every reference because we can't construct
+            // what these are.
+            //
+            // In the future, it could be possible that we could store what locals we have generated for a file
+            // (for example `unknown_module.access`, and then use the same local for all of them, but it would be quite
+            // difficult in my mind).
+            case ParseNodeType.MemberAccess:
+                return true;
+        }
+
+        log.debug('    NO DECL:', ParseTreeUtils.printParseNodeType, parent.nodeType);
+        this.pushNewOccurrence(node, this.getLocalForDeclaration(node));
+        return true;
     }
 
     override visitName(node: NameNode): boolean {
+        log.debug('\nVisiting Name:', node.value);
+
         if (!node.parent) {
             throw `No parent for named node: ${node.token.value}`;
         }
@@ -693,15 +754,18 @@ export class TreeVisitor extends ParseTreeWalker {
         const parent = node.parent;
         const decls = this.evaluator.getDeclarationsForNameNode(node) || [];
 
-        log.debug(node.token.value, '->', ParseTreeUtils.printParseNodeType(parent.nodeType));
+        log.debug('  ParentParsenodeType:', ParseTreeUtils.printParseNodeType, parent.nodeType);
         if (decls.length === 0) {
-            log.debug('     missing declaration');
-            return true;
+            return this.emitNameWithoutDeclaration(node);
         }
 
-        // TODO(multi_decls)
+        // TODO: Consider what to do with additional declarations
+        //  Currently, the only ones that I know that can have multiple declarations are overloaded functions.
+        //  Not sure if there are others.
+        //  At this point, it is acceptable to pick the first one as the definition for what you'd want to do
+        //  with Sourcegraph.
         const decl = decls[0];
-        return this.emiteDeclaration(node, decl);
+        return this.emitDeclaration(node, decl);
     }
 
     private rawGetLsifSymbol(node: ParseNode): ScipSymbol | undefined {
@@ -1210,7 +1274,7 @@ export class TreeVisitor extends ParseTreeWalker {
         this.pushNewOccurrence(node, symbol);
     }
 
-    private getLocalForDeclaration(node: NameNode): ScipSymbol {
+    private getLocalForDeclaration(node: ParseNode): ScipSymbol {
         const existing = this.rawGetLsifSymbol(node);
         if (existing) {
             return existing;
@@ -1261,7 +1325,7 @@ export class TreeVisitor extends ParseTreeWalker {
                 nodeFileInfo.filePath,
                 convertOffsetToPosition(node.start, nodeFileInfo.lines),
                 'markdown',
-                token
+                _cancellationToken
             );
 
             if (hoverResult) {
@@ -1312,7 +1376,7 @@ export class TreeVisitor extends ParseTreeWalker {
             nodeFileInfo.filePath,
             convertOffsetToPosition(node.start, nodeFileInfo.lines),
             'markdown',
-            token
+            _cancellationToken
         );
 
         if (hoverResult) {
@@ -1432,7 +1496,10 @@ export class TreeVisitor extends ParseTreeWalker {
         return this.evaluator.getInferredTypeOfDeclaration(symbolWithScope.symbol, aliasDecl);
     }
 
-    private moduleNameNodeToPythonPackage(node: ModuleNameNode): PythonPackage | undefined {
+    private moduleNameNodeToPythonPackage(
+        node: ModuleNameNode,
+        decl: Declaration | undefined = undefined
+    ): PythonPackage | undefined {
         // If it has leading dots, then we know it's from this package
         if (node.leadingDots > 0) {
             return this.projectPackage;
@@ -1443,7 +1510,7 @@ export class TreeVisitor extends ParseTreeWalker {
         }
 
         const declModuleName = _formatModuleName(node);
-        return this.guessPackage(declModuleName);
+        return this.guessPackage(declModuleName, decl ? decl.path : undefined);
     }
 
     public guessPackage(moduleName: string, declPath: string | undefined = undefined): PythonPackage | undefined {
@@ -1453,6 +1520,14 @@ export class TreeVisitor extends ParseTreeWalker {
 
         if (moduleName.startsWith('.')) {
             return this.projectPackage;
+        }
+
+        if (declPath && declPath.length !== 0) {
+            const p = path.resolve(declPath);
+
+            if (p.startsWith(this.cwd)) {
+                return this.projectPackage;
+            }
         }
 
         let pythonPackage = this.config.pythonEnvironment.getPackageForModule(moduleName);
@@ -1469,14 +1544,6 @@ export class TreeVisitor extends ParseTreeWalker {
         let firstPart = nameParts[0];
         if (Hardcoded.stdlib_module_names.has(firstPart)) {
             return this.stdlibPackage;
-        }
-
-        if (declPath && declPath.length !== 0) {
-            const p = path.resolve(declPath);
-
-            if (p.startsWith(this.cwd)) {
-                pythonPackage = this.projectPackage;
-            }
         }
 
         return undefined;
