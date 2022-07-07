@@ -60,7 +60,6 @@ import { Event } from 'vscode-languageserver';
 import { HoverResults } from 'pyright-internal/languageService/hoverProvider';
 import { convertDocStringToMarkdown } from 'pyright-internal/analyzer/docStringConversion';
 import { assert } from 'pyright-internal/common/debug';
-import { getNameFromDeclaration } from 'pyright-internal/analyzer/declarationUtils';
 import { createTracePrinter } from 'pyright-internal/analyzer/tracePrinter';
 
 //  Useful functions for later, but haven't gotten far enough yet to use them.
@@ -470,9 +469,8 @@ export class TreeVisitor extends ParseTreeWalker {
         return false;
     }
 
-    private emitDeclarationWithoutNode(node: NameNode, decl: Declaration): boolean {
+    private emitDeclarationWithoutNode(node: NameNode, _decl: Declaration): boolean {
         const parent = node.parent!;
-
         switch (parent.nodeType) {
             // `ModuleName`s do not have nodes for definitions
             // because they aren't a syntax node, they are basically
@@ -705,6 +703,8 @@ export class TreeVisitor extends ParseTreeWalker {
         switch (builtinType.category) {
             case TypeCategory.Class:
                 return ClassType.isBuiltIn(builtinType) || ClassType.isSpecialBuiltIn(builtinType);
+            case TypeCategory.Module:
+                return isBuiltinModuleName(builtinType.moduleName);
             case TypeCategory.Function:
                 return isBuiltinModuleName(decl.moduleName);
             case TypeCategory.OverloadedFunction:
