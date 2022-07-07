@@ -30,15 +30,11 @@ $ src lsif upload
 {
     "index_jobs": [
         {
-            "indexer": "nikolaik/python-nodejs",
+            "indexer": "sourcegraph/scip-python:autoindex",
             "local_steps": [
-                "curl -Lo lsif-typed https://github.com/sourcegraph/lsif-typescript/releases/download/v0.1.13/lsif-typed",
-                "chmod +x ./lsif-typed",
-                "npm install -g @sourcegraph/scip-python",
-                "scip-python index . --project-name my_project --project-version 0.1 --include my_project",
-                "./lsif-typed dump.lsif-typed > dump.lsif",
+                "pip install . || true",
             ],
-            "indexer_args": [],
+            "indexer_args": ["--project-name", "<your name here>"],
             "steps": [],
             "outfile": "",
             "root": ""
@@ -47,3 +43,18 @@ $ src lsif upload
     "shared_steps": []
 }
 ```
+
+## To compare upstream from pyright
+
+You can go to the following [Sourcegraph
+link](https://sourcegraph.com/github.com/sourcegraph/scip-python/-/compare/pyright-mirror...scip)
+to compare the changes we've made from pyright.
+
+The changes are almost exclusively in the folder `packages/pyright-scip/` and various `package.json` files
+due to adding some additional dependencies.
+
+In general, we've tried to make very little changes to anything inside of the pyright packages.
+The only changes that are inside there at this point are:
+- Not bail out of indexing if it's taking a long time
+- Not throw away indexed files if memory usage gets high
+- Allow parsing of some additional files
