@@ -8,7 +8,7 @@
  */
 
 import { getEmptyRange } from '../common/textRange';
-import { ParseNodeType } from '../parser/parseNodes';
+import { NameNode, ParseNodeType } from '../parser/parseNodes';
 import { AliasDeclaration, Declaration, DeclarationType, isAliasDeclaration, ModuleLoaderActions } from './declaration';
 import { getFileInfoFromNode } from './parseTreeUtils';
 
@@ -18,6 +18,8 @@ export function hasTypeForDeclaration(declaration: Declaration): boolean {
         case DeclarationType.Class:
         case DeclarationType.SpecialBuiltInClass:
         case DeclarationType.Function:
+        case DeclarationType.TypeParameter:
+        case DeclarationType.TypeAlias:
             return true;
 
         case DeclarationType.Parameter: {
@@ -151,6 +153,7 @@ export function getNameFromDeclaration(declaration: Declaration) {
 
         case DeclarationType.Class:
         case DeclarationType.Function:
+        case DeclarationType.TypeParameter:
             return declaration.node.name.value;
 
         case DeclarationType.Parameter:
@@ -158,6 +161,34 @@ export function getNameFromDeclaration(declaration: Declaration) {
 
         case DeclarationType.Variable:
             return declaration.node.nodeType === ParseNodeType.Name ? declaration.node.value : undefined;
+
+        case DeclarationType.Intrinsic:
+        case DeclarationType.SpecialBuiltInClass:
+            return undefined;
+    }
+
+    throw new Error(`Shouldn't reach here`);
+}
+
+export function getNameNodeForDeclaration(declaration: Declaration): NameNode | undefined {
+    switch (declaration.type) {
+        case DeclarationType.Alias:
+            if (declaration.node.nodeType === ParseNodeType.ImportAs) {
+                return declaration.node.alias ?? declaration.node.module.nameParts[0];
+            } else if (declaration.node.nodeType === ParseNodeType.ImportFromAs) {
+                return declaration.node.alias ?? declaration.node.name;
+            } else {
+                return declaration.node.module.nameParts[0];
+            }
+
+        case DeclarationType.Class:
+        case DeclarationType.Function:
+        case DeclarationType.TypeParameter:
+        case DeclarationType.Parameter:
+            return declaration.node.name;
+
+        case DeclarationType.Variable:
+            return declaration.node.nodeType === ParseNodeType.Name ? declaration.node : undefined;
 
         case DeclarationType.Intrinsic:
         case DeclarationType.SpecialBuiltInClass:

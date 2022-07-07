@@ -2,8 +2,9 @@ import email.message
 import sys
 from _typeshed import Self, StrOrBytesPath
 from abc import ABCMeta, abstractmethod
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from types import TracebackType
-from typing import IO, Any, AnyStr, Callable, Generic, Iterable, Iterator, Mapping, Protocol, Sequence, TypeVar, overload
+from typing import IO, Any, AnyStr, Generic, Protocol, TypeVar, overload
 from typing_extensions import Literal, TypeAlias
 
 if sys.version_info >= (3, 9):
@@ -45,9 +46,10 @@ class Mailbox(Generic[_MessageT]):
 
     _path: bytes | str  # undocumented
     _factory: Callable[[IO[Any]], _MessageT] | None  # undocumented
-    def __init__(
-        self, path: StrOrBytesPath, factory: Callable[[IO[Any]], _MessageT] | None = ..., create: bool = ...
-    ) -> None: ...
+    @overload
+    def __init__(self, path: StrOrBytesPath, factory: Callable[[IO[Any]], _MessageT], create: bool = ...) -> None: ...
+    @overload
+    def __init__(self, path: StrOrBytesPath, factory: None = ..., create: bool = ...) -> None: ...
     @abstractmethod
     def add(self, message: _MessageData) -> str: ...
     @abstractmethod

@@ -65,3 +65,31 @@ def testGetItemIterator() -> str:
 # This should generate a syntax error.
 for in range(3):
     pass
+
+
+class A:
+    def __init__(self):
+        self.__iter__ = lambda: iter([])
+
+
+# This should generate an error because A
+# is not iterable. The __iter__ method is an
+# instance variable.
+for a in A():
+    ...
+
+class B:
+    __slots__ = ("__iter__",)
+    def __init__(self):
+        self.__iter__ = lambda: iter([])
+
+
+for b in B():
+    ...
+
+def func3():
+    x = None
+    for x in range(1):
+        pass
+
+    reveal_type(x, expected_text="int | None")

@@ -119,6 +119,46 @@ class ParentClass:
     def my_method28(self, __a: object) -> None:
         ...
 
+    @classmethod
+    def my_method29(cls, /) -> None:
+        ...
+
+    @classmethod
+    def my_method30(cls, /) -> None:
+        ...
+
+    @staticmethod
+    def my_method31(a: "Type[ParentClass]", /) -> None:
+        ...
+
+    @staticmethod
+    def my_method32(a: "Type[ParentClass]", /) -> None:
+        ...
+
+    def my_method33(self, /) -> None:
+        ...
+
+    def my_method34(self, /) -> None:
+        ...
+
+    def my_method35(self, *, a: int) -> None:
+        ...
+
+    def my_method36(self, *, a: int) -> None:
+        ...
+
+    def my_method37(self, a: int, /) -> None:
+        ...
+
+    def my_method38(self, a: int, /) -> None:
+        ...
+
+    def my_method39(self, a: int, /) -> None:
+        ...
+
+    def my_method40(self, a: int, /) -> None:
+        ...
+
 
 T_ChildClass = TypeVar("T_ChildClass", bound="ChildClass")
 
@@ -158,10 +198,10 @@ class ChildClass(ParentClass):
     def my_method9(self, a: int, b: int, c: int = 4):
         return 1
 
-    def my_method10(self, a: int, b: int, *varg):
+    def my_method10(self, a: int, b: int, *args):
         return 1
 
-    def my_method11(self, a: int, b: int, *, c: str = "", **kwarg):
+    def my_method11(self, a: int, b: int, *, c: str = "", **kwargs):
         return 1
 
     # This should generate an error because the type of 'a' is
@@ -234,6 +274,59 @@ class ChildClass(ParentClass):
         ...
 
     def my_method28(self, a: object, /) -> None:
+        ...
+
+    # This should generate an error because it is not a classmethod.
+    def my_method29(self, /) -> None:
+        ...
+
+    # This should generate an error because it is not a classmethod.
+    @staticmethod
+    def my_method30(a: Type[ParentClass], /) -> None:
+        ...
+
+    # This should generate an error because it is not a staticmethod.
+    @classmethod
+    def my_method31(cls, /) -> None:
+        ...
+
+    # This should generate an error because it is not a staticmethod.
+    def my_method32(self, /) -> None:
+        ...
+
+    # This should generate an error because it is not an instance method.
+    @classmethod
+    def my_method33(cls, /) -> None:
+        ...
+
+    # This should generate an error because it is not an instance method.
+    @staticmethod
+    def my_method34(a: Type[ParentClass], /) -> None:
+        ...
+
+    def my_method35(self, **kwargs: int) -> None:
+        ...
+
+    # This should generate an error because the method in the parent
+    # class has a keyword-only parameter that is type 'int', and this
+    # isn't compatible with 'str'.
+    def my_method36(self, **kwargs: str) -> None:
+        ...
+
+    def my_method37(self, *args: Any) -> None:
+        ...
+
+    # This should generate an error because the number of position-only
+    # parameters doesn't match.
+    def my_method38(self, **kwargs: Any) -> None:
+        ...
+
+    def my_method39(self, *args: Any) -> None:
+        ...
+
+    # This should generate an error because the number of position-only
+    # parameters doesn't match.
+    def my_method40(self, **kwargs: Any) -> None:
         ...
 
 

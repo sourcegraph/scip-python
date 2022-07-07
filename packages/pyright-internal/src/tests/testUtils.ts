@@ -15,6 +15,7 @@ import { AnalyzerFileInfo } from '../analyzer/analyzerFileInfo';
 import { Binder } from '../analyzer/binder';
 import { ImportResolver } from '../analyzer/importResolver';
 import { Program } from '../analyzer/program';
+import { IPythonMode } from '../analyzer/sourceFile';
 import { NameTypeWalker, TestWalker } from '../analyzer/testWalker';
 import { TypeEvaluator } from '../analyzer/typeEvaluatorTypes';
 import { cloneDiagnosticRuleSet, ConfigOptions, ExecutionEnvironment } from '../common/configOptions';
@@ -108,6 +109,7 @@ export function buildAnalyzerFileInfo(
         diagnosticSink: analysisDiagnostics,
         executionEnvironment: configOptions.findExecEnvironment(filePath),
         diagnosticRuleSet: cloneDiagnosticRuleSet(configOptions.diagnosticRuleSet),
+        definedConstants: configOptions.defineConstant,
         fileContents,
         lines: parseResults.tokenizerOutput.lines,
         filePath,
@@ -117,8 +119,8 @@ export function buildAnalyzerFileInfo(
         isInPyTypedPackage: false,
         isTypingExtensionsStubFile: false,
         isBuiltInStubFile: false,
-        isIPythonMode: false,
-        accessedSymbolMap: new Map<number, true>(),
+        ipythonMode: IPythonMode.None,
+        accessedSymbolSet: new Set<number>(),
         typingSymbolAliases: new Map<string, string>(),
     };
 

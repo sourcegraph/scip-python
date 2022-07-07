@@ -96,6 +96,15 @@ export class BackgroundAnalysisProgram {
         this._program.setFileOpened(filePath, version, [{ text: contents }], options);
     }
 
+    getChainedFilePath(filePath: string): string | undefined {
+        return this._program.getChainedFilePath(filePath);
+    }
+
+    updateChainedFilePath(filePath: string, chainedFilePath: string | undefined) {
+        this._backgroundAnalysis?.updateChainedFilePath(filePath, chainedFilePath);
+        this._program.updateChainedFilePath(filePath, chainedFilePath);
+    }
+
     updateOpenFileContents(
         path: string,
         version: number | null,
@@ -104,7 +113,7 @@ export class BackgroundAnalysisProgram {
     ) {
         this._backgroundAnalysis?.setFileOpened(path, version, contents, options);
         this._program.setFileOpened(path, version, contents, options);
-        this.markFilesDirty([path], true);
+        this.markFilesDirty([path], /* evenIfContentsAreSame */ true);
     }
 
     setFileClosed(filePath: string) {
@@ -205,7 +214,14 @@ export class BackgroundAnalysisProgram {
             return this._backgroundAnalysis.writeTypeStub(targetImportPath, targetIsSingleFile, stubPath, token);
         }
 
-        analyzeProgram(this._program, undefined, this._configOptions, this._onAnalysisCompletion, this._console, token);
+        analyzeProgram(
+            this._program,
+            /* maxTime */ undefined,
+            this._configOptions,
+            this._onAnalysisCompletion,
+            this._console,
+            token
+        );
         return this._program.writeTypeStub(targetImportPath, targetIsSingleFile, stubPath, token);
     }
 

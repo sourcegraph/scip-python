@@ -71,6 +71,7 @@ import {
     WorkDoneProgressReporter,
     WorkspaceEdit,
     WorkspaceFolder,
+    WorkspaceSymbol,
     WorkspaceSymbolParams,
 } from 'vscode-languageserver';
 import { attachWorkDone, ResultProgressReporter } from 'vscode-languageserver/lib/common/progress';
@@ -80,6 +81,7 @@ import { BackgroundAnalysisProgram } from './analyzer/backgroundAnalysisProgram'
 import { ImportResolver } from './analyzer/importResolver';
 import { MaxAnalysisTime } from './analyzer/program';
 import { AnalyzerService, configFileNames } from './analyzer/service';
+import { IPythonMode } from './analyzer/sourceFile';
 import type { BackgroundAnalysisBase } from './backgroundAnalysisBase';
 import { CommandResult } from './commands/commandResult';
 import { CancelAfter, CancellationProvider } from './common/cancellationUtils';
@@ -98,7 +100,8 @@ import { FileDiagnostics } from './common/diagnosticSink';
 import { LanguageServiceExtension } from './common/extensibility';
 import { FileSystem, FileWatcherEventType, FileWatcherProvider } from './common/fileSystem';
 import { Host } from './common/host';
-import { convertPathToUri, normalizeSlashes } from './common/pathUtils';
+import { fromLSPAny } from './common/lspUtils';
+import { convertPathToUri, deduplicateFolders, getDirectoryPath, getFileName, isFile } from './common/pathUtils';
 import { ProgressReporter, ProgressReportTracker } from './common/progressReporter';
 import { DocumentRange, Position, Range } from './common/textRange';
 import { UriParser } from './common/uriParser';
@@ -136,14 +139,22 @@ export interface ServerSettings {
     typeEvaluationTimeThreshold?: number | undefined;
 }
 
+export enum WellKnownWorkspaceKinds {
+    Default = 'default',
+    Regular = 'regular',
+    Cloned = 'cloned',
+    Test = 'test',
+}
+
 export interface WorkspaceServiceInstance {
     workspaceName: string;
     rootPath: string;
     rootUri: string;
+    kind: string;
     serviceInstance: AnalyzerService;
     disableLanguageServices: boolean;
     disableOrganizeImports: boolean;
-    disableWorkspaceSymbol?: boolean;
+    disableWorkspaceSymbol: boolean;
     isInitialized: Deferred<boolean>;
     searchPathsToWatch: string[];
 }
@@ -199,6 +210,7 @@ interface ClientCapabilities {
     hasVisualStudioExtensionsCapability: boolean;
     hasWorkspaceFoldersCapability: boolean;
     hasWatchFileCapability: boolean;
+    hasWatchFileRelativePathCapability: boolean;
     hasActiveParameterCapability: boolean;
     hasSignatureLabelOffsetCapability: boolean;
     hasHierarchicalDocumentSymbolCapability: boolean;
@@ -215,7 +227,7 @@ interface ClientCapabilities {
     completionItemResolveSupportsAdditionalTextEdits: boolean;
 }
 
-const nullProgressReporter = attachWorkDone(undefined as any, undefined);
+const nullProgressReporter = attachWorkDone(undefined as any, /* params */ undefined);
 
 export abstract class LanguageServerBase implements LanguageServerInterface {
     protected _defaultClientConfig: any;
@@ -242,6 +254,7 @@ export abstract class LanguageServerBase implements LanguageServerInterface {
         hasVisualStudioExtensionsCapability: false,
         hasWorkspaceFoldersCapability: false,
         hasWatchFileCapability: false,
+        hasWatchFileRelativePathCapability: false,
         hasActiveParameterCapability: false,
         hasSignatureLabelOffsetCapability: false,
         hasHierarchicalDocumentSymbolCapability: false,
@@ -266,7 +279,8 @@ export abstract class LanguageServerBase implements LanguageServerInterface {
     constructor(
         protected _serverOptions: ServerOptions,
         protected _connection: Connection,
-        readonly console: ConsoleInterface
+        readonly console: ConsoleInterface,
+        uriParserFactory = (fs: FileSystem) => new UriParser(fs)
     ) {
         // Stash the base directory into a global variable.
         // This must happen before fs.getModulePath().
@@ -284,7 +298,7 @@ export abstract class LanguageServerBase implements LanguageServerInterface {
         this._fileWatcherProvider = this._serverOptions.fileWatcherProvider;
 
         this.fs = new PyrightFileSystem(this._serverOptions.fileSystem);
-        this._uriParser = new UriParser(this.fs);
+        this._uriParser = uriParserFactory(this.fs);
 
         // Set the working directory to a known location within
         // the extension directory. Otherwise the execution of
@@ -402,21 +416,20 @@ export abstract class LanguageServerBase implements LanguageServerInterface {
 
     // Creates a service instance that's used for analyzing a
     // program within a workspace.
-    createAnalyzerService(name: string): AnalyzerService {
+    createAnalyzerService(name: string, libraryReanalysisTimeProvider?: () => number): AnalyzerService {
         this.console.log(`Starting service instance "${name}"`);
-        const service = new AnalyzerService(
-            name,
-            this.fs,
-            this.console,
-            this.createHost.bind(this),
-            this.createImportResolver.bind(this),
-            undefined,
-            this._serverOptions.extension,
-            this.createBackgroundAnalysis(),
-            this._serverOptions.maxAnalysisTimeInForeground,
-            this.createBackgroundAnalysisProgram.bind(this),
-            this._serverOptions.cancellationProvider
-        );
+
+        const service = new AnalyzerService(name, this.fs, {
+            console: this.console,
+            hostFactory: this.createHost.bind(this),
+            importResolverFactory: this.createImportResolver.bind(this),
+            extension: this._serverOptions.extension,
+            backgroundAnalysis: this.createBackgroundAnalysis(),
+            maxAnalysisTime: this._serverOptions.maxAnalysisTimeInForeground,
+            backgroundAnalysisProgramFactory: this.createBackgroundAnalysisProgram.bind(this),
+            cancellationProvider: this._serverOptions.cancellationProvider,
+            libraryReanalysisTimeProvider,
+        });
 
         service.setCompletionCallback((results) => this.onAnalysisCompletedHandler(results));
 
@@ -507,6 +520,8 @@ export abstract class LanguageServerBase implements LanguageServerInterface {
         const capabilities = params.capabilities;
         this.client.hasConfigurationCapability = !!capabilities.workspace?.configuration;
         this.client.hasWatchFileCapability = !!capabilities.workspace?.didChangeWatchedFiles?.dynamicRegistration;
+        this.client.hasWatchFileRelativePathCapability =
+            !!capabilities.workspace?.didChangeWatchedFiles?.relativePatternSupport;
         this.client.hasWorkspaceFoldersCapability = !!capabilities.workspace?.workspaceFolders;
         this.client.hasVisualStudioExtensionsCapability = !!(capabilities as any).supportsVisualStudioExtensions;
         this.client.hasActiveParameterCapability =
@@ -568,6 +583,9 @@ export abstract class LanguageServerBase implements LanguageServerInterface {
                     triggerCharacters: this.client.hasVisualStudioExtensionsCapability ? ['.', '[', '@'] : ['.', '['],
                     resolveProvider: true,
                     workDoneProgress: true,
+                    completionItem: {
+                        labelDetailsSupport: true,
+                    },
                 },
                 signatureHelpProvider: {
                     triggerCharacters: ['(', ',', ')'],
@@ -602,6 +620,8 @@ export abstract class LanguageServerBase implements LanguageServerInterface {
                     this._workspaceMap.set(rootPath, newWorkspace);
                     await this.updateSettingsForWorkspace(newWorkspace);
                 });
+
+                this._setupFileWatcher();
             });
 
             this._setupFileWatcher();
@@ -613,30 +633,31 @@ export abstract class LanguageServerBase implements LanguageServerInterface {
             return;
         }
 
+        const watchKind = WatchKind.Create | WatchKind.Change | WatchKind.Delete;
+
         // Set default (config files and all workspace files) first.
         const watchers: FileSystemWatcher[] = [
-            ...configFileNames.map((fileName) => {
-                return {
-                    globPattern: `**/${fileName}`,
-                    kind: WatchKind.Create | WatchKind.Change | WatchKind.Delete,
-                };
-            }),
-            {
-                globPattern: '**',
-                kind: WatchKind.Create | WatchKind.Change | WatchKind.Delete,
-            },
+            ...configFileNames.map((fileName) => ({ globPattern: `**/${fileName}`, kind: watchKind })),
+            { globPattern: '**', kind: watchKind },
         ];
 
         // Add all python search paths to watch list
-        for (const workspace of this._workspaceMap.getNonDefaultWorkspaces()) {
-            workspace.searchPathsToWatch.forEach((p) => {
-                watchers.push({
-                    globPattern: `${normalizeSlashes(this.fs.realCasePath(p), '/')}/**`,
-                    kind: WatchKind.Create | WatchKind.Change | WatchKind.Delete,
-                });
+        if (this.client.hasWatchFileRelativePathCapability) {
+            // Dedup search paths from all workspaces.
+            const foldersToWatch = deduplicateFolders(
+                this._workspaceMap.getNonDefaultWorkspaces().map((w) => w.searchPathsToWatch)
+            );
+
+            foldersToWatch.forEach((p) => {
+                const globPattern = isFile(this.fs, p, /* treatZipDirectoryAsFile */ true)
+                    ? { baseUri: convertPathToUri(this.fs, getDirectoryPath(p)), pattern: getFileName(p) }
+                    : { baseUri: convertPathToUri(this.fs, p), pattern: '**' };
+
+                watchers.push({ globPattern, kind: watchKind });
             });
         }
 
+        // File watcher is pylance wide service. Dispose all existing file watchers and create new ones.
         this._connection.client.register(DidChangeWatchedFilesNotification.type, { watchers }).then((d) => {
             if (this._lastFileWatcherRegistration) {
                 this._lastFileWatcherRegistration.dispose();
@@ -805,7 +826,7 @@ export abstract class LanguageServerBase implements LanguageServerInterface {
         params: WorkspaceSymbolParams,
         token: CancellationToken,
         resultReporter: ResultProgressReporter<SymbolInformation[]> | undefined
-    ): Promise<SymbolInformation[] | null | undefined> {
+    ): Promise<SymbolInformation[] | WorkspaceSymbol[] | null | undefined> {
         const symbolList: SymbolInformation[] = [];
 
         const reporter: WorkspaceSymbolCallback = resultReporter
@@ -877,7 +898,7 @@ export abstract class LanguageServerBase implements LanguageServerInterface {
                 );
             }
 
-            const sigInfo = SignatureInformation.create(sig.label, undefined, ...paramInfo);
+            const sigInfo = SignatureInformation.create(sig.label, /* documentation */ undefined, ...paramInfo);
             if (sig.documentation !== undefined) {
                 sigInfo.documentation = sig.documentation;
             }
@@ -892,12 +913,12 @@ export abstract class LanguageServerBase implements LanguageServerInterface {
         const isActive = (sig: SignatureInformation) =>
             sig.activeParameter !== undefined || (!signatureHelpResults.callHasParameters && !sig.parameters?.length);
 
-        let activeSignature: number | null = signatures.findIndex(isActive);
+        let activeSignature: number | undefined = signatures.findIndex(isActive);
         if (activeSignature === -1) {
-            activeSignature = null;
+            activeSignature = undefined;
         }
 
-        let activeParameter = activeSignature !== null ? signatures[activeSignature].activeParameter! : null;
+        let activeParameter = activeSignature !== undefined ? signatures[activeSignature].activeParameter! : undefined;
 
         // Check if we should reuse the user's signature selection. If the retrigger was not "invoked"
         // (i.e., the signature help call was automatically generated by the client due to some navigation
@@ -909,17 +930,17 @@ export abstract class LanguageServerBase implements LanguageServerInterface {
         // to know when the user's navigated to a nested call (and therefore the old signature's info does
         // not apply), but for now manually retriggering the signature help will work around the issue.
         if (params.context?.isRetrigger && params.context.triggerKind !== SignatureHelpTriggerKind.Invoked) {
-            const prevActiveSignature = params.context.activeSignatureHelp?.activeSignature ?? null;
-            if (prevActiveSignature !== null && prevActiveSignature < signatures.length) {
+            const prevActiveSignature = params.context.activeSignatureHelp?.activeSignature;
+            if (prevActiveSignature !== undefined && prevActiveSignature < signatures.length) {
                 const sig = signatures[prevActiveSignature];
                 if (isActive(sig)) {
                     activeSignature = prevActiveSignature;
-                    activeParameter = sig.activeParameter ?? null;
+                    activeParameter = sig.activeParameter;
                 }
             }
         }
 
-        if (this.client.hasActiveParameterCapability || activeSignature === null) {
+        if (this.client.hasActiveParameterCapability || activeSignature === undefined) {
             // If there is no active parameter, then we want the client to not highlight anything.
             // Unfortunately, the LSP spec says that "undefined" or "out of bounds" values should be
             // treated as 0, which is the first parameter. That's not what we want, but thankfully
@@ -981,7 +1002,7 @@ export abstract class LanguageServerBase implements LanguageServerInterface {
             token
         );
 
-        if (completions && completions.completionList) {
+        if (completions) {
             completions.completionList.isIncomplete = completionIncomplete;
         }
 
@@ -995,7 +1016,7 @@ export abstract class LanguageServerBase implements LanguageServerInterface {
     // If resolver throws cancellation exception, LSP and VSCode
     // cache that result and never call us back.
     protected async onCompletionResolve(params: CompletionItem, token: CancellationToken): Promise<CompletionItem> {
-        const completionItemData = params.data as CompletionItemData;
+        const completionItemData = fromLSPAny<CompletionItemData>(params.data);
         if (completionItemData && completionItemData.filePath) {
             const workspace = await this.getWorkspaceForFile(completionItemData.workspacePath);
             this.resolveWorkspaceCompletionItem(workspace, completionItemData.filePath, params, token);
@@ -1127,7 +1148,7 @@ export abstract class LanguageServerBase implements LanguageServerInterface {
         return callItems;
     }
 
-    protected async onDidOpenTextDocument(params: DidOpenTextDocumentParams, ipythonMode = false) {
+    protected async onDidOpenTextDocument(params: DidOpenTextDocumentParams, ipythonMode = IPythonMode.None) {
         const filePath = this._uriParser.decodeTextDocumentUri(params.textDocument.uri);
 
         if (!(this.fs as PyrightFileSystem).addUriMap(params.textDocument.uri, filePath)) {
@@ -1144,7 +1165,7 @@ export abstract class LanguageServerBase implements LanguageServerInterface {
         );
     }
 
-    protected async onDidChangeTextDocument(params: DidChangeTextDocumentParams, ipythonMode = false) {
+    protected async onDidChangeTextDocument(params: DidChangeTextDocumentParams, ipythonMode = IPythonMode.None) {
         this.recordUserInteractionTime();
 
         const filePath = this._uriParser.decodeTextDocumentUri(params.textDocument.uri);
@@ -1235,7 +1256,13 @@ export abstract class LanguageServerBase implements LanguageServerInterface {
         item: CompletionItem,
         token: CancellationToken
     ): void {
-        workspace.serviceInstance.resolveCompletionItem(filePath, item, this.getCompletionOptions(), undefined, token);
+        workspace.serviceInstance.resolveCompletionItem(
+            filePath,
+            item,
+            this.getCompletionOptions(),
+            /* nameMap */ undefined,
+            token
+        );
     }
 
     protected getWorkspaceCompletionsForPosition(
@@ -1257,11 +1284,14 @@ export abstract class LanguageServerBase implements LanguageServerInterface {
     }
 
     updateSettingsForAllWorkspaces(): void {
+        const tasks: Promise<void>[] = [];
         this._workspaceMap.forEach((workspace) => {
-            this.updateSettingsForWorkspace(workspace).ignoreErrors();
+            tasks.push(this.updateSettingsForWorkspace(workspace));
         });
 
-        this._setupFileWatcher();
+        Promise.all(tasks).then(() => {
+            this._setupFileWatcher();
+        });
     }
 
     protected getCompletionOptions(params?: CompletionParams) {
@@ -1275,13 +1305,27 @@ export abstract class LanguageServerBase implements LanguageServerInterface {
 
     protected createWorkspaceServiceInstance(
         workspace: WorkspaceFolder | undefined,
-        rootPath: string
+        rootPath: string,
+        kind: string = WellKnownWorkspaceKinds.Regular
     ): WorkspaceServiceInstance {
+        // 5 seconds default
+        const defaultBackOffTime = 5 * 1000;
+
+        // 10 mins back off for multi workspace.
+        const multiWorkspaceBackOffTime = 10 * 60 * 1000;
+
+        const libraryReanalysisTimeProvider =
+            kind === WellKnownWorkspaceKinds.Regular
+                ? () =>
+                      this._workspaceMap.hasMultipleWorkspaces(kind) ? multiWorkspaceBackOffTime : defaultBackOffTime
+                : () => defaultBackOffTime;
+
         return {
             workspaceName: workspace?.name ?? '',
             rootPath,
             rootUri: workspace?.uri ?? '',
-            serviceInstance: this.createAnalyzerService(workspace?.name ?? rootPath),
+            kind,
+            serviceInstance: this.createAnalyzerService(workspace?.name ?? rootPath, libraryReanalysisTimeProvider),
             disableLanguageServices: false,
             disableOrganizeImports: false,
             disableWorkspaceSymbol: false,
@@ -1413,7 +1457,12 @@ export abstract class LanguageServerBase implements LanguageServerInterface {
         }
 
         const serverInitiatedReporter = await this._connection.window.createWorkDoneProgress();
-        serverInitiatedReporter.begin(title, undefined, undefined, true);
+        serverInitiatedReporter.begin(
+            title,
+            /* percentage */ undefined,
+            /* message */ undefined,
+            /* cancellable */ true
+        );
 
         return {
             reporter: serverInitiatedReporter,

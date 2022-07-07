@@ -1,7 +1,8 @@
 import os
 import sys
 from _typeshed import BytesPath, StrOrBytesPath, StrPath, SupportsRead, SupportsWrite
-from typing import Any, AnyStr, Callable, Iterable, NamedTuple, Sequence, TypeVar, overload
+from collections.abc import Callable, Iterable, Sequence
+from typing import Any, AnyStr, NamedTuple, TypeVar, overload
 from typing_extensions import TypeAlias
 
 __all__ = [
@@ -37,7 +38,7 @@ _StrOrBytesPathT = TypeVar("_StrOrBytesPathT", bound=StrOrBytesPath)
 _StrPathT = TypeVar("_StrPathT", bound=StrPath)
 # Return value of some functions that may either return a path-like object that was passed in or
 # a string
-_PathReturn = Any
+_PathReturn: TypeAlias = Any
 
 class Error(OSError): ...
 class SameFileError(Error): ...
@@ -66,7 +67,7 @@ if sys.version_info >= (3, 8):
         dst: StrPath,
         symlinks: bool = ...,
         ignore: None | Callable[[str, list[str]], Iterable[str]] | Callable[[StrPath, list[str]], Iterable[str]] = ...,
-        copy_function: Callable[[str, str], None] = ...,
+        copy_function: Callable[[str, str], object] = ...,
         ignore_dangling_symlinks: bool = ...,
         dirs_exist_ok: bool = ...,
     ) -> _PathReturn: ...
@@ -77,13 +78,23 @@ else:
         dst: StrPath,
         symlinks: bool = ...,
         ignore: None | Callable[[str, list[str]], Iterable[str]] | Callable[[StrPath, list[str]], Iterable[str]] = ...,
-        copy_function: Callable[[str, str], None] = ...,
+        copy_function: Callable[[str, str], object] = ...,
         ignore_dangling_symlinks: bool = ...,
     ) -> _PathReturn: ...
 
-def rmtree(path: StrOrBytesPath, ignore_errors: bool = ..., onerror: Callable[[Any, Any, Any], Any] | None = ...) -> None: ...
+if sys.version_info >= (3, 11):
+    def rmtree(
+        path: StrOrBytesPath,
+        ignore_errors: bool = ...,
+        onerror: Callable[[Any, Any, Any], Any] | None = ...,
+        *,
+        dir_fd: int | None = ...,
+    ) -> None: ...
 
-_CopyFn: TypeAlias = Callable[[str, str], None] | Callable[[StrPath, StrPath], None]
+else:
+    def rmtree(path: StrOrBytesPath, ignore_errors: bool = ..., onerror: Callable[[Any, Any, Any], Any] | None = ...) -> None: ...
+
+_CopyFn: TypeAlias = Callable[[str, str], object] | Callable[[StrPath, StrPath], object]
 
 # N.B. shutil.move appears to take bytes arguments, however,
 # this does not work when dst is (or is within) an existing directory.

@@ -33,7 +33,8 @@ import {
     UnknownType,
 } from './types';
 import {
-    CanAssignFlags,
+    applySolvedTypeVars,
+    AssignTypeFlags,
     computeMroLinearization,
     getTypeVarScopeId,
     isProperty,
@@ -150,7 +151,7 @@ export function clonePropertyWithSetter(
                 // The setter type should be assignable to the getter type.
                 if (fileInfo.diagnosticRuleSet.reportPropertyTypeMismatch !== 'none') {
                     const diag = new DiagnosticAddendum();
-                    if (!evaluator.canAssignType(fgetType, fsetType, diag)) {
+                    if (!evaluator.assignType(fgetType, fsetType, diag)) {
                         evaluator.addDiagnostic(
                             fileInfo.diagnosticRuleSet.reportPropertyTypeMismatch,
                             DiagnosticRule.reportPropertyTypeMismatch,
@@ -182,8 +183,8 @@ export function clonePropertyWithSetter(
     propertyClass.details.baseClasses.push(isInstantiableClass(objectType) ? objectType : UnknownType.create());
     computeMroLinearization(propertyClass);
 
-    const propertyObject = ClassType.cloneAsInstance(propertyClass);
     propertyClass.isAsymmetricDescriptor = isAsymmetricDescriptor;
+    const propertyObject = ClassType.cloneAsInstance(propertyClass);
 
     // Clone the symbol table of the old class type.
     const fields = propertyClass.details.fields;
@@ -442,7 +443,7 @@ function addDecoratorMethodsToPropertySymbolTable(propertyObject: ClassType) {
     });
 }
 
-export function canAssignProperty(
+export function assignProperty(
     evaluator: TypeEvaluator,
     destPropertyType: ClassType,
     srcPropertyType: ClassType,
@@ -450,6 +451,7 @@ export function canAssignProperty(
     srcClass: ClassType,
     diag: DiagnosticAddendum | undefined,
     typeVarContext?: TypeVarContext,
+    selfTypeVarContext?: TypeVarContext,
     recursionCount = 0
 ): boolean {
     const objectToBind = ClassType.cloneAsInstance(srcClass);
@@ -481,15 +483,22 @@ export function canAssignProperty(
             let srcAccessType = srcAccessSymbol ? evaluator.getDeclaredTypeOfSymbol(srcAccessSymbol) : undefined;
 
             if (!srcAccessType || !isFunction(srcAccessType)) {
-                if (diag) {
-                    diag.addMessage(accessorInfo.missingDiagMsg());
-                }
+                diag?.addMessage(accessorInfo.missingDiagMsg());
                 isAssignable = false;
                 return;
             }
 
+            evaluator.inferReturnTypeIfNecessary(srcAccessType);
             srcAccessType = partiallySpecializeType(srcAccessType, srcClass) as FunctionType;
+
+            evaluator.inferReturnTypeIfNecessary(destAccessType);
             destAccessType = partiallySpecializeType(destAccessType, destClass) as FunctionType;
+
+            // If the caller provided a "self" TypeVar context, replace any Self types.
+            // This is needed during protocol matching.
+            if (selfTypeVarContext) {
+                destAccessType = applySolvedTypeVars(destAccessType, selfTypeVarContext) as FunctionType;
+            }
 
             const boundDestAccessType = evaluator.bindFunctionToClassOrObject(
                 objectToBind,
@@ -509,12 +518,13 @@ export function canAssignProperty(
             if (
                 !boundDestAccessType ||
                 !boundSrcAccessType ||
-                !evaluator.canAssignType(
+                !evaluator.assignType(
                     boundDestAccessType,
                     boundSrcAccessType,
                     diag,
                     typeVarContext,
-                    CanAssignFlags.Default,
+                    /* srcTypeVarContext */ undefined,
+                    AssignTypeFlags.Default,
                     recursionCount
                 )
             ) {

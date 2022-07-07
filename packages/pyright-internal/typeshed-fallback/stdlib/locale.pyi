@@ -1,5 +1,6 @@
 import sys
 from _typeshed import StrPath
+from collections.abc import Callable, Iterable, Mapping
 
 __all__ = [
     "getlocale",
@@ -28,11 +29,14 @@ __all__ = [
     "CHAR_MAX",
 ]
 
+if sys.version_info >= (3, 11):
+    __all__ += ["getencoding"]
+
 # This module defines a function "str()", which is why "str" can't be used
 # as a type annotation or type alias.
 from builtins import str as _str
 from decimal import Decimal
-from typing import Any, Callable, Iterable, Mapping
+from typing import Any
 
 CODESET: int
 D_T_FMT: int
@@ -125,7 +129,7 @@ if sys.version_info >= (3, 7):
 else:
     def format_string(f: _str, val: Any, grouping: bool = ...) -> _str: ...
 
-def currency(val: int | float | Decimal, symbol: bool = ..., grouping: bool = ..., international: bool = ...) -> _str: ...
+def currency(val: float | Decimal, symbol: bool = ..., grouping: bool = ..., international: bool = ...) -> _str: ...
 def delocalize(string: _str) -> _str: ...
 def atof(string: _str, func: Callable[[_str], float] = ...) -> float: ...
 def atoi(string: _str) -> int: ...
@@ -141,6 +145,9 @@ if sys.platform == "linux" or sys.platform == "darwin":
     def textdomain(__domain: _str | None) -> _str: ...
     def bindtextdomain(__domain: _str, __dir: StrPath | None) -> _str: ...
     def bind_textdomain_codeset(__domain: _str, __codeset: _str | None) -> _str | None: ...
+
+if sys.version_info >= (3, 11):
+    def getencoding() -> _str: ...
 
 locale_alias: dict[_str, _str]  # undocumented
 locale_encoding_alias: dict[_str, _str]  # undocumented

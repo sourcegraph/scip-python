@@ -1,6 +1,7 @@
 import sys
 from _ast import *
-from typing import Any, Iterator, TypeVar, overload
+from collections.abc import Iterator
+from typing import Any, TypeVar, overload
 from typing_extensions import Literal
 
 if sys.version_info >= (3, 8):
@@ -258,3 +259,6 @@ if sys.version_info >= (3, 8):
     def get_source_segment(source: str, node: AST, *, padded: bool = ...) -> str | None: ...
 
 def walk(node: AST) -> Iterator[AST]: ...
+
+if sys.version_info >= (3, 9):
+    def main() -> None: ...

@@ -173,12 +173,12 @@ In addition to assignment-based type narrowing, Pyright supports the following t
 * `x == L` and `x != L` (where L is a literal expression)
 * `x.y is None` and `x.y is not None` (where x is a type that is distinguished by a field with a None)
 * `x.y is E` and `x.y is not E` (where E is a literal enum or bool and x is a type that is distinguished by a field with a literal type)
-* `x.y == L` and `x.y != L` (where L is a literal expression and x is a type that is distinguished by a field with a literal type)
+* `x.y == L` and `x.y != L` (where L is a literal expression and x is a type that is distinguished by a field or property with a literal type)
 * `x[K] == V` and `x[K] != V` (where K and V are literal expressions and x is a type that is distinguished by a TypedDict field with a literal type)
 * `x[I] == V` and `x[I] != V` (where I and V are literal expressions and x is a known-length tuple that is distinguished by the index indicated by I)
 * `x[I] is None` and `x[I] is not None` (where I is a literal expression and x is a known-length tuple that is distinguished by the index indicated by I)
 * `len(x) == L` and `len(x) != L` (where x is tuple and L is a literal integer)
-* `x in y` (where y is instance of list, set, frozenset, deque, or tuple)
+* `x in y` or `x not in y` (where y is instance of list, set, frozenset, deque, tuple, dict, defaultdict, or OrderedDict)
 * `S in D` and `S not in D` (where S is a string literal and D is a TypedDict)
 * `isinstance(x, T)` (where T is a type or a tuple of types)
 * `issubclass(x, T)` (where T is a type or a tuple of types)
@@ -415,4 +415,164 @@ Some functions or methods can return one of several different types. In cases wh
 5. If no overloads remain, Pyright considers whether any of the arguments are union types. If so, these union types are expanded into their constituent subtypes, and the entire process of overload matching is repeated with the expanded argument types. If two or more overloads match, the union of their respective return types form the final return type for the call expression.
 
 6. If no overloads remain and all unions have been expanded, a diagnostic is generated indicating that the supplied arguments are incompatible with all overload signatures.
+
+
+### Class and Instance Variables
+
+Most object-oriented languages clearly differentiate between class variables and instance variables. Python is a bit looser in that it allows an object to overwrite a class variable with an instance variable of the same name.
+
+```python
+class A:
+    my_var = 0
+
+    def my_method(self):
+        self.my_var = "hi!"
+
+a = A()
+print(A.my_var) # Class variable value of 0
+print(a.my_var) # Class variable value of 0
+
+A.my_var = 1
+print(A.my_var) # Updated class variable value of 1
+print(a.my_var) # Updated class variable value of 1
+
+a.my_method() # Writes to the instance variable my_var
+print(A.my_var) # Class variable value of 1
+print(a.my_var) # Instance variable value of "hi!"
+
+A.my_var = 2
+print(A.my_var) # Updated class variable value of 2
+print(a.my_var) # Instance variable value of "hi!"
+```
+
+Pyright differentiates between three types of variables: pure class variables, regular class variables, and pure instance variables.
+
+#### Pure Class Variables
+If a class variable is declared with a `ClassVar` annotation as described in [PEP 526](https://peps.python.org/pep-0526/#class-and-instance-variable-annotations), it is considered a “pure class variable” and cannot be overwritten by an instance variable of the same name.
+
+```python
+from typing import ClassVar
+
+class A:
+    x: ClassVar[int] = 0
+
+    def instance_method(self):
+        self.x = 1  # Type error: Cannot overwrite class variable
+    
+    @classmethod
+    def class_method(cls):
+        cls.x = 1
+
+a = A()
+print(A.x)
+print(a.x)
+
+A.x = 1
+a.x = 2  # Type error: Cannot overwrite class variable
+```
+
+#### Regular Class Variables
+If a class variable is declared without a `ClassVar` annotation, it can be overwritten by an instance variable of the same name. The declared type of the instance variable is assumed to be the same as the declared type of the class variable.
+
+Regular class variables can also be declared within a class method using a `cls` member access expression, but declaring regular class variables within the class body is more common and generally preferred for readability.
+
+```python
+class A:
+    x: int = 0
+    y: int
+
+    def instance_method(self):
+        self.x = 1
+        self.y = 2
+    
+    @classmethod
+    def class_method(cls):
+        cls.z: int = 3
+
+A.y = 0
+A.z = 0
+print(f"{A.x}, {A.y}, {A.z}")  # 0, 0, 0
+
+A.class_method()
+print(f"{A.x}, {A.y}, {A.z}")  # 0, 0, 3
+
+a = A()
+print(f"{a.x}, {a.y}, {a.z}")  # 0, 0, 3
+a.instance_method()
+print(f"{a.x}, {a.y}, {a.z}")  # 1, 2, 3
+
+a.x = "hi!"  # Error: Incompatible type
+```
+
+#### Pure Instance Variables
+If a variable is not declared within the class body but is instead declared within a class method using a `self` member access expression, it is considered a “pure instance variable”. Such variables cannot be accessed through a class reference.
+
+```python
+class A:
+    def __init__(self):
+        self.x: int = 0
+        self.y: int
+
+print(A.x)  # Error: 'x' is not a class variable
+
+a = A()
+print(a.x)
+
+a.x = 1
+a.y = 2
+print(f"{a.x}, {a.y}")  # 1, 2
+
+print(a.z)  # Error: 'z' is not an known member
+```
+
+#### Inheritance of Class and Instance Variables
+Class and instance variables are inherited from parent classes. If a parent class declares the type of a class or instance variable, a derived class must honor that type when assigning to it.
+
+```python
+class Parent:
+    x: int | str | None
+    y: int
+
+class Child(Parent):
+    x = "hi!"
+    y = None  # Error: Incompatible type
+```
+
+The derived class can redeclare the type of a class or instance variable. If `reportIncompatibleVariableOverride` is enabled, the redeclared type must be the same as the type declared by the parent class or a subtype thereof.
+
+```python
+class Parent:
+    x: int | str | None
+    y: int
+
+class Child(Parent):
+    x: int  # This is OK because 'int' is a subtype of 'int | str | None'
+    y: str  # Type error: 'y' cannot be redeclared with an incompatible type
+```
+
+If a parent class declares the type of a class or instance variable and a derived class does not redeclare it but does assign a value to it, the declared type is retained from the parent class. It is not overridden by the inferred type of the assignment in the derived class.
+
+```python
+class Parent:
+    x: object
+
+class Child(Parent):
+    x = 3
+
+reveal_type(Parent.x)  # object
+reveal_type(Child.x)  # object
+```
+
+If neither the parent nor the derived class declare the type of a class or instance variable, the type is inferred within each class.
+
+```python
+class Parent:
+    x = object()
+
+class Child(Parent):
+    x = 3
+
+reveal_type(Parent.x)  # object
+reveal_type(Child.x)  # int
+```
 

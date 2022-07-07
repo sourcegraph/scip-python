@@ -10,10 +10,10 @@
 
 import { DiagnosticRuleSet, ExecutionEnvironment } from '../common/configOptions';
 import { TextRangeDiagnosticSink } from '../common/diagnosticSink';
-import { PythonVersion } from '../common/pythonVersion';
 import { TextRange } from '../common/textRange';
 import { TextRangeCollection } from '../common/textRangeCollection';
 import { Scope } from './scope';
+import { IPythonMode } from './sourceFile';
 import { SymbolTable } from './symbol';
 
 // Maps import paths to the symbol table for the imported module.
@@ -40,6 +40,7 @@ export interface AnalyzerFileInfo {
     fileContents: string;
     lines: TextRangeCollection<TextRange>;
     typingSymbolAliases: Map<string, string>;
+    definedConstants: Map<string, boolean | string>;
     filePath: string;
     moduleName: string;
     isStubFile: boolean;
@@ -47,14 +48,10 @@ export interface AnalyzerFileInfo {
     isTypingExtensionsStubFile: boolean;
     isBuiltInStubFile: boolean;
     isInPyTypedPackage: boolean;
-    isIPythonMode: boolean;
-    accessedSymbolMap: Map<number, true>;
+    ipythonMode: IPythonMode;
+    accessedSymbolSet: Set<number>;
 }
 
 export function isAnnotationEvaluationPostponed(fileInfo: AnalyzerFileInfo) {
-    return (
-        fileInfo.futureImports.get('annotations') !== undefined ||
-        fileInfo.executionEnvironment.pythonVersion >= PythonVersion.V3_11 ||
-        fileInfo.isStubFile
-    );
+    return fileInfo.futureImports.get('annotations') !== undefined || fileInfo.isStubFile;
 }

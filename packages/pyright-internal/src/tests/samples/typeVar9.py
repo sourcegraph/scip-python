@@ -4,14 +4,14 @@
 
 # pyright: reportInvalidTypeVarUse=true
 
-from typing import Callable, Dict, Generic, List, TypeVar
+from typing import AnyStr, Callable, Dict, Generic, List, TypeVar
 
 
 _T = TypeVar("_T")
 _S = TypeVar("_S")
 
 
-class Foo(Generic[_T]):
+class A(Generic[_T]):
     def m1(self, v1: _T) -> None:
         ...
 
@@ -82,3 +82,37 @@ MyCallable = Callable[[_T], _T]
 
 def f10() -> MyCallable[_T]:
     ...
+
+
+# This should generate an error because AnyStr can go unsolved.
+def f11(x: AnyStr = ...) -> AnyStr:
+    ...
+
+
+# This should generate an error because AnyStr can go unsolved.
+def f12(x: AnyStr = ...) -> List[AnyStr]:
+    ...
+
+
+def f13(x: AnyStr = ...) -> AnyStr | None:
+    ...
+
+
+def f14(x: AnyStr = "") -> AnyStr:
+    ...
+
+
+# This should generate an error because AnyStr can go unsolved.
+def f15(x: AnyStr = ...) -> List[AnyStr] | None:
+    ...
+
+
+class B(Generic[AnyStr]):
+    # This should generate an error because AnyStr can go unsolved.
+    def __init__(self, *, mode: AnyStr = ...) -> None:
+        ...
+
+
+class C(Generic[AnyStr]):
+    def __init__(self, *, mode: AnyStr = "") -> None:
+        ...

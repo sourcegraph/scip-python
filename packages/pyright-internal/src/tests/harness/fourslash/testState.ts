@@ -59,7 +59,11 @@ import { convertOffsetToPosition, convertPositionToOffset } from '../../../commo
 import { getStringComparer } from '../../../common/stringUtils';
 import { DocumentRange, Position, Range as PositionRange, rangesAreEqual, TextRange } from '../../../common/textRange';
 import { TextRangeCollection } from '../../../common/textRangeCollection';
-import { LanguageServerInterface, WorkspaceServiceInstance } from '../../../languageServerBase';
+import {
+    LanguageServerInterface,
+    WellKnownWorkspaceKinds,
+    WorkspaceServiceInstance,
+} from '../../../languageServerBase';
 import { AbbreviationInfo } from '../../../languageService/autoImporter';
 import { DefinitionFilter } from '../../../languageService/definitionProvider';
 import { convertHoverResults } from '../../../languageService/hoverProvider';
@@ -187,9 +191,11 @@ export class TestState {
             workspaceName: 'test workspace',
             rootPath: this.fs.getModulePath(),
             rootUri: convertPathToUri(this.fs, this.fs.getModulePath()),
+            kind: WellKnownWorkspaceKinds.Test,
             serviceInstance: service,
             disableLanguageServices: false,
             disableOrganizeImports: false,
+            disableWorkspaceSymbol: false,
             isInitialized: createDeferred<boolean>(),
             searchPathsToWatch: [],
         };
@@ -238,7 +244,7 @@ export class TestState {
             this.openFile(marker.fileName);
         }
 
-        const content = this._getFileContent(marker.fileName);
+        const content = this.getFileContent(marker.fileName);
         if (marker.position === -1 || marker.position > content.length) {
             throw new Error(`Marker "${nameOrMarker}" has been invalidated by unrecoverable edits to the file.`);
         }
@@ -304,6 +310,15 @@ export class TestState {
 
         const range = ranges[0];
         return this.convertPositionRange(range);
+    }
+
+    getPosition(markerString: string): Position {
+        const marker = this.getMarkerByName(markerString);
+        const ranges = this.getRanges().filter((r) => r.marker === marker);
+        if (ranges.length !== 1) {
+            this.raiseError(`no matching range for ${markerString}`);
+        }
+        return this.convertOffsetToPosition(marker.fileName, marker.position);
     }
 
     expandPositionRange(range: PositionRange, start: number, end: number) {
@@ -410,7 +425,7 @@ export class TestState {
     }
 
     goToEOF() {
-        const len = this._getFileContent(this.activeFile.fileName).length;
+        const len = this.getFileContent(this.activeFile.fileName).length;
         this.goToPosition(len);
     }
 
@@ -418,7 +433,7 @@ export class TestState {
         this.currentCaretPosition += count;
         this.currentCaretPosition = Math.min(
             this.currentCaretPosition,
-            this._getFileContent(this.activeFile.fileName).length
+            this.getFileContent(this.activeFile.fileName).length
         );
         this.selectionEnd = -1;
     }
@@ -442,7 +457,7 @@ export class TestState {
         for (const file of this.testData.files) {
             const active = this.activeFile === file;
             host.HOST.log(`=== Script (${file.fileName}) ${active ? '(active, cursor at |)' : ''} ===`);
-            let content = this._getFileContent(file.fileName);
+            let content = this.getFileContent(file.fileName);
             if (active) {
                 content =
                     content.substr(0, this.currentCaretPosition) +
@@ -1030,7 +1045,7 @@ export class TestState {
     }
 
     verifyTextAtCaretIs(text: string) {
-        const actual = this._getFileContent(this.activeFile.fileName).substring(
+        const actual = this.getFileContent(this.activeFile.fileName).substring(
             this.currentCaretPosition,
             this.currentCaretPosition + text.length
         );
@@ -1068,6 +1083,8 @@ export class TestState {
                 continue;
             }
 
+            this.lastKnownMarker = markerName;
+
             const filePath = marker.fileName;
             const expectedCompletions = map[markerName].completions;
             const completionPosition = this.convertOffsetToPosition(filePath, marker.position);
@@ -1083,7 +1100,7 @@ export class TestState {
                 CancellationToken.None
             );
 
-            if (result?.completionList) {
+            if (result) {
                 if (verifyMode === 'exact') {
                     if (result.completionList.items.length !== expectedCompletions.length) {
                         assert.fail(
@@ -1510,19 +1527,19 @@ export class TestState {
         return configOptions;
     }
 
-    private _getFileContent(fileName: string): string {
+    protected getFileContent(fileName: string): string {
         const files = this.testData.files.filter(
             (f) => comparePaths(f.fileName, fileName, this.testFS.ignoreCase) === Comparison.EqualTo
         );
         return files[0].content;
     }
 
-    protected convertPositionToOffset(fileName: string, position: Position): number {
+    convertPositionToOffset(fileName: string, position: Position): number {
         const lines = this._getTextRangeCollection(fileName);
         return convertPositionToOffset(position, lines)!;
     }
 
-    protected convertOffsetToPosition(fileName: string, offset: number): Position {
+    convertOffsetToPosition(fileName: string, offset: number): Position {
         const lines = this._getTextRangeCollection(fileName);
 
         return convertOffsetToPosition(offset, lines);
@@ -1628,7 +1645,7 @@ export class TestState {
     }
 
     protected _rangeText({ fileName, pos, end }: Range): string {
-        return this._getFileContent(fileName).slice(pos, end);
+        return this.getFileContent(fileName).slice(pos, end);
     }
 
     private _getOnlyRange() {
@@ -1641,7 +1658,7 @@ export class TestState {
     }
 
     private _verifyFileContent(fileName: string, text: string) {
-        const actual = this._getFileContent(fileName);
+        const actual = this.getFileContent(fileName);
         if (actual !== text) {
             throw new Error(`verifyFileContent failed:\n${this._showTextDiff(text, actual)}`);
         }
@@ -1664,7 +1681,7 @@ export class TestState {
     }
 
     private _getLineContent(index: number) {
-        const text = this._getFileContent(this.activeFile.fileName);
+        const text = this.getFileContent(this.activeFile.fileName);
         const pos = this.convertPositionToOffset(this.activeFile.fileName, { line: index, character: 0 });
         let startPos = pos;
         let endPos = pos;
@@ -1818,14 +1835,12 @@ export class TestState {
         configOptions: ConfigOptions
     ) {
         // we do not initiate automatic analysis or file watcher in test.
-        const service = new AnalyzerService(
-            'test service',
-            this.fs,
-            nullConsole,
-            () => testAccessHost,
+        const service = new AnalyzerService('test service', this.fs, {
+            console: nullConsole,
+            hostFactory: () => testAccessHost,
             importResolverFactory,
-            configOptions
-        );
+            configOptions,
+        });
 
         // directly set files to track rather than using fileSpec from config
         // to discover those files from file system
@@ -1940,6 +1955,10 @@ export class TestState {
         assert.strictEqual(actual.insertText, expected.insertionText);
         this._verifyEdit(actual.textEdit as TextEdit, expected.textEdit);
         this._verifyEdits(actual.additionalTextEdits, expected.additionalTextEdits);
+
+        if (expected.detailDescription !== undefined) {
+            assert.strictEqual(actual.labelDetails?.description, expected.detailDescription);
+        }
     }
 }
 

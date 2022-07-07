@@ -16,6 +16,12 @@ import { ConfigOptions } from '../common/configOptions';
 import { PythonVersion } from '../common/pythonVersion';
 import * as TestUtils from './testUtils';
 
+test('Unreachable1', () => {
+    const analysisResults = TestUtils.typeAnalyzeSampleFiles(['unreachable1.py']);
+
+    TestUtils.validateResults(analysisResults, 0, 0, 2, 5);
+});
+
 test('Builtins1', () => {
     const analysisResults = TestUtils.typeAnalyzeSampleFiles(['builtins1.py']);
 
@@ -368,6 +374,18 @@ test('TypeNarrowingIsinstance7', () => {
     TestUtils.validateResults(analysisResults, 0);
 });
 
+test('TypeNarrowingIsinstance8', () => {
+    const analysisResults = TestUtils.typeAnalyzeSampleFiles(['typeNarrowingIsinstance8.py']);
+
+    TestUtils.validateResults(analysisResults, 0);
+});
+
+test('TypeNarrowingIsinstance10', () => {
+    const analysisResults = TestUtils.typeAnalyzeSampleFiles(['typeNarrowingIsinstance10.py']);
+
+    TestUtils.validateResults(analysisResults, 0);
+});
+
 test('TypeNarrowingTupleLength1', () => {
     const analysisResults = TestUtils.typeAnalyzeSampleFiles(['typeNarrowingTupleLength1.py']);
 
@@ -698,12 +716,6 @@ test('KwargsUnpack1', () => {
     TestUtils.validateResults(analysisResults, 11);
 });
 
-test('Unreachable1', () => {
-    const analysisResults = TestUtils.typeAnalyzeSampleFiles(['unreachable1.py']);
-
-    TestUtils.validateResults(analysisResults, 0, 0, 0, 2);
-});
-
 test('FunctionMember1', () => {
     // Analyze with reportFunctionMemberAccess disabled.
     const analysisResult1 = TestUtils.typeAnalyzeSampleFiles(['functionMember1.py']);
@@ -725,7 +737,7 @@ test('FunctionMember2', () => {
 test('Annotations1', () => {
     const analysisResults = TestUtils.typeAnalyzeSampleFiles(['annotations1.py']);
 
-    TestUtils.validateResults(analysisResults, 7);
+    TestUtils.validateResults(analysisResults, 9);
 });
 
 test('Annotations2', () => {
@@ -743,7 +755,7 @@ test('Annotations3', () => {
 test('Annotations4', () => {
     const analysisResults = TestUtils.typeAnalyzeSampleFiles(['annotations4.py']);
 
-    TestUtils.validateResults(analysisResults, 9);
+    TestUtils.validateResults(analysisResults, 8);
 });
 
 test('Annotations5', () => {
@@ -794,6 +806,23 @@ test('AnnotatedVar6', () => {
     TestUtils.validateResults(analysisResults, 0);
 });
 
+test('AnnotatedVar7', () => {
+    const configOptions = new ConfigOptions('.');
+
+    const analysisResults1 = TestUtils.typeAnalyzeSampleFiles(['annotatedVar7.py'], configOptions);
+    TestUtils.validateResults(analysisResults1, 0);
+
+    configOptions.diagnosticRuleSet.reportTypeCommentUsage = 'error';
+    const analysisResults2 = TestUtils.typeAnalyzeSampleFiles(['annotatedVar7.py'], configOptions);
+    TestUtils.validateResults(analysisResults2, 3);
+});
+
+test('AnnotatedVar8', () => {
+    const analysisResults = TestUtils.typeAnalyzeSampleFiles(['annotatedVar8.py']);
+
+    TestUtils.validateResults(analysisResults, 4);
+});
+
 test('CodeFlow1', () => {
     const analysisResults = TestUtils.typeAnalyzeSampleFiles(['codeFlow1.py']);
 
@@ -820,6 +849,18 @@ test('CodeFlow4', () => {
 
 test('CodeFlow5', () => {
     const analysisResults = TestUtils.typeAnalyzeSampleFiles(['codeFlow5.py']);
+
+    TestUtils.validateResults(analysisResults, 0);
+});
+
+test('CodeFlow6', () => {
+    const analysisResults = TestUtils.typeAnalyzeSampleFiles(['codeFlow6.py']);
+
+    TestUtils.validateResults(analysisResults, 0);
+});
+
+test('CodeFlow7', () => {
+    const analysisResults = TestUtils.typeAnalyzeSampleFiles(['codeFlow7.py']);
 
     TestUtils.validateResults(analysisResults, 0);
 });
@@ -919,7 +960,7 @@ test('Properties13', () => {
 test('Operators1', () => {
     const analysisResults = TestUtils.typeAnalyzeSampleFiles(['operators1.py']);
 
-    TestUtils.validateResults(analysisResults, 4);
+    TestUtils.validateResults(analysisResults, 5);
 });
 
 test('Operators2', () => {
@@ -1090,12 +1131,6 @@ test('Tuples13', () => {
     TestUtils.validateResults(analysisResults, 0);
 });
 
-test('Tuples14', () => {
-    const analysisResults = TestUtils.typeAnalyzeSampleFiles(['tuples14.py']);
-
-    TestUtils.validateResults(analysisResults, 0);
-});
-
 test('Tuples15', () => {
     const analysisResults = TestUtils.typeAnalyzeSampleFiles(['tuples15.py']);
 
@@ -1123,7 +1158,7 @@ test('NamedTuples2', () => {
 test('NamedTuples3', () => {
     const analysisResults = TestUtils.typeAnalyzeSampleFiles(['namedTuples3.py']);
 
-    TestUtils.validateResults(analysisResults, 2);
+    TestUtils.validateResults(analysisResults, 1);
 });
 
 test('NamedTuples4', () => {
@@ -1142,6 +1177,12 @@ test('NamedTuples6', () => {
     const analysisResults = TestUtils.typeAnalyzeSampleFiles(['namedTuples6.py']);
 
     TestUtils.validateResults(analysisResults, 3);
+});
+
+test('NamedTuples7', () => {
+    const analysisResults = TestUtils.typeAnalyzeSampleFiles(['namedTuples7.py']);
+
+    TestUtils.validateResults(analysisResults, 1);
 });
 
 test('Slots1', () => {
@@ -1222,6 +1263,12 @@ test('Descriptor1', () => {
     TestUtils.validateResults(analysisResults, 6);
 });
 
+test('Descriptor2', () => {
+    const analysisResults = TestUtils.typeAnalyzeSampleFiles(['descriptor2.py']);
+
+    TestUtils.validateResults(analysisResults, 0);
+});
+
 test('Partial1', () => {
     const analysisResults = TestUtils.typeAnalyzeSampleFiles(['partial1.py']);
 
@@ -1237,7 +1284,7 @@ test('Partial2', () => {
 test('TotalOrdering1', () => {
     const analysisResults = TestUtils.typeAnalyzeSampleFiles(['totalOrdering1.py']);
 
-    TestUtils.validateResults(analysisResults, 1);
+    TestUtils.validateResults(analysisResults, 5);
 });
 
 test('TupleUnpack1', () => {
@@ -1278,6 +1325,12 @@ test('LiteralString1', () => {
     TestUtils.validateResults(analysisResults, 6);
 });
 
+test('LiteralString2', () => {
+    const analysisResults = TestUtils.typeAnalyzeSampleFiles(['literalString2.py']);
+
+    TestUtils.validateResults(analysisResults, 0);
+});
+
 test('ParamInference1', () => {
     const analysisResults = TestUtils.typeAnalyzeSampleFiles(['paramInference1.py']);
 
@@ -1306,4 +1359,26 @@ test('Dictionary4', () => {
     const analysisResults = TestUtils.typeAnalyzeSampleFiles(['dictionary4.py']);
 
     TestUtils.validateResults(analysisResults, 0);
+});
+
+test('StaticExpressions1', () => {
+    const configOptions = new ConfigOptions('.');
+
+    configOptions.defaultPythonVersion = PythonVersion.V3_8;
+    configOptions.defaultPythonPlatform = 'windows';
+
+    const analysisResults1 = TestUtils.typeAnalyzeSampleFiles(['staticExpressions1.py'], configOptions);
+    TestUtils.validateResults(analysisResults1, 6);
+
+    configOptions.defaultPythonVersion = PythonVersion.V3_11;
+    configOptions.defaultPythonPlatform = 'Linux';
+
+    const analysisResults2 = TestUtils.typeAnalyzeSampleFiles(['staticExpressions1.py'], configOptions);
+    TestUtils.validateResults(analysisResults2, 3);
+
+    configOptions.defineConstant.set('DEFINED_TRUE', true);
+    configOptions.defineConstant.set('DEFINED_FALSE', false);
+    configOptions.defineConstant.set('DEFINED_STR', 'hi!');
+    const analysisResults3 = TestUtils.typeAnalyzeSampleFiles(['staticExpressions1.py'], configOptions);
+    TestUtils.validateResults(analysisResults3, 0);
 });

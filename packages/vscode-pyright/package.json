@@ -2,7 +2,7 @@
     "name": "vscode-pyright",
     "displayName": "Pyright",
     "description": "VS Code static type checking for Python",
-    "version": "1.1.238",
+    "version": "1.1.257",
     "private": true,
     "license": "MIT",
     "author": {
@@ -14,7 +14,7 @@
         "url": "https://github.com/Microsoft/pyright"
     },
     "engines": {
-        "vscode": "^1.63.1"
+        "vscode": "^1.67.0"
     },
     "keywords": [
         "python"
@@ -380,6 +380,17 @@
                         "reportPrivateUsage": {
                             "type": "string",
                             "description": "Diagnostics for incorrect usage of private or protected variables or functions. Protected class members begin with a single underscore _ and can be accessed only by subclasses. Private class members begin with a double underscore but do not end in a double underscore and can be accessed only within the declaring class. Variables and functions declared outside of a class are considered private if their names start with either a single or double underscore, and they cannot be accessed outside of the declaring module.",
+                            "default": "none",
+                            "enum": [
+                                "none",
+                                "information",
+                                "warning",
+                                "error"
+                            ]
+                        },
+                        "reportTypeCommentUsage": {
+                            "type": "string",
+                            "description": "Diagnostics for usage of deprecated type comments.",
                             "default": "none",
                             "enum": [
                                 "none",
@@ -844,22 +855,22 @@
         "webpack-dev": "npm run clean && webpack --mode development --watch --progress"
     },
     "dependencies": {
-        "vscode-jsonrpc": "6.0.0",
-        "vscode-languageclient": "7.0.0",
-        "vscode-languageserver": "7.0.0",
-        "vscode-languageserver-protocol": "3.16.0"
+        "vscode-jsonrpc": "8.0.2-next.1",
+        "vscode-languageclient": "8.0.2-next.4",
+        "vscode-languageserver": "8.0.2-next.4",
+        "vscode-languageserver-protocol": "3.17.2-next.5"
     },
     "devDependencies": {
         "@types/copy-webpack-plugin": "^10.1.0",
-        "@types/node": "^17.0.14",
-        "@types/vscode": "~1.63.1",
+        "@types/node": "^17.0.45",
+        "@types/vscode": "~1.67.0",
         "copy-webpack-plugin": "^10.2.4",
         "detect-indent": "^6.1.0",
         "shx": "^0.3.4",
-        "ts-loader": "^9.2.6",
+        "ts-loader": "^9.3.1",
         "typescript": "~4.4.4",
         "vsce": "^2.7.0",
-        "webpack": "^5.68.0",
-        "webpack-cli": "^4.9.2"
+        "webpack": "^5.73.0",
+        "webpack-cli": "^4.10.0"
     }
 }

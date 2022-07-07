@@ -126,6 +126,12 @@ test('Await1', () => {
     TestUtils.validateResults(analysisResults, 0);
 });
 
+test('Await2', () => {
+    const analysisResults = TestUtils.typeAnalyzeSampleFiles(['await2.py']);
+
+    TestUtils.validateResults(analysisResults, 0);
+});
+
 test('Coroutines1', () => {
     const analysisResults = TestUtils.typeAnalyzeSampleFiles(['coroutines1.py']);
 
@@ -287,10 +293,28 @@ test('Loops23', () => {
     TestUtils.validateResults(analysisResults, 0);
 });
 
+test('Loops24', () => {
+    const analysisResults = TestUtils.typeAnalyzeSampleFiles(['loops24.py']);
+
+    TestUtils.validateResults(analysisResults, 0);
+});
+
+test('Loops25', () => {
+    const analysisResults = TestUtils.typeAnalyzeSampleFiles(['loops25.py']);
+
+    TestUtils.validateResults(analysisResults, 0);
+});
+
+test('Loops26', () => {
+    const analysisResults = TestUtils.typeAnalyzeSampleFiles(['loops26.py']);
+
+    TestUtils.validateResults(analysisResults, 0);
+});
+
 test('ForLoop1', () => {
     const analysisResults = TestUtils.typeAnalyzeSampleFiles(['forLoop1.py']);
 
-    TestUtils.validateResults(analysisResults, 3);
+    TestUtils.validateResults(analysisResults, 4);
 });
 
 test('ForLoop2', () => {
@@ -485,6 +509,18 @@ test('TypeAlias14', () => {
     TestUtils.validateResults(analysisResults, 0);
 });
 
+test('TypeAlias15', () => {
+    const analysisResults = TestUtils.typeAnalyzeSampleFiles(['typeAlias15.py']);
+
+    TestUtils.validateResults(analysisResults, 0);
+});
+
+test('TypeAlias16', () => {
+    const analysisResults = TestUtils.typeAnalyzeSampleFiles(['typeAlias16.py']);
+
+    TestUtils.validateResults(analysisResults, 0);
+});
+
 test('RecursiveTypeAlias1', () => {
     const analysisResults = TestUtils.typeAnalyzeSampleFiles(['recursiveTypeAlias1.py']);
 
@@ -601,7 +637,7 @@ test('MethodOverride1', () => {
     // Turn on errors.
     configOptions.diagnosticRuleSet.reportIncompatibleMethodOverride = 'error';
     analysisResults = TestUtils.typeAnalyzeSampleFiles(['methodOverride1.py'], configOptions);
-    TestUtils.validateResults(analysisResults, 25);
+    TestUtils.validateResults(analysisResults, 34);
 });
 
 test('MethodOverride2', () => {
@@ -628,6 +664,11 @@ test('MethodOverride3', () => {
     configOptions.diagnosticRuleSet.reportIncompatibleMethodOverride = 'error';
     analysisResults = TestUtils.typeAnalyzeSampleFiles(['methodOverride3.py'], configOptions);
     TestUtils.validateResults(analysisResults, 3);
+});
+
+test('MethodOverride4', () => {
+    const analysisResults = TestUtils.typeAnalyzeSampleFiles(['methodOverride4.py']);
+    TestUtils.validateResults(analysisResults, 0);
 });
 
 test('Enums1', () => {
@@ -694,6 +735,12 @@ test('TypeGuard3', () => {
     const analysisResults = TestUtils.typeAnalyzeSampleFiles(['typeGuard3.py']);
 
     TestUtils.validateResults(analysisResults, 1);
+});
+
+test('TypeGuard4', () => {
+    const analysisResults = TestUtils.typeAnalyzeSampleFiles(['typeGuard4.py']);
+
+    TestUtils.validateResults(analysisResults, 0);
 });
 
 test('Never1', () => {
@@ -865,7 +912,7 @@ test('Match3', () => {
 
     configOptions.defaultPythonVersion = PythonVersion.V3_10;
     const analysisResults = TestUtils.typeAnalyzeSampleFiles(['match3.py'], configOptions);
-    TestUtils.validateResults(analysisResults, 5);
+    TestUtils.validateResults(analysisResults, 4);
 });
 
 test('Match4', () => {
@@ -931,7 +978,7 @@ test('Match10', () => {
 
 test('List1', () => {
     const analysisResults = TestUtils.typeAnalyzeSampleFiles(['list1.py']);
-    TestUtils.validateResults(analysisResults, 0);
+    TestUtils.validateResults(analysisResults, 1);
 });
 
 test('Comparison1', () => {
@@ -1118,6 +1165,17 @@ test('FunctionAnnotation3', () => {
     TestUtils.validateResults(analysisResults, 2);
 });
 
+test('FunctionAnnotation4', () => {
+    const configOptions = new ConfigOptions('.');
+
+    const analysisResults1 = TestUtils.typeAnalyzeSampleFiles(['functionAnnotation4.py'], configOptions);
+    TestUtils.validateResults(analysisResults1, 0);
+
+    configOptions.diagnosticRuleSet.reportTypeCommentUsage = 'error';
+    const analysisResults2 = TestUtils.typeAnalyzeSampleFiles(['functionAnnotation4.py'], configOptions);
+    TestUtils.validateResults(analysisResults2, 3);
+});
+
 test('Subscript1', () => {
     const configOptions = new ConfigOptions('.');
 
@@ -1192,6 +1250,12 @@ test('Decorator5', () => {
 
 test('Decorator6', () => {
     const analysisResults = TestUtils.typeAnalyzeSampleFiles(['decorator6.py']);
+
+    TestUtils.validateResults(analysisResults, 0);
+});
+
+test('Decorator7', () => {
+    const analysisResults = TestUtils.typeAnalyzeSampleFiles(['decorator7.py']);
 
     TestUtils.validateResults(analysisResults, 0);
 });

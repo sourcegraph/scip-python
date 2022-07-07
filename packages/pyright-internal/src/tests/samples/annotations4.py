@@ -1,6 +1,7 @@
 # This sample tests the type checker's reporting of
 # incompatible declared types.
 
+from collections.abc import Callable
 from typing import List
 
 
@@ -8,9 +9,7 @@ def a():
     pass
 
 
-# This should generate two errors - one for
-# overriding the function declaration and another
-# for an incompatible assignment.
+# This should generate an error for an incompatible assignment.
 a = 1
 
 # This should generate an error for an obscured type.
@@ -34,7 +33,7 @@ def d():
 
 
 class Foo:
-    # This should generate an error because of an
+    # This should generate an error because aa is redeclared.
     aa: int
 
     def aa(self):
@@ -52,3 +51,18 @@ def my_func(param1: int, param2):
 e: List[int]
 e = [3]
 e: List[int]
+
+
+def register(fn: Callable[[], None]) -> None:
+    ...
+
+
+# These should be be fine because they use the "_" name.
+@register
+def _():
+    print("Callback 1 called")
+
+
+@register
+def _():
+    print("Callback 2 called")

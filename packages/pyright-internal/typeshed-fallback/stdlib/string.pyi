@@ -1,6 +1,7 @@
 import sys
+from collections.abc import Iterable, Mapping, Sequence
 from re import RegexFlag
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any
 
 if sys.version_info >= (3, 8):
     from re import Pattern
@@ -44,6 +45,9 @@ class Template:
     def __init__(self, template: str) -> None: ...
     def substitute(self, __mapping: Mapping[str, object] = ..., **kwds: object) -> str: ...
     def safe_substitute(self, __mapping: Mapping[str, object] = ..., **kwds: object) -> str: ...
+    if sys.version_info >= (3, 11):
+        def get_identifiers(self) -> list[str]: ...
+        def is_valid(self) -> bool: ...
 
 # TODO(MichalPokorny): This is probably badly and/or loosely typed.
 class Formatter:

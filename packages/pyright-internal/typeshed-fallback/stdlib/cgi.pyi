@@ -1,43 +1,27 @@
 import sys
 from _typeshed import Self, SupportsGetItem, SupportsItemAccess
-from builtins import type as _type
+from builtins import list as _list, type as _type
 from collections.abc import Iterable, Iterator, Mapping
 from types import TracebackType
 from typing import IO, Any, Protocol
 
-if sys.version_info >= (3, 8):
-    __all__ = [
-        "MiniFieldStorage",
-        "FieldStorage",
-        "parse",
-        "parse_multipart",
-        "parse_header",
-        "test",
-        "print_exception",
-        "print_environ",
-        "print_form",
-        "print_directory",
-        "print_arguments",
-        "print_environ_usage",
-    ]
-else:
-    __all__ = [
-        "MiniFieldStorage",
-        "FieldStorage",
-        "parse",
-        "parse_qs",
-        "parse_qsl",
-        "parse_multipart",
-        "parse_header",
-        "test",
-        "print_exception",
-        "print_environ",
-        "print_form",
-        "print_directory",
-        "print_arguments",
-        "print_environ_usage",
-        "escape",
-    ]
+__all__ = [
+    "MiniFieldStorage",
+    "FieldStorage",
+    "parse",
+    "parse_multipart",
+    "parse_header",
+    "test",
+    "print_exception",
+    "print_environ",
+    "print_form",
+    "print_directory",
+    "print_arguments",
+    "print_environ_usage",
+]
+
+if sys.version_info < (3, 8):
+    __all__ += ["parse_qs", "parse_qsl", "escape"]
 
 def parse(
     fp: IO[Any] | None = ...,
@@ -86,8 +70,6 @@ class MiniFieldStorage:
     name: Any
     value: Any
     def __init__(self, name: Any, value: Any) -> None: ...
-
-_list = list
 
 class FieldStorage:
     FieldStorageClass: _type | None

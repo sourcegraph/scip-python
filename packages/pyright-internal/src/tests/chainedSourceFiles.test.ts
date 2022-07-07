@@ -12,6 +12,7 @@ import { MarkupKind } from 'vscode-languageserver-types';
 
 import { Program } from '../analyzer/program';
 import { AnalyzerService } from '../analyzer/service';
+import { IPythonMode } from '../analyzer/sourceFile';
 import { ConfigOptions } from '../common/configOptions';
 import { NullConsole } from '../common/console';
 import { normalizeSlashes } from '../common/pathUtils';
@@ -57,9 +58,9 @@ test('check chained files', async () => {
         CancellationToken.None
     );
 
-    assert(result?.completionList?.items.some((i) => i.label === 'foo1'));
-    assert(result?.completionList?.items.some((i) => i.label === 'foo2'));
-    assert(result?.completionList?.items.some((i) => i.label === 'foo3'));
+    assert(result?.completionList.items.some((i) => i.label === 'foo1'));
+    assert(result?.completionList.items.some((i) => i.label === 'foo2'));
+    assert(result?.completionList.items.some((i) => i.label === 'foo3'));
 });
 
 test('modify chained files', async () => {
@@ -104,9 +105,9 @@ test('modify chained files', async () => {
 
     assert(result);
 
-    assert(!result.completionList?.items.some((i) => i.label === 'foo1'));
-    assert(!result.completionList?.items.some((i) => i.label === 'foo2'));
-    assert(result.completionList?.items.some((i) => i.label === 'foo3'));
+    assert(!result.completionList.items.some((i) => i.label === 'foo1'));
+    assert(!result.completionList.items.some((i) => i.label === 'foo2'));
+    assert(result.completionList.items.some((i) => i.label === 'foo3'));
 });
 
 test('modify chained files', async () => {
@@ -160,17 +161,19 @@ function createServiceWithChainedSourceFiles(basePath: string, code: string) {
     const service = new AnalyzerService(
         'test service',
         createFromFileSystem(host.HOST, /*ignoreCase*/ false, { cwd: basePath }),
-        new NullConsole(),
-        () => new TestAccessHost(vfs.MODULE_PATH, [libFolder, distlibFolder]),
-        AnalyzerService.createImportResolver,
-        new ConfigOptions(basePath)
+        {
+            console: new NullConsole(),
+            hostFactory: () => new TestAccessHost(vfs.MODULE_PATH, [libFolder, distlibFolder]),
+            importResolverFactory: AnalyzerService.createImportResolver,
+            configOptions: new ConfigOptions(basePath),
+        }
     );
 
     const data = parseTestData(basePath, code, '');
 
     let chainedFilePath: string | undefined;
     for (const file of data.files) {
-        service.setFileOpened(file.fileName, 1, file.content, false, chainedFilePath);
+        service.setFileOpened(file.fileName, 1, file.content, IPythonMode.None, chainedFilePath);
         chainedFilePath = file.fileName;
     }
     return { data, service };
