@@ -3,7 +3,13 @@
 
 from typing import Any
 #    ^^^^^^ reference  python-stdlib 3.10 typing/__init__:
+#    external documentation ```python
+#                > (module) typing
+#                > ```
 #                  ^^^ reference  python-stdlib 3.10 typing/Any.
+#                  external documentation ```python
+#                              > (variable) Any: Any
+#                              > ```
 
 print(Any)
 #^^^^ reference  python-stdlib 3.10 builtins/__init__:print().

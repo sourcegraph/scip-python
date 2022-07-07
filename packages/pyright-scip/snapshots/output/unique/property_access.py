@@ -3,6 +3,9 @@
 
 from typing import Sequence
 #    ^^^^^^ reference  python-stdlib 3.10 typing/__init__:
+#    external documentation ```python
+#                > (module) typing
+#                > ```
 #                  ^^^^^^^^ reference  python-stdlib 3.10 typing/Sequence#
 
 class PropertyClass:

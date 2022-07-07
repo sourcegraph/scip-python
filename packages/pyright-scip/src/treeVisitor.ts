@@ -409,13 +409,18 @@ export class TreeVisitor extends ParseTreeWalker {
     // and then declare the new symbol for the entire module. This gives us better
     // clicking for goto-def in Sourcegraph
     override visitImportFrom(node: ImportFromNode): boolean {
+        const symbol = this.getScipSymbol(node);
         this.document.occurrences.push(
             new scip.Occurrence({
                 symbol_roles: scip.SymbolRole.ReadAccess,
-                symbol: this.getScipSymbol(node).value,
+                symbol: symbol.value,
                 range: parseNodeToRange(node.module, this.fileInfo!.lines).toLsif(),
             })
         );
+        const symbolPackage = this.moduleNameNodeToPythonPackage(node.module);
+        if (symbolPackage === this.stdlibPackage) {
+            this.emitExternalSymbolInformation(node.module, symbol, []);
+        }
 
         node.imports.forEach((imp) => this.walk(imp));
         return false;
@@ -809,8 +814,9 @@ export class TreeVisitor extends ParseTreeWalker {
             if (moduleName == 'builtins') {
                 return this.emitBuiltinScipSymbol(node);
             } else if (Hardcoded.stdlib_module_names.has(moduleName)) {
-                // return this.makeBuiltinLsifSymbol(node, nodeFileInfo);
-                return this.makeScipSymbol(this.stdlibPackage, moduleName, node);
+                const symbol = this.makeScipSymbol(this.stdlibPackage, moduleName, node);
+                this.emitExternalSymbolInformation(node, symbol, []);
+                return symbol;
             }
         }
 
