@@ -1,10 +1,6 @@
 FROM nikolaik/python-nodejs:python3.10-nodejs16-alpine@sha256:ee162a5bed4b1550a469d16cbbfe99b63132c2cbc0ff2d0eaccca2bed3c3bfa8
 
-# DO_NOT_MERGE
-ADD . / scip-python/
-RUN (cd scip-python/packages/pyright-scip; npm install; npm link)
-
 RUN apk add --no-cache git bash curl
-# RUN npm install -g @sourcegraph/scip-python @sourcegraph/src
+RUN npm install -g @sourcegraph/scip-python @sourcegraph/src
 
 CMD ["/bin/sh"]

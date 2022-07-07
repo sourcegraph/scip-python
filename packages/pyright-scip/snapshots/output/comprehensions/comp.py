@@ -15,20 +15,35 @@ def something(x):
 _ = [x for x in "should be local 0"]
 #    ^ reference local 0
 #          ^ definition local 0
+#          documentation ```python
+#                      > (variable) x: str
+#                      > ```
 _ = [something(x) for x in "should be local 1"]
 #    ^^^^^^^^^ reference  snapshot-util 0.1 comp/something().
 #              ^ reference local 1
 #                     ^ definition local 1
+#                     documentation ```python
+#                                 > (variable) x: str
+#                                 > ```
 _ = [something(x) for x in "should be local 2" if x == "s"]
 #    ^^^^^^^^^ reference  snapshot-util 0.1 comp/something().
 #              ^ reference local 2
 #                     ^ definition local 2
+#                     documentation ```python
+#                                 > (variable) x: str
+#                                 > ```
 #                                                 ^ reference local 2
 _ = {k: x for (k, x) in enumerate(range(10))}
 #    ^ reference local 3
 #       ^ reference local 4
 #              ^ definition local 3
+#              documentation ```python
+#                          > (variable) k: int
+#                          > ```
 #                 ^ definition local 4
+#                 documentation ```python
+#                             > (variable) x: int
+#                             > ```
 #                       ^^^^^^^^^ reference  python-stdlib 3.10 builtins/enumerate#
 #                       external documentation ```python
 #                                   > (class) enumerate(iterable: Iterable[int...
@@ -46,6 +61,9 @@ asdf = (var for var in [1, 2, 3] if var % 2 == 0)
 #            > ```
 #       ^^^ reference local 5
 #               ^^^ definition local 5
+#               documentation ```python
+#                           > (variable) var: int
+#                           > ```
 #                                   ^^^ reference local 5
 for var in asdf:
 #   ^^^ definition  snapshot-util 0.1 comp/var.

@@ -6,6 +6,9 @@ import aliased
 import aliased as A
 #      ^^^^^^^ reference  snapshot-util 0.1 aliased/__init__:
 #                 ^ reference local 0
+#                 documentation ```python
+#                             > (module) A
+#                             > ```
 
 print(A.SOME_CONSTANT)
 #^^^^ reference  python-stdlib 3.10 builtins/__init__:print().

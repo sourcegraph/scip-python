@@ -382,7 +382,6 @@ export class TreeVisitor extends ParseTreeWalker {
             );
 
             // Walk the parameter child nodes
-            // TODO: Consider calling these individually so we can pass more metadata directly
             this.walk(paramNode);
         });
 
@@ -454,8 +453,7 @@ export class TreeVisitor extends ParseTreeWalker {
                 // interacting with sourcegraph).
                 //
                 // TODO: The only other question would be what we should do about references to items from this module
-                const symbol = this.getLocalForDeclaration(node);
-                this.emitSymbolInformationOnce(node.module, symbol, [
+                const symbol = this.getLocalForDeclaration(node, [
                     `(module): ${moduleName} [unable to resolve module]`,
                 ]);
                 this.pushNewOccurrence(node.module, symbol);
@@ -1263,7 +1261,7 @@ export class TreeVisitor extends ParseTreeWalker {
         return ScipSymbol.local(this.counter.next());
     }
 
-    // TODO: Could maybe just remove this now.
+    // TODO: Investigate why I said we could remove this
     private pushTypeReference(node: NameNode, declNode: ParseNode, typeObj: Type): void {
         let symbol = this.rawGetLsifSymbol(declNode);
         if (!symbol) {
@@ -1274,7 +1272,7 @@ export class TreeVisitor extends ParseTreeWalker {
         this.pushNewOccurrence(node, symbol);
     }
 
-    private getLocalForDeclaration(node: ParseNode): ScipSymbol {
+    private getLocalForDeclaration(node: ParseNode, documentation: string[] | undefined = undefined): ScipSymbol {
         const existing = this.rawGetLsifSymbol(node);
         if (existing) {
             return existing;
@@ -1282,6 +1280,7 @@ export class TreeVisitor extends ParseTreeWalker {
 
         const symbol = ScipSymbol.local(this.counter.next());
         this.rawSetLsifSymbol(node, symbol, true);
+        this.emitSymbolInformationOnce(node, symbol, documentation);
         return symbol;
     }
 
