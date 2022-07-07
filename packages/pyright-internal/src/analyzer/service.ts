@@ -66,6 +66,7 @@ import { BackgroundAnalysisProgram, BackgroundAnalysisProgramFactory } from './b
 import { createImportedModuleDescriptor, ImportResolver, ImportResolverFactory } from './importResolver';
 import { MaxAnalysisTime, Program } from './program';
 import { findPythonSearchPaths } from './pythonPathUtils';
+import { IPythonMode } from './sourceFile';
 import { TypeEvaluator } from './typeEvaluatorTypes';
 
 export const configFileNames = ['pyrightconfig.json'];
@@ -78,18 +79,26 @@ const _userActivityBackoffTimeInMs = 250;
 const _gitDirectory = normalizeSlashes('/.git/');
 const _includeFileRegex = /\.pyi?$/;
 
-// How long since the last library activity should we wait until
-// re-analyzing the libraries? (10min)
-const _libraryActivityBackoffTimeInMs = 60 * 1000 * 10;
+export interface AnalyzerServiceOptions {
+    console?: ConsoleInterface;
+    hostFactory?: HostFactory;
+    importResolverFactory?: ImportResolverFactory;
+    configOptions?: ConfigOptions;
+    extension?: LanguageServiceExtension;
+    backgroundAnalysis?: BackgroundAnalysisBase;
+    maxAnalysisTime?: MaxAnalysisTime;
+    backgroundAnalysisProgramFactory?: BackgroundAnalysisProgramFactory;
+    cancellationProvider?: CancellationProvider;
+    libraryReanalysisTimeProvider?: () => number;
+}
 
 export class AnalyzerService {
-    private _hostFactory: HostFactory;
     private _instanceName: string;
-    private _importResolverFactory: ImportResolverFactory;
     private _executionRootPath: string;
+    private _options: AnalyzerServiceOptions;
+
     private _typeStubTargetPath: string | undefined;
     private _typeStubTargetIsSingleFile = false;
-    private _console: ConsoleInterface;
     private _sourceFileWatcher: FileWatcher | undefined;
     private _reloadConfigTimer: any;
     private _libraryReanalysisTimer: any;
@@ -102,74 +111,49 @@ export class AnalyzerService {
     private _analyzeTimer: any;
     private _requireTrackedFileUpdate = true;
     private _lastUserInteractionTime = Date.now();
-    private _extension: LanguageServiceExtension | undefined;
     private _backgroundAnalysisProgram: BackgroundAnalysisProgram;
     private _backgroundAnalysisCancellationSource: AbstractCancellationTokenSource | undefined;
-    private _maxAnalysisTimeInForeground: MaxAnalysisTime | undefined;
-    private _backgroundAnalysisProgramFactory: BackgroundAnalysisProgramFactory | undefined;
     private _disposed = false;
-    private _cancellationProvider: CancellationProvider;
 
-    constructor(
-        instanceName: string,
-        fs: FileSystem,
-        console?: ConsoleInterface,
-        hostFactory?: HostFactory,
-        importResolverFactory?: ImportResolverFactory,
-        configOptions?: ConfigOptions,
-        extension?: LanguageServiceExtension,
-        backgroundAnalysis?: BackgroundAnalysisBase,
-        maxAnalysisTime?: MaxAnalysisTime,
-        backgroundAnalysisProgramFactory?: BackgroundAnalysisProgramFactory,
-        cancellationProvider?: CancellationProvider
-    ) {
+    constructor(instanceName: string, fs: FileSystem, options: AnalyzerServiceOptions) {
         this._instanceName = instanceName;
-        this._console = console || new StandardConsole();
         this._executionRootPath = '';
-        this._extension = extension;
-        this._importResolverFactory = importResolverFactory || AnalyzerService.createImportResolver;
-        this._maxAnalysisTimeInForeground = maxAnalysisTime;
-        this._backgroundAnalysisProgramFactory = backgroundAnalysisProgramFactory;
-        this._cancellationProvider = cancellationProvider ?? new DefaultCancellationProvider();
-        this._hostFactory = hostFactory ?? (() => new NoAccessHost());
+        this._options = options;
 
-        configOptions = configOptions ?? new ConfigOptions(process.cwd());
-        const importResolver = this._importResolverFactory(fs, configOptions, this._hostFactory());
+        this._options.console = options.console || new StandardConsole();
+        this._options.importResolverFactory = options.importResolverFactory ?? AnalyzerService.createImportResolver;
+        this._options.cancellationProvider = options.cancellationProvider ?? new DefaultCancellationProvider();
+        this._options.hostFactory = options.hostFactory ?? (() => new NoAccessHost());
+
+        this._options.configOptions = options.configOptions ?? new ConfigOptions(process.cwd());
+        const importResolver = this._options.importResolverFactory(
+            fs,
+            this._options.configOptions,
+            this._options.hostFactory()
+        );
 
         this._backgroundAnalysisProgram =
-            backgroundAnalysisProgramFactory !== undefined
-                ? backgroundAnalysisProgramFactory(
-                      this._console,
-                      configOptions,
+            this._options.backgroundAnalysisProgramFactory !== undefined
+                ? this._options.backgroundAnalysisProgramFactory(
+                      this._options.console,
+                      this._options.configOptions,
                       importResolver,
-                      this._extension,
-                      backgroundAnalysis,
-                      this._maxAnalysisTimeInForeground
+                      this._options.extension,
+                      this._options.backgroundAnalysis,
+                      this._options.maxAnalysisTime
                   )
                 : new BackgroundAnalysisProgram(
-                      this._console,
-                      configOptions,
+                      this._options.console,
+                      this._options.configOptions,
                       importResolver,
-                      this._extension,
-                      backgroundAnalysis,
-                      this._maxAnalysisTimeInForeground
+                      this._options.extension,
+                      this._options.backgroundAnalysis,
+                      this._options.maxAnalysisTime
                   );
     }
 
     clone(instanceName: string, backgroundAnalysis?: BackgroundAnalysisBase, fs?: FileSystem): AnalyzerService {
-        const service = new AnalyzerService(
-            instanceName,
-            fs ?? this._fs,
-            this._console,
-            this._hostFactory,
-            this._importResolverFactory,
-            this._backgroundAnalysisProgram.configOptions,
-            this._extension,
-            backgroundAnalysis,
-            this._maxAnalysisTimeInForeground,
-            this._backgroundAnalysisProgramFactory,
-            this._cancellationProvider
-        );
+        const service = new AnalyzerService(instanceName, fs ?? this._fs, { ...this._options, backgroundAnalysis });
 
         // Make sure we keep editor content (open file) which could be different than one in the file system.
         for (const fileInfo of this.backgroundAnalysisProgram.program.getOpened()) {
@@ -194,6 +178,22 @@ export class AnalyzerService {
         this._clearReloadConfigTimer();
         this._clearReanalysisTimer();
         this._clearLibraryReanalysisTimer();
+    }
+
+    private get _console() {
+        return this._options.console!;
+    }
+
+    private get _hostFactory() {
+        return this._options.hostFactory!;
+    }
+
+    private get _importResolverFactory() {
+        return this._options.importResolverFactory!;
+    }
+
+    private get _cancellationProvider() {
+        return this._options.cancellationProvider!;
     }
 
     get librarySearchPathsToWatch() {
@@ -248,7 +248,7 @@ export class AnalyzerService {
         path: string,
         version: number | null,
         contents: string,
-        ipythonMode = false,
+        ipythonMode = IPythonMode.None,
         chainedFilePath?: string
     ) {
         this._backgroundAnalysisProgram.setFileOpened(path, version, contents, {
@@ -256,6 +256,15 @@ export class AnalyzerService {
             ipythonMode,
             chainedFilePath,
         });
+        this._scheduleReanalysis(/* requireTrackedFileUpdate */ false);
+    }
+
+    getChainedFilePath(path: string): string | undefined {
+        return this._backgroundAnalysisProgram.getChainedFilePath(path);
+    }
+
+    updateChainedFilePath(path: string, chainedFilePath: string | undefined) {
+        this._backgroundAnalysisProgram.updateChainedFilePath(path, chainedFilePath);
         this._scheduleReanalysis(/*requireTrackedFileUpdate*/ false);
     }
 
@@ -263,7 +272,7 @@ export class AnalyzerService {
         path: string,
         version: number | null,
         contents: TextDocumentContentChangeEvent[],
-        ipythonMode = false,
+        ipythonMode = IPythonMode.None,
         chainedFilePath?: string
     ) {
         this._backgroundAnalysisProgram.updateOpenFileContents(path, version, contents, {
@@ -271,7 +280,7 @@ export class AnalyzerService {
             ipythonMode,
             chainedFilePath,
         });
-        this._scheduleReanalysis(/*requireTrackedFileUpdate*/ false);
+        this._scheduleReanalysis(/* requireTrackedFileUpdate */ false);
     }
 
     test_setIndexing(
@@ -287,7 +296,11 @@ export class AnalyzerService {
 
     setFileClosed(path: string) {
         this._backgroundAnalysisProgram.setFileClosed(path);
-        this._scheduleReanalysis(false);
+        this._scheduleReanalysis(/* requireTrackedFileUpdate */ false);
+    }
+
+    isFileOpen(path: string) {
+        return this._program.isFileOpen(path);
     }
 
     getParseResult(path: string) {
@@ -491,8 +504,15 @@ export class AnalyzerService {
         this._console.info('');
         this._console.info('Analysis stats');
 
-        const fileCount = this._program.getFileCount();
-        this._console.info('Total files analyzed: ' + fileCount.toString());
+        const boundFileCount = this._program.getFileCount();
+        this._console.info('Total files parsed and bound: ' + boundFileCount.toString());
+
+        const checkedFileCount = this._program.getUserFileCount();
+        this._console.info('Total files checked: ' + checkedFileCount.toString());
+    }
+
+    printDetailedAnalysisTimes() {
+        this._program.printDetailedAnalysisTimes();
     }
 
     printDependencies(verbose: boolean) {
@@ -517,7 +537,7 @@ export class AnalyzerService {
         // If we have a pending timer for reanalysis, cancel it
         // and reschedule for some time in the future.
         if (this._analyzeTimer) {
-            this._scheduleReanalysis(false);
+            this._scheduleReanalysis(/* requireTrackedFileUpdate */ false);
         }
     }
 
@@ -869,7 +889,7 @@ export class AnalyzerService {
     }
 
     private get _watchForLibraryChanges() {
-        return !!this._commandLineOptions?.watchForLibraryChanges;
+        return !!this._commandLineOptions?.watchForLibraryChanges && !!this._options.libraryReanalysisTimeProvider;
     }
 
     private get _watchForConfigChanges() {
@@ -1216,13 +1236,16 @@ export class AnalyzerService {
         include.forEach((includeSpec) => {
             if (!this._isInExcludePath(includeSpec.wildcardRoot, exclude)) {
                 let foundFileSpec = false;
+                let isFileIncluded = true;
 
                 const stat = tryStat(this._fs, includeSpec.wildcardRoot);
                 if (stat?.isFile()) {
                     if (this._shouldIncludeFile(includeSpec.wildcardRoot)) {
                         results.push(includeSpec.wildcardRoot);
-                        foundFileSpec = true;
+                    } else {
+                        isFileIncluded = false;
                     }
+                    foundFileSpec = true;
                 } else if (stat?.isDirectory()) {
                     visitDirectory(includeSpec.wildcardRoot, includeSpec.regExp);
                     foundFileSpec = true;
@@ -1230,6 +1253,8 @@ export class AnalyzerService {
 
                 if (!foundFileSpec) {
                     this._console.error(`File or directory "${includeSpec.wildcardRoot}" does not exist.`);
+                } else if (!isFileIncluded) {
+                    this._console.error(`File "${includeSpec.wildcardRoot}" is not a Python source file.`);
                 }
             }
         });
@@ -1449,6 +1474,12 @@ export class AnalyzerService {
 
         this._clearLibraryReanalysisTimer();
 
+        const backOffTimeInMS = this._options.libraryReanalysisTimeProvider?.();
+        if (!backOffTimeInMS) {
+            // We don't support library reanalysis.
+            return;
+        }
+
         // Wait for a little while, since library changes
         // tend to happen in big batches when packages
         // are installed or uninstalled.
@@ -1458,8 +1489,8 @@ export class AnalyzerService {
             // Invalidate import resolver, mark all files dirty unconditionally,
             // and reanalyze.
             this.invalidateAndForceReanalysis(/* rebuildUserFileIndexing */ false);
-            this._scheduleReanalysis(false);
-        }, _libraryActivityBackoffTimeInMs);
+            this._scheduleReanalysis(/* requireTrackedFileUpdate */ false);
+        }, backOffTimeInMS);
     }
 
     private _removeConfigFileWatcher() {
@@ -1566,9 +1597,9 @@ export class AnalyzerService {
         this._updateLibraryFileWatcher();
         this._updateConfigFileWatcher();
         this._updateSourceFileWatchers();
-        this._updateTrackedFileList(true);
+        this._updateTrackedFileList(/* markFilesDirtyUnconditionally */ true);
 
-        this._scheduleReanalysis(false);
+        this._scheduleReanalysis(/* requireTrackedFileUpdate */ false);
     }
 
     private _clearReanalysisTimer() {
@@ -1614,7 +1645,7 @@ export class AnalyzerService {
             this._analyzeTimer = undefined;
 
             if (this._requireTrackedFileUpdate) {
-                this._updateTrackedFileList(false);
+                this._updateTrackedFileList(/* markFilesDirtyUnconditionally */ false);
             }
 
             // This creates a cancellation source only if it actually gets used.
@@ -1623,7 +1654,7 @@ export class AnalyzerService {
                 this._backgroundAnalysisCancellationSource.token
             );
             if (moreToAnalyze) {
-                this._scheduleReanalysis(false);
+                this._scheduleReanalysis(/* requireTrackedFileUpdate */ false);
             }
         }, timeUntilNextAnalysisInMs);
     }

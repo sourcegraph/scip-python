@@ -41,11 +41,14 @@ import {
     OverloadedFunctionType,
     Type,
     TypeCondition,
-    TypeVarScopeId,
     TypeVarType,
 } from './types';
-import { CanAssignFlags, ClassMember } from './typeUtils';
+import { AssignTypeFlags, ClassMember } from './typeUtils';
 import { TypeVarContext } from './typeVarContext';
+
+// Maximum number of unioned subtypes for an inferred type (e.g.
+// a list) before the type is considered an "Any".
+export const maxSubtypesForInferredType = 64;
 
 export const enum EvaluatorFlags {
     None = 0,
@@ -210,7 +213,6 @@ export interface AbstractMethod {
     symbol: Symbol;
     symbolName: string;
     classType: Type;
-    isAbstract: boolean;
 }
 
 export interface FunctionArgumentBase {
@@ -236,6 +238,7 @@ export interface EffectiveTypeResult {
     type: Type;
     isIncomplete: boolean;
     includesVariableDecl: boolean;
+    includesIllegalTypeAliasDecl: boolean;
     isRecursiveDefinition: boolean;
 }
 
@@ -284,15 +287,15 @@ export interface TypeEvaluator {
     getTypeOfAnnotation: (node: ExpressionNode, options?: AnnotationTypeOptions) => Type;
     getTypeOfClass: (node: ClassNode) => ClassTypeResult | undefined;
     getTypeOfFunction: (node: FunctionNode) => FunctionTypeResult | undefined;
-    getTypeForExpressionExpectingType: (
+    getTypeOfExpressionExpectingType: (
         node: ExpressionNode,
         allowFinal?: boolean,
         allowRequired?: boolean
     ) => TypeResult;
     evaluateTypeForSubnode: (subnode: ParseNode, callback: () => void) => TypeResult | undefined;
     evaluateTypesForStatement: (node: ParseNode) => void;
-    evaluateTypesForMatchNode: (node: MatchNode) => void;
-    evaluateTypesForCaseNode: (node: CaseNode) => void;
+    evaluateTypesForMatchStatement: (node: MatchNode) => void;
+    evaluateTypesForCaseStatement: (node: CaseNode) => void;
     evaluateTypeOfParameter: (node: ParameterNode) => void;
 
     canBeTruthy: (type: Type) => boolean;
@@ -322,10 +325,10 @@ export interface TypeEvaluator {
         resolveLocalNames: boolean,
         allowExternallyHiddenAccess?: boolean
     ) => DeclarationUtils.ResolvedAliasInfo | undefined;
-    getTypeFromIterable: (type: Type, isAsync: boolean, errorNode: ParseNode | undefined) => Type | undefined;
-    getTypeFromIterator: (type: Type, isAsync: boolean, errorNode: ParseNode | undefined) => Type | undefined;
+    getTypeOfIterable: (type: Type, isAsync: boolean, errorNode: ParseNode | undefined) => Type | undefined;
+    getTypeOfIterator: (type: Type, isAsync: boolean, errorNode: ParseNode | undefined) => Type | undefined;
     getGetterTypeFromProperty: (propertyClass: ClassType, inferTypeIfNeeded: boolean) => Type | undefined;
-    getTypeForArgument: (arg: FunctionArgument) => SimpleTypeResult;
+    getTypeOfArgument: (arg: FunctionArgument) => SimpleTypeResult;
     markNamesAccessed: (node: ParseNode, names: string[]) => void;
     getScopeIdForNode: (node: ParseNode) => string;
     makeTopLevelTypeVarsConcrete: (type: Type) => Type;
@@ -334,12 +337,6 @@ export interface TypeEvaluator {
         conditionFilter: TypeCondition[] | undefined,
         callback: (expandedSubtype: Type, unexpandedSubtype: Type) => Type | undefined
     ) => Type;
-    populateTypeVarContextBasedOnExpectedType: (
-        type: ClassType,
-        expectedType: Type,
-        typeVarContext: TypeVarContext,
-        liveTypeVarScopes: TypeVarScopeId[] | undefined
-    ) => boolean;
     lookUpSymbolRecursive: (node: ParseNode, name: string, honorCodeFlow: boolean) => SymbolWithScope | undefined;
     getDeclaredTypeOfSymbol: (symbol: Symbol) => Type | undefined;
     getEffectiveTypeOfSymbol: (symbol: Symbol) => Type;
@@ -359,17 +356,14 @@ export interface TypeEvaluator {
     ) => FunctionType | undefined;
     getBuiltInType: (node: ParseNode, name: string) => Type;
     getTypeOfMember: (member: ClassMember) => Type;
-    getTypeFromObjectMember(
-        errorNode: ExpressionNode,
-        objectType: ClassType,
-        memberName: string
-    ): TypeResult | undefined;
+    getTypeOfObjectMember(errorNode: ExpressionNode, objectType: ClassType, memberName: string): TypeResult | undefined;
     getBoundMethod: (
         classType: ClassType,
         memberName: string,
+        recursionCount?: number,
         treatConstructorAsClassMember?: boolean
     ) => FunctionType | OverloadedFunctionType | undefined;
-    getTypeFromMagicMethodReturn: (
+    getTypeOfMagicMethodReturn: (
         objType: Type,
         args: Type[],
         magicMethodName: string,
@@ -389,31 +383,44 @@ export interface TypeEvaluator {
     getAbstractMethods: (classType: ClassType) => AbstractMethod[];
     narrowConstrainedTypeVar: (node: ParseNode, typeVar: TypeVarType) => Type | undefined;
 
-    canAssignType: (
+    assignType: (
         destType: Type,
         srcType: Type,
         diag?: DiagnosticAddendum,
-        typeVarContext?: TypeVarContext,
-        flags?: CanAssignFlags,
+        destTypeVarContext?: TypeVarContext,
+        srcTypeVarContext?: TypeVarContext,
+        flags?: AssignTypeFlags,
         recursionCount?: number
     ) => boolean;
-    canOverrideMethod: (
+    validateOverrideMethod: (
         baseMethod: Type,
         overrideMethod: FunctionType,
         diag: DiagnosticAddendum,
         enforceParamNames?: boolean
     ) => boolean;
-    canAssignProtocolClassToSelf: (destType: ClassType, srcType: ClassType) => boolean;
     assignTypeToExpression: (
         target: ExpressionNode,
         type: Type,
         isTypeIncomplete: boolean,
         srcExpr: ExpressionNode
     ) => void;
+    assignClassToSelf: (destType: ClassType, srcType: ClassType) => boolean;
     getBuiltInObject: (node: ParseNode, name: string, typeArguments?: Type[]) => Type;
+    getTypedDictClassType: () => Type | undefined;
+    getTupleClassType: () => Type | undefined;
+    getObjectType: () => Type | undefined;
     getTypingType: (node: ParseNode, symbolName: string) => Type | undefined;
     inferReturnTypeIfNecessary: (type: Type) => void;
-
+    inferTypeParameterVarianceForClass: (type: ClassType) => void;
+    verifyTypeArgumentsAssignable: (
+        destType: ClassType,
+        srcType: ClassType,
+        diag: DiagnosticAddendum | undefined,
+        destTypeVarContext: TypeVarContext | undefined,
+        srcTypeVarContext: TypeVarContext | undefined,
+        flags: AssignTypeFlags,
+        recursionCount: number
+    ) => boolean;
     addError: (message: string, node: ParseNode) => Diagnostic | undefined;
     addWarning: (message: string, node: ParseNode) => Diagnostic | undefined;
     addInformation: (message: string, node: ParseNode) => Diagnostic | undefined;
@@ -437,7 +444,7 @@ export interface TypeEvaluator {
     printType: (type: Type, expandTypeAlias?: boolean) => string;
     printFunctionParts: (type: FunctionType) => [string[], string];
 
-    getTypeCacheSize: () => number;
+    getTypeCacheEntryCount: () => number;
     disposeEvaluator: () => void;
     useSpeculativeMode: <T>(speculativeNode: ParseNode, callback: () => T) => T;
     setTypeForNode: (node: ParseNode, type?: Type, flags?: EvaluatorFlags) => void;

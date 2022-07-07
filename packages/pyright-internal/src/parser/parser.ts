@@ -13,6 +13,7 @@
 
 import Char from 'typescript-char';
 
+import { IPythonMode } from '../analyzer/sourceFile';
 import { appendArray } from '../common/collectionUtils';
 import { assert } from '../common/debug';
 import { Diagnostic, DiagnosticAddendum } from '../common/diagnostic';
@@ -104,7 +105,11 @@ import {
     TernaryNode,
     TryNode,
     TupleNode,
+    TypeAliasNode,
     TypeAnnotationNode,
+    TypeParameterCategory,
+    TypeParameterListNode,
+    TypeParameterNode,
     UnaryOperationNode,
     UnpackNode,
     WhileNode,
@@ -124,6 +129,7 @@ import {
     NumberToken,
     OperatorToken,
     OperatorType,
+    softKeywords,
     StringToken,
     StringTokenFlags,
     Token,
@@ -147,14 +153,16 @@ export class ParseOptions {
         this.pythonVersion = latestStablePythonVersion;
         this.reportInvalidStringEscapeSequence = false;
         this.skipFunctionAndClassBody = false;
-        this.ipythonMode = false;
+        this.ipythonMode = IPythonMode.None;
+        this.reportErrorsForParsedStringContents = false;
     }
 
     isStubFile: boolean;
     pythonVersion: PythonVersion;
     reportInvalidStringEscapeSequence: boolean;
     skipFunctionAndClassBody: boolean;
-    ipythonMode: boolean;
+    ipythonMode: IPythonMode;
+    reportErrorsForParsedStringContents: boolean;
 }
 
 export interface ParseResults {
@@ -168,7 +176,7 @@ export interface ParseResults {
 }
 
 export interface ParseExpressionTextResults {
-    parseTree?: ExpressionNode | undefined;
+    parseTree?: ExpressionNode | FunctionAnnotationNode | undefined;
     lines: TextRangeCollection<TextRange>;
     diagnostics: Diagnostic[];
 }
@@ -278,7 +286,7 @@ export class Parser {
             this._typingSymbolAliases = new Map<string, string>(typingSymbolAliases);
         }
 
-        let parseTree: ExpressionNode | undefined;
+        let parseTree: ExpressionNode | FunctionAnnotationNode | undefined;
         if (parseTextMode === ParseTextMode.VariableAnnotation) {
             parseTree = this._parseTypeAnnotation();
         } else if (parseTextMode === ParseTextMode.FunctionAnnotation) {
@@ -406,6 +414,7 @@ export class Parser {
                         return matchStatement;
                     }
                 }
+                break;
             }
         }
 
@@ -434,6 +443,108 @@ export class Parser {
         this._addError(Localizer.Diagnostic.unexpectedAsyncToken(), asyncToken);
 
         return undefined;
+    }
+
+    // type_alias_stmt: "type" name [type_param_seq] = expr
+    private _parseTypeAliasStatement(): TypeAliasNode {
+        const typeToken = this._getKeywordToken(KeywordType.Type);
+
+        if (!this._parseOptions.isStubFile && this._getLanguageVersion() < PythonVersion.V3_12) {
+            this._addError(Localizer.Diagnostic.typeAliasStatementIllegal(), typeToken);
+        }
+
+        const nameToken = this._getTokenIfIdentifier();
+        assert(nameToken !== undefined);
+        const name = NameNode.create(nameToken);
+
+        let typeParameters: TypeParameterListNode | undefined;
+        if (this._peekToken().type === TokenType.OpenBracket) {
+            typeParameters = this._parseTypeParameterList();
+        }
+
+        const assignToken = this._peekToken();
+        if (
+            assignToken.type !== TokenType.Operator ||
+            (assignToken as OperatorToken).operatorType !== OperatorType.Assign
+        ) {
+            this._addError(Localizer.Diagnostic.expectedEquals(), assignToken);
+        } else {
+            this._getNextToken();
+        }
+
+        const expression = this._parseOrTest();
+
+        return TypeAliasNode.create(typeToken, name, expression, typeParameters);
+    }
+
+    // type_param_seq: '[' (type_param ',')+ ']'
+    private _parseTypeParameterList(): TypeParameterListNode {
+        const typeVariableNodes: TypeParameterNode[] = [];
+
+        const openBracketToken = this._getNextToken();
+        assert(openBracketToken.type === TokenType.OpenBracket);
+
+        while (true) {
+            const firstToken = this._peekToken();
+
+            if (firstToken.type === TokenType.CloseBracket) {
+                if (typeVariableNodes.length === 0) {
+                    this._addError(Localizer.Diagnostic.typeParametersMissing(), this._peekToken());
+                }
+                break;
+            }
+
+            const typeVarNode = this._parseTypeParameter();
+            if (!typeVarNode) {
+                break;
+            }
+
+            typeVariableNodes.push(typeVarNode);
+
+            if (!this._consumeTokenIfType(TokenType.Comma)) {
+                break;
+            }
+        }
+
+        const closingToken = this._peekToken();
+        if (closingToken.type !== TokenType.CloseBracket) {
+            this._addError(Localizer.Diagnostic.expectedCloseBracket(), this._peekToken());
+            this._consumeTokensUntilType([TokenType.NewLine, TokenType.CloseBracket, TokenType.Colon]);
+        } else {
+            this._getNextToken();
+        }
+
+        return TypeParameterListNode.create(openBracketToken, closingToken, typeVariableNodes);
+    }
+
+    // type_param: ['*' | '**'] NAME [':' expr]
+    private _parseTypeParameter(): TypeParameterNode | undefined {
+        let typeParamCategory = TypeParameterCategory.TypeVar;
+        if (this._consumeTokenIfOperator(OperatorType.Multiply)) {
+            typeParamCategory = TypeParameterCategory.TypeVarTuple;
+        } else if (this._consumeTokenIfOperator(OperatorType.Power)) {
+            typeParamCategory = TypeParameterCategory.ParamSpec;
+        }
+
+        const nameToken = this._getTokenIfIdentifier();
+        if (!nameToken) {
+            this._addError(Localizer.Diagnostic.expectedTypeParameterName(), this._peekToken());
+            return undefined;
+        }
+
+        const name = NameNode.create(nameToken);
+
+        let boundExpression: ExpressionNode | undefined;
+        if (this._peekTokenType() === TokenType.Colon) {
+            this._getNextToken();
+            boundExpression = this._parseTestExpression(/* allowAssignmentExpression */ false);
+
+            if (typeParamCategory !== TypeParameterCategory.TypeVar) {
+                this._addError(Localizer.Diagnostic.typeParameterBoundNotAllowed(), boundExpression);
+            }
+        }
+
+        return TypeParameterNode.create(name, typeParamCategory, boundExpression);
     }
 
     // match_stmt: "match" subject_expr ':' NEWLINE INDENT case_block+ DEDENT
@@ -1196,10 +1307,20 @@ export class Parser {
         this._isInLoop = true;
         this._isInFinally = false;
 
-        const suite = this._parseSuite(this._isInFunction);
+        let typeComment: StringToken | undefined;
+        const suite = this._parseSuite(this._isInFunction, /* skipBody */ false, () => {
+            const comment = this._getTypeAnnotationCommentText();
+            if (comment) {
+                typeComment = comment;
+            }
+        });
 
         this._isInLoop = wasInLoop;
         this._isInFinally = wasInFinally;
+
+        if (typeComment) {
+            suite.typeComment = typeComment;
+        }
 
         return suite;
     }
@@ -1363,6 +1484,7 @@ export class Parser {
                 ErrorExpressionCategory.MissingExpression,
                 Localizer.Diagnostic.expectedInExpr()
             );
+
             forSuite = this._parseLoopSuite();
 
             // Versions of Python earlier than 3.9 didn't allow unpack operators if the
@@ -1395,6 +1517,10 @@ export class Parser {
             forNode.isAsync = true;
             forNode.asyncToken = asyncToken;
             extendRange(forNode, asyncToken);
+        }
+
+        if (forSuite.typeComment) {
+            forNode.typeComment = forSuite.typeComment;
         }
 
         return forNode;
@@ -1636,6 +1762,15 @@ export class Parser {
             );
         }
 
+        let typeParameters: TypeParameterListNode | undefined;
+        const possibleOpenBracket = this._peekToken();
+        if (possibleOpenBracket.type === TokenType.OpenBracket) {
+            typeParameters = this._parseTypeParameterList();
+
+            if (!this._parseOptions.isStubFile && this._getLanguageVersion() < PythonVersion.V3_12) {
+                this._addError(Localizer.Diagnostic.functionTypeParametersIllegal(), typeParameters);
+            }
+        }
         const openParenToken = this._peekToken();
         if (!this._consumeTokenIfType(TokenType.OpenParenthesis)) {
             this._addError(Localizer.Diagnostic.expectedOpenParen(), this._peekToken());
@@ -1666,7 +1801,7 @@ export class Parser {
             }
         });
 
-        const functionNode = FunctionNode.create(defToken, NameNode.create(nameToken), suite);
+        const functionNode = FunctionNode.create(defToken, NameNode.create(nameToken), suite, typeParameters);
         if (asyncToken) {
             functionNode.isAsync = true;
             extendRange(functionNode, asyncToken);
@@ -1963,12 +2098,22 @@ export class Parser {
             }
         }
 
-        const withSuite = this._parseSuite(this._isInFunction);
+        let typeComment: StringToken | undefined;
+        const withSuite = this._parseSuite(this._isInFunction, /* skipBody */ false, () => {
+            const comment = this._getTypeAnnotationCommentText();
+            if (comment) {
+                typeComment = comment;
+            }
+        });
         const withNode = WithNode.create(withToken, withSuite);
         if (asyncToken) {
             withNode.isAsync = true;
             withNode.asyncToken = asyncToken;
             extendRange(withNode, asyncToken);
+        }
+
+        if (typeComment) {
+            withNode.typeComment = typeComment;
         }
 
         withNode.withItems = withItemList;
@@ -2082,7 +2227,17 @@ export class Parser {
         let nameToken = this._getTokenIfIdentifier();
         if (!nameToken) {
             this._addError(Localizer.Diagnostic.expectedClassName(), this._peekToken());
-            nameToken = IdentifierToken.create(0, 0, '', undefined);
+            nameToken = IdentifierToken.create(0, 0, '', /* comments */ undefined);
+        }
+
+        let typeParameters: TypeParameterListNode | undefined;
+        const possibleOpenBracket = this._peekToken();
+        if (possibleOpenBracket.type === TokenType.OpenBracket) {
+            typeParameters = this._parseTypeParameterList();
+
+            if (!this._parseOptions.isStubFile && this._getLanguageVersion() < PythonVersion.V3_12) {
+                this._addError(Localizer.Diagnostic.classTypeParametersIllegal(), typeParameters);
+            }
         }
 
         let argList: ArgumentNode[] = [];
@@ -2097,7 +2252,7 @@ export class Parser {
 
         const suite = this._parseSuite(/* isFunction */ false, this._parseOptions.skipFunctionAndClassBody);
 
-        const classNode = ClassNode.create(classToken, NameNode.create(nameToken), suite);
+        const classNode = ClassNode.create(classToken, NameNode.create(nameToken), suite, typeParameters);
         classNode.arguments = argList;
         argList.forEach((arg) => {
             arg.parent = classNode;
@@ -2642,6 +2797,31 @@ export class Parser {
 
             case KeywordType.Yield:
                 return this._parseYieldExpression();
+
+            case KeywordType.Type: {
+                // Type is considered a "soft" keyword, so we will treat it
+                // as an identifier if it is followed by an unexpected token.
+
+                const peekToken1 = this._peekToken(1);
+                const peekToken2 = this._peekToken(2);
+                let isInvalidTypeToken = true;
+
+                if (peekToken1.type === TokenType.Identifier || peekToken1.type === TokenType.Keyword) {
+                    if (peekToken2.type === TokenType.OpenBracket) {
+                        isInvalidTypeToken = false;
+                    } else if (
+                        peekToken2.type === TokenType.Operator &&
+                        (peekToken2 as OperatorToken).operatorType === OperatorType.Assign
+                    ) {
+                        isInvalidTypeToken = false;
+                    }
+                }
+
+                if (!isInvalidTypeToken) {
+                    return this._parseTypeAliasStatement();
+                }
+                break;
+            }
         }
 
         return this._parseExpressionStatement();
@@ -3254,7 +3434,8 @@ export class Parser {
                         ErrorExpressionCategory.MissingMemberAccessName,
                         Localizer.Diagnostic.expectedMemberName(),
                         startOfTrailerToken,
-                        atomExpression
+                        atomExpression,
+                        [TokenType.Keyword]
                     );
                 }
                 atomExpression = MemberAccessNode.create(atomExpression, NameNode.create(memberName));
@@ -4243,7 +4424,14 @@ export class Parser {
         }
 
         const tokenOffset = curToken.start + curToken.length + match[1].length;
-        return StringToken.create(tokenOffset, typeString.length, StringTokenFlags.None, typeString, 0, undefined);
+        return StringToken.create(
+            tokenOffset,
+            typeString.length,
+            StringTokenFlags.None,
+            typeString,
+            0,
+            /* comments */ undefined
+        );
     }
 
     private _parseVariableTypeAnnotationComment(): ExpressionNode | undefined {
@@ -4273,6 +4461,7 @@ export class Parser {
             return undefined;
         }
 
+        assert(parseResults.parseTree.nodeType !== ParseNodeType.FunctionAnnotation);
         return parseResults.parseTree;
     }
 
@@ -4351,6 +4540,7 @@ export class Parser {
                 const segmentExprLength = this._getFormatStringExpressionLength(segment.value.trimEnd());
                 const parseTree = this._parseFormatStringSegment(stringToken, segment, 0, segmentExprLength);
                 if (parseTree) {
+                    assert(parseTree.nodeType !== ParseNodeType.FunctionAnnotation);
                     formatExpressions.push(parseTree);
                 }
 
@@ -4378,6 +4568,7 @@ export class Parser {
                                     formatSegmentLength
                                 );
                                 if (parseTree) {
+                                    assert(parseTree.nodeType !== ParseNodeType.FunctionAnnotation);
                                     formatExpressions.push(parseTree);
                                 }
                             }
@@ -4567,13 +4758,19 @@ export class Parser {
                         this._typingSymbolAliases
                     );
 
-                    parseResults.diagnostics.forEach((diag) => {
-                        this._addError(diag.message, stringNode);
-                    });
+                    if (
+                        parseResults.diagnostics.length === 0 ||
+                        this._parseOptions.reportErrorsForParsedStringContents
+                    ) {
+                        parseResults.diagnostics.forEach((diag) => {
+                            this._addError(diag.message, stringNode);
+                        });
 
-                    if (parseResults.parseTree) {
-                        stringNode.typeAnnotation = parseResults.parseTree;
-                        stringNode.typeAnnotation.parent = stringNode;
+                        if (parseResults.parseTree) {
+                            assert(parseResults.parseTree.nodeType !== ParseNodeType.FunctionAnnotation);
+                            stringNode.typeAnnotation = parseResults.parseTree;
+                            stringNode.typeAnnotation.parent = stringNode;
+                        }
                     }
                 }
             }
@@ -4731,7 +4928,6 @@ export class Parser {
         // If this is a "soft keyword", it can be converted into an identifier.
         if (nextToken.type === TokenType.Keyword) {
             const keywordType = this._peekKeywordType();
-            const softKeywords = [KeywordType.Debug, KeywordType.Match, KeywordType.Case];
             if (softKeywords.find((type) => type === keywordType)) {
                 const keywordText = this._fileContents!.substr(nextToken.start, nextToken.length);
                 this._getNextToken();

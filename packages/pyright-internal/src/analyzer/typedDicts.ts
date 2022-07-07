@@ -43,6 +43,7 @@ import {
     FunctionType,
     FunctionTypeFlags,
     isAnyOrUnknown,
+    isClass,
     isClassInstance,
     isInstantiableClass,
     isTypeSame,
@@ -55,7 +56,17 @@ import {
     TypeVarType,
     UnknownType,
 } from './types';
-import { computeMroLinearization, isLiteralType, mapSubtypes } from './typeUtils';
+import {
+    applySolvedTypeVars,
+    AssignTypeFlags,
+    buildTypeVarContextFromSpecializedClass,
+    computeMroLinearization,
+    getTypeVarScopeId,
+    isLiteralType,
+    mapSubtypes,
+    partiallySpecializeType,
+} from './typeUtils';
+import { TypeVarContext } from './typeVarContext';
 
 // Creates a new custom TypedDict factory class.
 export function createTypedDictType(
@@ -145,7 +156,7 @@ export function createTypedDictType(
                 entryMap.set(entryName, true);
 
                 // Cache the annotation type.
-                const annotatedType = evaluator.getTypeForExpressionExpectingType(
+                const annotatedType = evaluator.getTypeOfExpressionExpectingType(
                     entry.valueExpression,
                     /* allowFinal */ true,
                     /* allowRequired */ true
@@ -193,7 +204,7 @@ export function createTypedDictType(
 
                 // Evaluate the type with specific evaluation flags. The
                 // type will be cached for later.
-                const annotatedType = evaluator.getTypeForExpressionExpectingType(
+                const annotatedType = evaluator.getTypeOfExpressionExpectingType(
                     entry.valueExpression,
                     /* allowFinal */ true,
                     /* allowRequired */ true
@@ -483,7 +494,11 @@ export function synthesizeTypedDictClassMethods(
                 );
             }
 
-            appendArray(popOverloads, createPopMethods(nameLiteralType, entry.valueType));
+            // Add a pop method if the entry is not required.
+            if (!entry.isRequired) {
+                appendArray(popOverloads, createPopMethods(nameLiteralType, entry.valueType));
+            }
+
             setDefaultOverloads.push(createSetDefaultMethod(nameLiteralType, entry.valueType));
         });
 
@@ -543,16 +558,22 @@ export function getTypedDictMembersForClass(evaluator: TypeEvaluator, classType:
         classType.details.typedDictEntries = entries;
     }
 
-    // Create a copy of the entries so the caller can mutate them.
+    const typeVarContext = buildTypeVarContextFromSpecializedClass(classType);
+
+    // Create a specialized copy of the entries so the caller can mutate them.
     const entries = new Map<string, TypedDictEntry>();
     classType.details.typedDictEntries!.forEach((value, key) => {
-        entries.set(key, { ...value });
+        const tdEntry = { ...value };
+        tdEntry.valueType = applySolvedTypeVars(tdEntry.valueType, typeVarContext);
+        entries.set(key, tdEntry);
     });
 
     // Apply narrowed types on top of existing entries if present.
     if (allowNarrowed && classType.typedDictNarrowedEntries) {
         classType.typedDictNarrowedEntries.forEach((value, key) => {
-            entries.set(key, { ...value });
+            const tdEntry = { ...value };
+            tdEntry.valueType = applySolvedTypeVars(tdEntry.valueType, typeVarContext);
+            entries.set(key, tdEntry);
         });
     }
 
@@ -573,9 +594,13 @@ function getTypedDictMembersForClassRecursive(
 
     classType.details.baseClasses.forEach((baseClassType) => {
         if (isInstantiableClass(baseClassType) && ClassType.isTypedDictClass(baseClassType)) {
-            getTypedDictMembersForClassRecursive(evaluator, baseClassType, keyMap, recursionCount);
+            const specializedBaseClassType = partiallySpecializeType(baseClassType, classType);
+            assert(isClass(specializedBaseClassType));
+            getTypedDictMembersForClassRecursive(evaluator, specializedBaseClassType, keyMap, recursionCount);
         }
     });
+
+    const typeVarContext = buildTypeVarContextFromSpecializedClass(classType);
 
     // Add any new typed dict entries from this class.
     classType.details.fields.forEach((symbol, name) => {
@@ -583,7 +608,9 @@ function getTypedDictMembersForClassRecursive(
             // Only variables (not functions, classes, etc.) are considered.
             const lastDecl = getLastTypedDeclaredForSymbol(symbol);
             if (lastDecl && lastDecl.type === DeclarationType.Variable) {
-                const valueType = evaluator.getEffectiveTypeOfSymbol(symbol);
+                let valueType = evaluator.getEffectiveTypeOfSymbol(symbol);
+                valueType = applySolvedTypeVars(valueType, typeVarContext);
+
                 let isRequired = !ClassType.isCanOmitDictValues(classType);
 
                 if (isRequiredTypedDictVariable(symbol)) {
@@ -626,11 +653,13 @@ function getTypedDictMembersForClassRecursive(
     });
 }
 
-export function canAssignTypedDict(
+export function assignTypedDictToTypedDict(
     evaluator: TypeEvaluator,
     destType: ClassType,
     srcType: ClassType,
     diag: DiagnosticAddendum | undefined,
+    typeVarContext: TypeVarContext | undefined,
+    flags: AssignTypeFlags,
     recursionCount = 0
 ) {
     let typesAreConsistent = true;
@@ -640,51 +669,45 @@ export function canAssignTypedDict(
     destEntries.forEach((destEntry, name) => {
         const srcEntry = srcEntries.get(name);
         if (!srcEntry) {
-            if (diag) {
-                diag.addMessage(
-                    Localizer.DiagnosticAddendum.typedDictFieldMissing().format({
-                        name,
-                        type: evaluator.printType(srcType),
-                    })
-                );
-            }
+            diag?.createAddendum().addMessage(
+                Localizer.DiagnosticAddendum.typedDictFieldMissing().format({
+                    name,
+                    type: evaluator.printType(srcType),
+                })
+            );
             typesAreConsistent = false;
         } else {
             if (destEntry.isRequired && !srcEntry.isRequired) {
-                if (diag) {
-                    diag.addMessage(
-                        Localizer.DiagnosticAddendum.typedDictFieldRequired().format({
-                            name,
-                            type: evaluator.printType(destType),
-                        })
-                    );
-                }
+                diag?.createAddendum().addMessage(
+                    Localizer.DiagnosticAddendum.typedDictFieldRequired().format({
+                        name,
+                        type: evaluator.printType(destType),
+                    })
+                );
                 typesAreConsistent = false;
             } else if (!destEntry.isRequired && srcEntry.isRequired) {
-                if (diag) {
-                    diag.addMessage(
-                        Localizer.DiagnosticAddendum.typedDictFieldNotRequired().format({
-                            name,
-                            type: evaluator.printType(destType),
-                        })
-                    );
-                }
+                diag?.createAddendum().addMessage(
+                    Localizer.DiagnosticAddendum.typedDictFieldNotRequired().format({
+                        name,
+                        type: evaluator.printType(destType),
+                    })
+                );
                 typesAreConsistent = false;
             }
 
+            const subDiag = diag?.createAddendum();
             if (
-                !evaluator.canAssignType(
+                !evaluator.assignType(
                     destEntry.valueType,
                     srcEntry.valueType,
-                    /* diag */ undefined,
-                    /* typeVarContext */ undefined,
-                    /* flags */ undefined,
+                    subDiag?.createAddendum(),
+                    typeVarContext,
+                    /* srcTypeVarContext */ undefined,
+                    flags,
                     recursionCount
                 )
             ) {
-                if (diag) {
-                    diag.addMessage(Localizer.DiagnosticAddendum.memberTypeMismatch().format({ name }));
-                }
+                subDiag?.addMessage(Localizer.DiagnosticAddendum.memberTypeMismatch().format({ name }));
                 typesAreConsistent = false;
             }
         }
@@ -713,7 +736,23 @@ export function assignToTypedDict(
     let isMatch = true;
     const narrowedEntries = new Map<string, TypedDictEntry>();
 
-    const symbolMap = getTypedDictMembersForClass(evaluator, classType);
+    let typeVarContext: TypeVarContext | undefined;
+    let genericClassType = classType;
+
+    if (classType.details.typeParameters.length > 0) {
+        typeVarContext = new TypeVarContext(getTypeVarScopeId(classType));
+
+        // Create a generic (nonspecialized version) of the class.
+        if (classType.typeArguments) {
+            genericClassType = ClassType.cloneForSpecialization(
+                classType,
+                /* typeArguments */ undefined,
+                /* isTypeArgumentExplicit */ false
+            );
+        }
+    }
+
+    const symbolMap = getTypedDictMembersForClass(evaluator, genericClassType);
 
     keyTypes.forEach((keyType, index) => {
         if (!isClassInstance(keyType) || !ClassType.isBuiltIn(keyType, 'str') || !isLiteralType(keyType)) {
@@ -735,9 +774,19 @@ export function assignToTypedDict(
                 }
             } else {
                 // Can we assign the value to the declared type?
-                if (!evaluator.canAssignType(symbolEntry.valueType, valueTypes[index])) {
-                    if (diagAddendum) {
-                        diagAddendum.addMessage(
+                const subDiag = diagAddendum?.createAddendum();
+                if (
+                    !evaluator.assignType(
+                        symbolEntry.valueType,
+                        valueTypes[index],
+                        subDiag?.createAddendum(),
+                        typeVarContext,
+                        /* srcTypeVarContext */ undefined,
+                        AssignTypeFlags.RetainLiteralsForTypeVar
+                    )
+                ) {
+                    if (subDiag) {
+                        subDiag.addMessage(
                             Localizer.DiagnosticAddendum.typedDictFieldTypeMismatch().format({
                                 name: keyType.literalValue as string,
                                 type: evaluator.printType(valueTypes[index]),
@@ -783,12 +832,16 @@ export function assignToTypedDict(
         return undefined;
     }
 
+    const specializedClassType = typeVarContext
+        ? (applySolvedTypeVars(genericClassType, typeVarContext) as ClassType)
+        : classType;
+
     return narrowedEntries.size === 0
-        ? classType
-        : ClassType.cloneForNarrowedTypedDictEntries(classType, narrowedEntries);
+        ? specializedClassType
+        : ClassType.cloneForNarrowedTypedDictEntries(specializedClassType, narrowedEntries);
 }
 
-export function getTypeFromIndexedTypedDict(
+export function getTypeOfIndexedTypedDict(
     evaluator: TypeEvaluator,
     node: IndexNode,
     baseType: ClassType,
@@ -847,7 +900,7 @@ export function getTypeFromIndexedTypedDict(
             }
 
             if (usage.method === 'set') {
-                if (!evaluator.canAssignType(entry.valueType, usage.setType || AnyType.create(), diag)) {
+                if (!evaluator.assignType(entry.valueType, usage.setType || AnyType.create(), diag)) {
                     allDiagsInvolveNotRequiredKeys = false;
                 }
             } else if (usage.method === 'del' && entry.isRequired) {
@@ -872,7 +925,7 @@ export function getTypeFromIndexedTypedDict(
     // If we have an "expected type" diagnostic addendum (used for assignments),
     // use that rather than the local diagnostic information because it will
     // be more informative.
-    if (usage.setExpectedTypeDiag) {
+    if (usage.setExpectedTypeDiag && !diag.isEmpty() && !usage.setExpectedTypeDiag.isEmpty()) {
         diag = usage.setExpectedTypeDiag;
     }
 

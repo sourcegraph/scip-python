@@ -9,6 +9,7 @@
 import { isNumber, isString } from '../common/core';
 import { assertNever } from '../common/debug';
 import { ensureTrailingDirectorySeparator, stripFileExtension } from '../common/pathUtils';
+import { convertOffsetToPosition } from '../common/positionUtils';
 import { isExpressionNode, ParseNode, ParseNodeType } from '../parser/parseNodes';
 import { AbsoluteModuleDescriptor } from './analyzerFileInfo';
 import * as AnalyzerNodeInfo from './analyzerNodeInfo';
@@ -135,11 +136,17 @@ export function createTracePrinter(roots: string[]): TracePrinter {
                 case DeclarationType.Parameter:
                     return `Parameter, ${printNode(decl.node)} (${printFileOrModuleName(decl.path)})`;
 
+                case DeclarationType.TypeParameter:
+                    return `TypeParameter, ${printNode(decl.node)} (${printFileOrModuleName(decl.path)})`;
+
                 case DeclarationType.SpecialBuiltInClass:
                     return `SpecialBuiltInClass, ${printNode(decl.node)} (${printFileOrModuleName(decl.path)})`;
 
                 case DeclarationType.Variable:
                     return `Variable, ${printNode(decl.node)} (${printFileOrModuleName(decl.path)})`;
+
+                case DeclarationType.TypeAlias:
+                    return `TypeAlias, ${printNode(decl.node)} (${printFileOrModuleName(decl.path)})`;
 
                 default:
                     assertNever(decl);
@@ -170,7 +177,14 @@ export function createTracePrinter(roots: string[]): TracePrinter {
             return '';
         }
 
-        const path = printPath ? `(${printFileOrModuleName(getFileInfo(node)?.filePath)})` : '';
+        let path = printPath ? `(${printFileOrModuleName(getFileInfo(node)?.filePath)})` : '';
+
+        const fileInfo = getFileInfo(node);
+        if (fileInfo?.lines) {
+            const position = convertOffsetToPosition(node.start, fileInfo.lines);
+            path += ` [${position.line + 1}:${position.character + 1}]`;
+        }
+
         if (isExpressionNode(node)) {
             return wrap(getText(ParseTreeUtils.printExpression(node)), '"') + ` ${path}`;
         }
@@ -231,7 +245,7 @@ export function createTracePrinter(roots: string[]): TracePrinter {
         }
 
         if (isNode(o)) {
-            return printNode(o, /*printPath*/ true);
+            return printNode(o, /* printPath */ true);
         }
 
         if (isDeclaration(o)) {

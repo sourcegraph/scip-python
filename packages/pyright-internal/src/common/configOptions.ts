@@ -174,6 +174,9 @@ export interface DiagnosticRuleSet {
     // the owning class or module?
     reportPrivateUsage: DiagnosticLevel;
 
+    // Report usage of deprecated type comments.
+    reportTypeCommentUsage: DiagnosticLevel;
+
     // Report usage of an import from a py.typed module that is
     // not meant to be re-exported from that module.
     reportPrivateImportUsage: DiagnosticLevel;
@@ -345,6 +348,7 @@ export function getDiagLevelDiagnosticRules() {
         DiagnosticRule.reportUntypedBaseClass,
         DiagnosticRule.reportUntypedNamedTuple,
         DiagnosticRule.reportPrivateUsage,
+        DiagnosticRule.reportTypeCommentUsage,
         DiagnosticRule.reportPrivateImportUsage,
         DiagnosticRule.reportConstantRedefinition,
         DiagnosticRule.reportIncompatibleMethodOverride,
@@ -425,6 +429,7 @@ export function getOffDiagnosticRuleSet(): DiagnosticRuleSet {
         reportUntypedBaseClass: 'none',
         reportUntypedNamedTuple: 'none',
         reportPrivateUsage: 'none',
+        reportTypeCommentUsage: 'none',
         reportPrivateImportUsage: 'none',
         reportConstantRedefinition: 'none',
         reportIncompatibleMethodOverride: 'none',
@@ -501,6 +506,7 @@ export function getBasicDiagnosticRuleSet(): DiagnosticRuleSet {
         reportUntypedBaseClass: 'none',
         reportUntypedNamedTuple: 'none',
         reportPrivateUsage: 'none',
+        reportTypeCommentUsage: 'none',
         reportPrivateImportUsage: 'error',
         reportConstantRedefinition: 'none',
         reportIncompatibleMethodOverride: 'none',
@@ -577,6 +583,7 @@ export function getStrictDiagnosticRuleSet(): DiagnosticRuleSet {
         reportUntypedBaseClass: 'error',
         reportUntypedNamedTuple: 'error',
         reportPrivateUsage: 'error',
+        reportTypeCommentUsage: 'error',
         reportPrivateImportUsage: 'error',
         reportConstantRedefinition: 'error',
         reportIncompatibleMethodOverride: 'error',
@@ -662,6 +669,10 @@ export class ConfigOptions {
 
     // A list of file specs that should be analyzed using "strict" mode.
     strict: FileSpec[] = [];
+
+    // A set of defined constants that are used by the binder to determine
+    // whether runtime conditions should evaluate to True or False.
+    defineConstant = new Map<string, boolean | string>();
 
     // Emit verbose information to console?
     verboseOutput?: boolean | undefined;
@@ -1026,6 +1037,24 @@ export class ConfigOptions {
                 console.error(`Config "verboseOutput" field must be true or false.`);
             } else {
                 this.verboseOutput = configObj.verboseOutput;
+            }
+        }
+
+        // Read the "defineConstant" setting.
+        if (configObj.defineConstant !== undefined) {
+            if (typeof configObj.defineConstant !== 'object' || Array.isArray(configObj.defineConstant)) {
+                console.error(`Config "defineConstant" field must contain a map indexed by constant names.`);
+            } else {
+                const keys = Object.getOwnPropertyNames(configObj.defineConstant);
+                keys.forEach((key) => {
+                    const value = configObj.defineConstant[key];
+                    const valueType = typeof value;
+                    if (valueType !== 'boolean' && valueType !== 'string') {
+                        console.error(`Defined constant "${key}" must be associated with a boolean or string value.`);
+                    } else {
+                        this.defineConstant.set(key, value);
+                    }
+                });
             }
         }
 

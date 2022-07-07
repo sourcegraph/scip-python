@@ -27,6 +27,7 @@ import { DeclarationType } from './declaration';
 import { updateNamedTupleBaseClass } from './namedTuples';
 import { evaluateStaticBoolExpression } from './staticExpressions';
 import { Symbol, SymbolFlags } from './symbol';
+import { getLastTypedDeclaredForSymbol } from './symbolUtils';
 import { EvaluatorFlags, FunctionArgument, TypeEvaluator } from './typeEvaluatorTypes';
 import {
     AnyType,
@@ -115,9 +116,32 @@ export function synthesizeDataClassMethods(
     const localEntryTypeEvaluator: { entry: DataClassEntry; evaluator: EntryTypeEvaluator }[] = [];
     let sawKeywordOnlySeparator = false;
 
-    node.suite.statements.forEach((statementList) => {
-        if (statementList.nodeType === ParseNodeType.StatementList) {
-            statementList.statements.forEach((statement) => {
+    classType.details.fields.forEach((symbol) => {
+        if (!symbol.isIgnoredForProtocolMatch()) {
+            // Only variables (not functions, classes, etc.) are considered.
+            const lastDecl = getLastTypedDeclaredForSymbol(symbol);
+            if (lastDecl && lastDecl.type === DeclarationType.Variable) {
+                let statement: ParseNode | undefined = lastDecl.node;
+
+                while (statement) {
+                    if (statement.nodeType === ParseNodeType.Assignment) {
+                        break;
+                    }
+
+                    if (statement.nodeType === ParseNodeType.TypeAnnotation) {
+                        if (statement.parent?.nodeType === ParseNodeType.Assignment) {
+                            statement = statement.parent;
+                        }
+                        break;
+                    }
+
+                    statement = statement.parent;
+                }
+
+                if (!statement) {
+                    return;
+                }
+
                 let variableNameNode: NameNode | undefined;
                 let aliasName: string | undefined;
                 let variableTypeEvaluator: EntryTypeEvaluator | undefined;
@@ -132,9 +156,10 @@ export function synthesizeDataClassMethods(
                         statement.leftExpression.valueExpression.nodeType === ParseNodeType.Name
                     ) {
                         variableNameNode = statement.leftExpression.valueExpression;
+                        const assignmentStatement = statement;
                         variableTypeEvaluator = () =>
                             evaluator.getTypeOfAnnotation(
-                                (statement.leftExpression as TypeAnnotationNode).typeAnnotation,
+                                (assignmentStatement.leftExpression as TypeAnnotationNode).typeAnnotation,
                                 {
                                     isVariableAnnotation: true,
                                     allowFinal: true,
@@ -163,9 +188,11 @@ export function synthesizeDataClassMethods(
                                 (arg) => arg.name?.value === 'init'
                             );
                             if (initArg && initArg.valueExpression) {
+                                const fileInfo = AnalyzerNodeInfo.getFileInfo(node);
                                 const value = evaluateStaticBoolExpression(
                                     initArg.valueExpression,
-                                    AnalyzerNodeInfo.getFileInfo(node).executionEnvironment
+                                    fileInfo.executionEnvironment,
+                                    fileInfo.definedConstants
                                 );
                                 if (value === false) {
                                     includeInInit = false;
@@ -217,9 +244,11 @@ export function synthesizeDataClassMethods(
                                 (arg) => arg.name?.value === 'kw_only'
                             );
                             if (kwOnlyArg && kwOnlyArg.valueExpression) {
+                                const fileInfo = AnalyzerNodeInfo.getFileInfo(node);
                                 const value = evaluateStaticBoolExpression(
                                     kwOnlyArg.valueExpression,
-                                    AnalyzerNodeInfo.getFileInfo(node).executionEnvironment
+                                    fileInfo.executionEnvironment,
+                                    fileInfo.definedConstants
                                 );
                                 if (value === false) {
                                     isKeywordOnly = false;
@@ -258,8 +287,9 @@ export function synthesizeDataClassMethods(
                 } else if (statement.nodeType === ParseNodeType.TypeAnnotation) {
                     if (statement.valueExpression.nodeType === ParseNodeType.Name) {
                         variableNameNode = statement.valueExpression;
+                        const annotationStatement = statement;
                         variableTypeEvaluator = () =>
-                            evaluator.getTypeOfAnnotation(statement.typeAnnotation, {
+                            evaluator.getTypeOfAnnotation(annotationStatement.typeAnnotation, {
                                 isVariableAnnotation: true,
                                 allowFinal: true,
                                 allowClassVar: true,
@@ -365,7 +395,47 @@ export function synthesizeDataClassMethods(
                         }
                     }
                 }
-            });
+            } else {
+                // The symbol had no declared type, so it is (mostly) ignored by dataclasses.
+                // However, if it is assigned a field descriptor, it will result in a
+                // runtime exception.
+                const declarations = symbol.getDeclarations();
+                if (declarations.length === 0) {
+                    return;
+                }
+                const lastDecl = declarations[declarations.length - 1];
+                if (lastDecl.type !== DeclarationType.Variable) {
+                    return;
+                }
+
+                const statement = lastDecl.node.parent;
+                if (!statement || statement.nodeType !== ParseNodeType.Assignment) {
+                    return;
+                }
+
+                // If the RHS of the assignment is assigning a field instance where the
+                // "init" parameter is set to false, do not include it in the init method.
+                if (statement.rightExpression.nodeType === ParseNodeType.Call) {
+                    const callType = evaluator.getTypeOfExpression(
+                        statement.rightExpression.leftExpression,
+                        EvaluatorFlags.DoNotSpecialize
+                    ).type;
+
+                    if (
+                        isDataclassFieldConstructor(
+                            callType,
+                            classType.details.dataClassBehaviors?.fieldDescriptorNames || []
+                        )
+                    ) {
+                        evaluator.addDiagnostic(
+                            AnalyzerNodeInfo.getFileInfo(node).diagnosticRuleSet.reportGeneralTypeIssues,
+                            DiagnosticRule.reportGeneralTypeIssues,
+                            Localizer.Diagnostic.dataClassFieldWithoutAnnotation(),
+                            statement.rightExpression
+                        );
+                    }
+                }
+            }
         }
     });
 
@@ -464,7 +534,10 @@ export function synthesizeDataClassMethods(
             hasDeclaredType: true,
         });
         operatorMethod.details.declaredReturnType = evaluator.getBuiltInObject(node, 'bool');
-        symbolTable.set(operator, Symbol.createWithType(SymbolFlags.ClassMember, operatorMethod));
+        // If a method of this name already exists, don't override it.
+        if (!symbolTable.get(operator)) {
+            symbolTable.set(operator, Symbol.createWithType(SymbolFlags.ClassMember, operatorMethod));
+        }
     };
 
     // Synthesize comparison operators.
@@ -562,9 +635,7 @@ function transformDescriptorType(evaluator: TypeEvaluator, type: Type): Type {
 function addInheritedDataClassEntries(classType: ClassType, entries: DataClassEntry[]) {
     let allAncestorsAreKnown = true;
 
-    for (let i = classType.details.mro.length - 1; i >= 0; i--) {
-        const mroClass = classType.details.mro[i];
-
+    ClassType.getReverseMro(classType).forEach((mroClass) => {
         if (isInstantiableClass(mroClass)) {
             const typeVarContext = buildTypeVarContextFromSpecializedClass(mroClass, /* makeConcrete */ false);
             const dataClassEntries = ClassType.getDataClassEntries(mroClass);
@@ -594,7 +665,7 @@ function addInheritedDataClassEntries(classType: ClassType, entries: DataClassEn
         } else {
             allAncestorsAreKnown = false;
         }
-    }
+    });
 
     return allAncestorsAreKnown;
 }
@@ -639,7 +710,11 @@ export function validateDataClassTransformDecorator(
 
         switch (arg.name.value) {
             case 'kw_only_default': {
-                const value = evaluateStaticBoolExpression(arg.valueExpression, fileInfo.executionEnvironment);
+                const value = evaluateStaticBoolExpression(
+                    arg.valueExpression,
+                    fileInfo.executionEnvironment,
+                    fileInfo.definedConstants
+                );
                 if (value === undefined) {
                     evaluator.addError(
                         Localizer.Diagnostic.dataClassTransformExpectedBoolLiteral(),
@@ -653,7 +728,11 @@ export function validateDataClassTransformDecorator(
             }
 
             case 'eq_default': {
-                const value = evaluateStaticBoolExpression(arg.valueExpression, fileInfo.executionEnvironment);
+                const value = evaluateStaticBoolExpression(
+                    arg.valueExpression,
+                    fileInfo.executionEnvironment,
+                    fileInfo.definedConstants
+                );
                 if (value === undefined) {
                     evaluator.addError(
                         Localizer.Diagnostic.dataClassTransformExpectedBoolLiteral(),
@@ -667,7 +746,11 @@ export function validateDataClassTransformDecorator(
             }
 
             case 'order_default': {
-                const value = evaluateStaticBoolExpression(arg.valueExpression, fileInfo.executionEnvironment);
+                const value = evaluateStaticBoolExpression(
+                    arg.valueExpression,
+                    fileInfo.executionEnvironment,
+                    fileInfo.definedConstants
+                );
                 if (value === undefined) {
                     evaluator.addError(
                         Localizer.Diagnostic.dataClassTransformExpectedBoolLiteral(),
@@ -680,7 +763,12 @@ export function validateDataClassTransformDecorator(
                 break;
             }
 
-            case 'field_descriptors': {
+            // Earlier versions of the dataclass_transform spec used the name "field_descriptors"
+            // rather than "field_specifiers". The older name is now deprecated but still supported
+            // for the time being because some libraries shipped with the older __dataclass_transform__
+            // form that supported this older parameter name.
+            case 'field_descriptors':
+            case 'field_specifiers': {
                 const valueType = evaluator.getTypeOfExpression(arg.valueExpression).type;
                 if (
                     !isClassInstance(valueType) ||
@@ -694,7 +782,7 @@ export function validateDataClassTransformDecorator(
                     )
                 ) {
                     evaluator.addError(
-                        Localizer.Diagnostic.dataClassTransformFieldDescriptor().format({
+                        Localizer.Diagnostic.dataClassTransformFieldSpecifier().format({
                             type: evaluator.printType(valueType),
                         }),
                         arg.valueExpression
@@ -736,9 +824,7 @@ export function getDataclassDecoratorBehaviors(type: Type): DataClassBehaviors |
         // dataclass_transform decorator. If more than one have such a decorator,
         // only the first one will be honored, as per PEP 681.
         functionType =
-            type.overloads.find((overload) => {
-                overload.details.decoratorDataClassBehaviors !== undefined;
-            }) ?? type.overloads[0];
+            type.overloads.find((overload) => !!overload.details.decoratorDataClassBehaviors) ?? type.overloads[0];
     }
 
     if (!functionType) {
@@ -770,7 +856,7 @@ function applyDataClassBehaviorOverride(
     argValue: ExpressionNode
 ) {
     const fileInfo = AnalyzerNodeInfo.getFileInfo(errorNode);
-    const value = evaluateStaticBoolExpression(argValue, fileInfo.executionEnvironment);
+    const value = evaluateStaticBoolExpression(argValue, fileInfo.executionEnvironment, fileInfo.definedConstants);
 
     switch (argName) {
         case 'order':

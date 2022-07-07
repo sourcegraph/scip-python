@@ -1,7 +1,8 @@
 import sys
 from _typeshed import ReadableBuffer, Self, WriteableBuffer
 from abc import abstractmethod
-from typing import Any, Callable, ClassVar, Generic, Iterable, Iterator, Mapping, Sequence, TypeVar, Union as _UnionT, overload
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
+from typing import Any, ClassVar, Generic, TypeVar, Union as _UnionT, overload
 from typing_extensions import TypeAlias
 
 if sys.version_info >= (3, 9):
@@ -163,7 +164,7 @@ def POINTER(type: type[_CT]) -> type[pointer[_CT]]: ...
 class pointer(Generic[_CT], _PointerLike, _CData):
     _type_: type[_CT]
     contents: _CT
-    def __init__(self, arg: _CT = ...) -> None: ...
+    def __init__(self, arg: _CT) -> None: ...
     @overload
     def __getitem__(self, __i: int) -> _CT: ...
     @overload
@@ -189,7 +190,9 @@ def wstring_at(address: _CVoidConstPLike, size: int = ...) -> str: ...
 
 class _SimpleCData(Generic[_T], _CData):
     value: _T
-    def __init__(self, value: _T = ...) -> None: ...
+    # The TypeVar can be unsolved here,
+    # but we can't use overloads without creating many, many mypy false-positive errors
+    def __init__(self, value: _T = ...) -> None: ...  # type: ignore
 
 class c_byte(_SimpleCData[int]): ...
 

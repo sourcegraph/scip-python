@@ -1,10 +1,10 @@
 # Pyright Configuration
 
-Pyright offers flexible configuration options specified in a JSON-formatted text configuration. By default, the file is called “pyrightconfig.json” and is located within the root directory of your project. Multi-root workspaces (“Add Folder to Workspace…”) are supported, and each workspace root can have its own “pyrightconfig.json” file.
+Pyright offers flexible configuration options specified in a JSON-formatted text configuration. By default, the file is called “pyrightconfig.json” and is located within the root directory of your project. Multi-root workspaces (“Add Folder to Workspace…”) are supported, and each workspace root can have its own “pyrightconfig.json” file. For a sample pyrightconfig.json file, see [below](https://github.com/microsoft/pyright/blob/main/docs/configuration.md#sample-config-file).
 
-Pyright settings can also be specified in a `[tool.pyright]` section of a “pyproject.toml” file. A “pyrightconfig.json” file always takes precedent over “pyproject.toml” if both are present.
+Pyright settings can also be specified in a `[tool.pyright]` section of a “pyproject.toml” file. A “pyrightconfig.json” file always takes precedent over “pyproject.toml” if both are present. For a sample pyproject.toml file, see [below](https://github.com/microsoft/pyright/blob/main/docs/configuration.md#sample-pyprojecttoml-file).
 
-Relative paths specified within the config file are relative to the config file’s location. Paths with shell variables (including `~`) are not supported.
+Relative paths specified within the config file are relative to the config file’s location. Paths with shell variables (including `~`) are not supported. Paths within a the config file should generally be relative paths so the config file can be shared by other developers who contribute to the project.
 
 ## Main Pyright Config Options
 
@@ -15,6 +15,8 @@ Relative paths specified within the config file are relative to the config file�
 **ignore** [array of paths, optional]: Paths of directories or files whose diagnostic output (errors and warnings) should be suppressed even if they are an included file or within the transitive closure of an included file. Paths may contain wildcard characters ** (a directory or multiple levels of directories), * (a sequence of zero or more characters), or ? (a single character).
 
 **strict** [array of paths, optional]: Paths of directories or files that should use “strict” analysis if they are included. This is the same as manually adding a “# pyright: strict” comment. In strict mode, most type-checking rules are enabled. Refer to [this table](https://github.com/microsoft/pyright/blob/main/docs/configuration.md#diagnostic-rule-defaults) for details about which rules are enabled in strict mode. Paths may contain wildcard characters ** (a directory or multiple levels of directories), * (a sequence of zero or more characters), or ? (a single character).
+
+**defineConstant** [map of constants to values (boolean or string), optional]: Set of identifiers that should be assumed to contain a constant value wherever used within this program. For example, `{ "DEBUG": true }` indicates that pyright should assume that the identifier `DEBUG` will always be equal to `True`. If this identifier is used within a conditional expression (such as `if not DEBUG:`) pyright will use the indicated value to determine whether the guarded block is reachable or not.
 
 **typeshedPath** [path, optional]: Path to a directory that contains typeshed type stub files. Pyright ships with a bundled copy of typeshed type stubs. If you want to use a different version of typeshed stubs, you can clone the [typeshed github repo](https://github.com/python/typeshed) to a local directory and reference the location with this path. This option is useful if you’re actively contributing updates to typeshed.
 
@@ -101,6 +103,8 @@ The following settings control pyright’s diagnostic output (warnings or errors
 **reportUntypedNamedTuple** [boolean or string, optional]: Generate or suppress diagnostics when “namedtuple” is used rather than “NamedTuple”. The former contains no type information, whereas the latter does. The default value for this setting is 'none'.
 
 **reportPrivateUsage** [boolean or string, optional]: Generate or suppress diagnostics for incorrect usage of private or protected variables or functions. Protected class members begin with a single underscore (“_”) and can be accessed only by subclasses. Private class members begin with a double underscore but do not end in a double underscore and can be accessed only within the declaring class. Variables and functions declared outside of a class are considered private if their names start with either a single or double underscore, and they cannot be accessed outside of the declaring module. The default value for this setting is 'none'.
+
+**reportTypeCommentUsage** [boolean or string, optional]: Prior to Python 3.5, the grammar did not support type annotations, so types needed to be specified using “type comments”. Python 3.5 eliminated the need for function type comments, and Python 3.6 eliminated the need for variable type comments. Future versions of Python will likely deprecate all support for type comments. If enabled, this check will flag any type comment usage unless it is required for compatibility with the specified language version. The default value for this setting is 'none'.
 
 **reportPrivateImportUsage** [boolean or string, optional]: Generate or suppress diagnostics for use of a symbol from a "py.typed" module that is not meant to be exported from that module. The default value for this setting is 'error'.
 
@@ -204,6 +208,10 @@ The following is an example of a pyright config file:
     "src/oldstuff"
   ],
 
+  "defineConstant": {
+    "DEBUG": true
+  },
+
   "stubPath": "src/stubs",
   "venv": "env367",
 
@@ -253,6 +261,7 @@ exclude = ["**/node_modules",
     "src/typestubs"
 ]
 ignore = ["src/oldstuff"]
+defineConstant = { DEBUG = true }
 stubPath = "src/stubs"
 venv = "env367"
 
@@ -319,6 +328,7 @@ The following table lists the default severity levels for each diagnostic rule w
 | reportMissingTypeArgument                 | "none"     | "none"     | "error"    |
 | reportOverlappingOverload                 | "none"     | "none"     | "error"    |
 | reportPrivateUsage                        | "none"     | "none"     | "error"    |
+| reportTypeCommentUsage                    | "none"     | "none"     | "error"    |
 | reportUnknownArgumentType                 | "none"     | "none"     | "error"    |
 | reportUnknownLambdaType                   | "none"     | "none"     | "error"    |
 | reportUnknownMemberType                   | "none"     | "none"     | "error"    |

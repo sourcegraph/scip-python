@@ -20,6 +20,7 @@ import {
     ImportStatements,
 } from '../analyzer/importStatementUtils';
 import { SourceFileInfo } from '../analyzer/program';
+import { isUserCode } from '../analyzer/sourceFileInfoUtils';
 import { Symbol } from '../analyzer/symbol';
 import * as SymbolNameUtils from '../analyzer/symbolNameUtils';
 import { throwIfCancellationRequested } from '../common/cancellationUtils';
@@ -135,7 +136,7 @@ export function buildModuleSymbolsMap(
                             return;
                         }
 
-                        if (declaration.type === DeclarationType.Alias) {
+                        if (declaration.type === DeclarationType.Alias && isUserCode(file)) {
                             // We don't include import alias in auto import
                             // for workspace files.
                             return;
@@ -192,7 +193,7 @@ export class AutoImporter {
         private _moduleSymbolMap: ModuleSymbolMap,
         private _options: AutoImportOptions
     ) {
-        this._importStatements = getTopLevelImports(this._parseResults.parseTree, true);
+        this._importStatements = getTopLevelImports(this._parseResults.parseTree, /* includeImplicitImports */ true);
 
         this._perfInfo.indexUsed = !!this._options.libraryMap;
     }

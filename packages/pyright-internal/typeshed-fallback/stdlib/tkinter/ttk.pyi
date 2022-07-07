@@ -1,65 +1,40 @@
 import _tkinter
 import sys
 import tkinter
+from collections.abc import Callable
 from tkinter.font import _FontDescription
-from typing import Any, Callable, overload
+from typing import Any, overload
 from typing_extensions import Literal, TypeAlias, TypedDict
 
+__all__ = [
+    "Button",
+    "Checkbutton",
+    "Combobox",
+    "Entry",
+    "Frame",
+    "Label",
+    "Labelframe",
+    "LabelFrame",
+    "Menubutton",
+    "Notebook",
+    "Panedwindow",
+    "PanedWindow",
+    "Progressbar",
+    "Radiobutton",
+    "Scale",
+    "Scrollbar",
+    "Separator",
+    "Sizegrip",
+    "Style",
+    "Treeview",
+    "LabeledScale",
+    "OptionMenu",
+    "tclobjs_to_py",
+    "setup_master",
+]
+
 if sys.version_info >= (3, 7):
-    __all__ = [
-        "Button",
-        "Checkbutton",
-        "Combobox",
-        "Entry",
-        "Frame",
-        "Label",
-        "Labelframe",
-        "LabelFrame",
-        "Menubutton",
-        "Notebook",
-        "Panedwindow",
-        "PanedWindow",
-        "Progressbar",
-        "Radiobutton",
-        "Scale",
-        "Scrollbar",
-        "Separator",
-        "Sizegrip",
-        "Spinbox",
-        "Style",
-        "Treeview",
-        "LabeledScale",
-        "OptionMenu",
-        "tclobjs_to_py",
-        "setup_master",
-    ]
-else:
-    __all__ = [
-        "Button",
-        "Checkbutton",
-        "Combobox",
-        "Entry",
-        "Frame",
-        "Label",
-        "Labelframe",
-        "LabelFrame",
-        "Menubutton",
-        "Notebook",
-        "Panedwindow",
-        "PanedWindow",
-        "Progressbar",
-        "Radiobutton",
-        "Scale",
-        "Scrollbar",
-        "Separator",
-        "Sizegrip",
-        "Style",
-        "Treeview",
-        "LabeledScale",
-        "OptionMenu",
-        "tclobjs_to_py",
-        "setup_master",
-    ]
+    __all__ += ["Spinbox"]
 
 def tclobjs_to_py(adict: dict[Any, Any]) -> dict[Any, Any]: ...
 def setup_master(master: Any | None = ...): ...

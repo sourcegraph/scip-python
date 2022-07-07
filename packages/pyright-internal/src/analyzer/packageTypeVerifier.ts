@@ -27,7 +27,7 @@ import {
     TypeKnownStatus,
 } from './packageTypeReport';
 import { Program } from './program';
-import { getPyTypedInfo } from './pyTypedUtils';
+import { getPyTypedInfo, PyTypedInfo } from './pyTypedUtils';
 import { ScopeType } from './scope';
 import { getScopeForNode } from './scopeUtils';
 import { Symbol, SymbolTable } from './symbol';
@@ -80,35 +80,47 @@ export class PackageTypeVerifier {
     }
 
     verify(): PackageTypeReport {
-        const trimmedPackageName = this._packageName.trim();
-        const packageNameParts = trimmedPackageName.split('.');
+        const trimmedModuleName = this._packageName.trim();
+        const moduleNameParts = trimmedModuleName.split('.');
 
         const report = getEmptyReport(
-            packageNameParts[0],
-            this._getDirectoryForPackage(packageNameParts[0]) || '',
+            moduleNameParts[0],
+            this._getDirectoryForModule(moduleNameParts[0]) ?? '',
+            trimmedModuleName,
+            this._getDirectoryForModule(trimmedModuleName) ?? '',
             this._ignoreExternal
         );
         const commonDiagnostics = report.generalDiagnostics;
 
         try {
-            if (!trimmedPackageName) {
+            if (!trimmedModuleName) {
                 commonDiagnostics.push(
                     new Diagnostic(
                         DiagnosticCategory.Error,
-                        `Package name "${trimmedPackageName}" is invalid`,
+                        `Module name "${trimmedModuleName}" is invalid`,
                         getEmptyRange()
                     )
                 );
-            } else if (!report.rootDirectory) {
+            } else if (!report.moduleRootDirectory) {
                 commonDiagnostics.push(
                     new Diagnostic(
                         DiagnosticCategory.Error,
-                        `Package "${trimmedPackageName}" cannot be resolved`,
+                        `Module "${trimmedModuleName}" cannot be resolved`,
                         getEmptyRange()
                     )
                 );
             } else {
-                const pyTypedInfo = this._getDeepestPyTypedInfo(report.rootDirectory, packageNameParts);
+                let pyTypedInfo: PyTypedInfo | undefined;
+                if (report.moduleRootDirectory) {
+                    pyTypedInfo = this._getDeepestPyTypedInfo(report.moduleRootDirectory, moduleNameParts);
+                }
+
+                // If we couldn't find any "py.typed" info in the module path, search again
+                // starting at the package root.
+                if (!pyTypedInfo && report.packageRootDirectory) {
+                    pyTypedInfo = this._getDeepestPyTypedInfo(report.packageRootDirectory, moduleNameParts);
+                }
+
                 if (!pyTypedInfo) {
                     commonDiagnostics.push(
                         new Diagnostic(DiagnosticCategory.Error, 'No py.typed file found', getEmptyRange())
@@ -116,18 +128,14 @@ export class PackageTypeVerifier {
                 } else {
                     report.pyTypedPath = pyTypedInfo.pyTypedPath;
 
-                    const publicModules = this._getListOfPublicModules(
-                        report.rootDirectory,
-                        packageNameParts[0],
-                        trimmedPackageName
-                    );
+                    const publicModules = this._getListOfPublicModules(report.moduleRootDirectory, trimmedModuleName);
 
                     // If the filter eliminated all modules, report an error.
                     if (publicModules.length === 0) {
                         commonDiagnostics.push(
                             new Diagnostic(
                                 DiagnosticCategory.Error,
-                                `Module "${trimmedPackageName}" cannot be resolved`,
+                                `Module "${trimmedModuleName}" cannot be resolved`,
                                 getEmptyRange()
                             )
                         );
@@ -142,7 +150,7 @@ export class PackageTypeVerifier {
                     });
 
                     publicModules.forEach((moduleName) => {
-                        this._verifyTypesForModule(moduleName, publicSymbolMap, report);
+                        this._verifyTypesOfModule(moduleName, publicSymbolMap, report);
                     });
                 }
             }
@@ -267,7 +275,7 @@ export class PackageTypeVerifier {
                 const fullName = `${scopeName}.${name}`;
 
                 if (!symbol.isExternallyHidden() && !symbol.isPrivateMember() && !symbol.isPrivatePyTypedImport()) {
-                    const symbolType = this._program.getTypeForSymbol(symbol);
+                    const symbolType = this._program.getTypeOfSymbol(symbol);
                     symbolMap.set(fullName, fullName);
 
                     const typedDecls = symbol.getTypedDeclarations();
@@ -293,7 +301,7 @@ export class PackageTypeVerifier {
                     // Is this the re-export of an import? If so, record the alternate name.
                     const importDecl = symbol.getDeclarations().find((decl) => decl.type === DeclarationType.Alias);
                     if (importDecl && importDecl.type === DeclarationType.Alias) {
-                        const typeName = getFullNameOfType(this._program.getTypeForSymbol(symbol));
+                        const typeName = getFullNameOfType(this._program.getTypeOfSymbol(symbol));
                         if (typeName) {
                             this._addAlternateSymbolName(alternateSymbolNames, typeName, fullName);
                         }
@@ -319,7 +327,7 @@ export class PackageTypeVerifier {
         }
     }
 
-    private _verifyTypesForModule(moduleName: string, publicSymbolMap: PublicSymbolMap, report: PackageTypeReport) {
+    private _verifyTypesOfModule(moduleName: string, publicSymbolMap: PublicSymbolMap, report: PackageTypeReport) {
         const importResult = this._resolveImport(moduleName);
         if (!importResult.isImportFound) {
             report.generalDiagnostics.push(
@@ -368,17 +376,14 @@ export class PackageTypeVerifier {
 
     // Scans the directory structure for a list of public modules
     // within the package.
-    private _getListOfPublicModules(rootPath: string, packageName: string, moduleFilter: string): string[] {
-        let publicModules: string[] = [];
-        this._addPublicModulesRecursive(rootPath, packageName, publicModules);
+    private _getListOfPublicModules(moduleRootPath: string, moduleName: string): string[] {
+        const publicModules: string[] = [];
+        this._addPublicModulesRecursive(moduleRootPath, moduleName, publicModules);
 
         // Make sure modules are unique. There may be duplicates if a ".py" and ".pyi"
         // exist for some modules.
         const uniqueModules: string[] = [];
         const moduleMap = new Map<string, string>();
-
-        // Apply the filter to limit to only specified submodules.
-        publicModules = publicModules.filter((module) => module.startsWith(moduleFilter));
 
         publicModules.forEach((module) => {
             if (!moduleMap.has(module)) {
@@ -478,7 +483,7 @@ export class PackageTypeVerifier {
                     return;
                 }
 
-                let symbolType = this._program.getTypeForSymbol(symbol);
+                let symbolType = this._program.getTypeOfSymbol(symbol);
 
                 let usesAmbiguousOverride = false;
                 let baseSymbolType: Type | undefined;
@@ -489,7 +494,7 @@ export class PackageTypeVerifier {
 
                     if (baseTypeSymbol !== symbol) {
                         childSymbolType = symbolType;
-                        baseSymbolType = this._program.getTypeForSymbol(baseTypeSymbol);
+                        baseSymbolType = this._program.getTypeOfSymbol(baseTypeSymbol);
 
                         // If the inferred type is ambiguous or the declared base class type is
                         // not the same type as the inferred type, mark it as ambiguous because
@@ -741,7 +746,7 @@ export class PackageTypeVerifier {
 
                     accessors.forEach((accessorName) => {
                         const accessSymbol = propertyClass.details.fields.get(accessorName);
-                        let accessType = accessSymbol ? this._program.getTypeForSymbol(accessSymbol) : undefined;
+                        let accessType = accessSymbol ? this._program.getTypeOfSymbol(accessSymbol) : undefined;
 
                         if (!accessType) {
                             return;
@@ -874,11 +879,7 @@ export class PackageTypeVerifier {
                                 declFilePath || ''
                             );
                         }
-                        if (diag) {
-                            diag.createAddendum().addMessage(
-                                `Type annotation for parameter "${param.name}" is missing`
-                            );
-                        }
+                        diag?.createAddendum().addMessage(`Type annotation for parameter "${param.name}" is missing`);
                         knownStatus = this._updateKnownStatusIfWorse(knownStatus, TypeKnownStatus.Unknown);
                     }
                 } else if (isUnknown(param.type)) {
@@ -889,9 +890,7 @@ export class PackageTypeVerifier {
                             declRange || getEmptyRange(),
                             declFilePath || ''
                         );
-                        if (diag) {
-                            diag.createAddendum().addMessage(`Type of parameter "${param.name}" is unknown`);
-                        }
+                        diag?.createAddendum().addMessage(`Type of parameter "${param.name}" is unknown`);
                     }
                     knownStatus = this._updateKnownStatusIfWorse(knownStatus, TypeKnownStatus.Unknown);
                 } else {
@@ -986,9 +985,7 @@ export class PackageTypeVerifier {
                         declFilePath || ''
                     );
                 }
-                if (diag) {
-                    diag.createAddendum().addMessage(`Return type annotation is missing`);
-                }
+                diag?.createAddendum().addMessage(`Return type annotation is missing`);
                 knownStatus = this._updateKnownStatusIfWorse(knownStatus, TypeKnownStatus.Unknown);
             }
         }
@@ -1392,22 +1389,22 @@ export class PackageTypeVerifier {
         }
     }
 
-    private _getDirectoryForPackage(packageName: string): string | undefined {
+    private _getDirectoryForModule(moduleName: string): string | undefined {
         const importResult = this._importResolver.resolveImport(
             '',
             this._execEnv,
-            createImportedModuleDescriptor(packageName)
+            createImportedModuleDescriptor(moduleName)
         );
 
         if (importResult.isImportFound) {
             const resolvedPath = importResult.resolvedPaths[importResult.resolvedPaths.length - 1];
             if (resolvedPath) {
-                getDirectoryPath(resolvedPath);
+                return getDirectoryPath(resolvedPath);
             }
 
             // If it's a namespace package with no __init__.py(i), use the package
             // directory instead.
-            return importResult.packageDirectory || '';
+            return importResult.packageDirectory ?? '';
         }
 
         return undefined;

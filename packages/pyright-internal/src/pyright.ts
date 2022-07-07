@@ -59,8 +59,10 @@ interface PyrightSymbolCount {
 
 interface PyrightTypeCompletenessReport {
     packageName: string;
-    ignoreUnknownTypesFromImports: boolean;
     packageRootDirectory?: string | undefined;
+    moduleName: string;
+    moduleRootDirectory?: string | undefined;
+    ignoreUnknownTypesFromImports: boolean;
     pyTypedPath?: string | undefined;
     exportedSymbolCounts: PyrightSymbolCount;
     otherSymbolCounts: PyrightSymbolCount;
@@ -295,7 +297,12 @@ async function processArgs(): Promise<ExitStatus> {
     options.watchForSourceChanges = watch;
     options.watchForConfigChanges = watch;
 
-    const service = new AnalyzerService('<default>', fileSystem, output, () => new FullAccessHost(fileSystem));
+    // Refresh service after 2 seconds after the last library file change is detected.
+    const service = new AnalyzerService('<default>', fileSystem, {
+        console: output,
+        hostFactory: () => new FullAccessHost(fileSystem),
+        libraryReanalysisTimeProvider: () => 2 * 1000,
+    });
     const exitStatus = createDeferred<ExitStatus>();
 
     service.setCompletionCallback((results) => {
@@ -322,6 +329,7 @@ async function processArgs(): Promise<ExitStatus> {
                     errorCount += report.warningCount;
                 }
             } else {
+                printVersion();
                 const report = reportDiagnosticsAsText(results.diagnostics);
                 errorCount += report.errorCount;
                 if (treatWarningsAsErrors) {
@@ -359,6 +367,10 @@ async function processArgs(): Promise<ExitStatus> {
                 // Print the stats details.
                 service.printStats();
                 timingStats.printDetails(console);
+
+                if (args.verbose) {
+                    service.printDetailedAnalysisTimes();
+                }
             }
 
             if (args.dependencies) {
@@ -393,7 +405,7 @@ function verifyPackageTypes(
         const jsonReport = buildTypeCompletenessReport(packageName, report);
 
         if (outputJson) {
-            console.log(JSON.stringify(jsonReport, undefined, 4));
+            console.log(JSON.stringify(jsonReport, /* replacer */ undefined, 4));
         } else {
             printTypeCompletenessReportText(jsonReport, verboseOutput);
         }
@@ -443,8 +455,10 @@ function buildTypeCompletenessReport(packageName: string, completenessReport: Pa
 
     report.typeCompleteness = {
         packageName,
+        packageRootDirectory: completenessReport.packageRootDirectory,
+        moduleName: completenessReport.moduleName,
+        moduleRootDirectory: completenessReport.moduleRootDirectory,
         ignoreUnknownTypesFromImports: completenessReport.ignoreExternal,
-        packageRootDirectory: completenessReport.rootDirectory,
         pyTypedPath: completenessReport.pyTypedPath,
         exportedSymbolCounts: {
             withKnownType: 0,
@@ -529,9 +543,12 @@ function buildTypeCompletenessReport(packageName: string, completenessReport: Pa
 function printTypeCompletenessReportText(results: PyrightJsonResults, verboseOutput: boolean) {
     const completenessReport = results.typeCompleteness!;
 
-    console.log(`Package name: "${completenessReport.packageName}"`);
+    console.log(`Module name: "${completenessReport.moduleName}"`);
     if (completenessReport.packageRootDirectory !== undefined) {
         console.log(`Package directory: "${completenessReport.packageRootDirectory}"`);
+    }
+    if (completenessReport.moduleRootDirectory !== undefined) {
+        console.log(`Module directory: "${completenessReport.moduleRootDirectory}"`);
     }
 
     if (completenessReport.pyTypedPath !== undefined) {
@@ -640,7 +657,7 @@ function printUsage() {
             '  -p,--project <FILE OR DIRECTORY>   Use the configuration file at this location\n' +
             '  --pythonplatform <PLATFORM>        Analyze for a specific platform (Darwin, Linux, Windows)\n' +
             '  --pythonversion <VERSION>          Analyze for a specific version (3.3, 3.4, etc.)\n' +
-            '  --skipunannotated                  Do not analyze functions and methods with no type annotations\n' +
+            '  --skipunannotated                  Skip analysis of functions with no type annotations\n' +
             '  --stats                            Print detailed performance stats\n' +
             '  -t,--typeshed-path <DIRECTORY>     Use typeshed type stubs at this location\n' +
             '  -v,--venv-path <DIRECTORY>         Directory that contains virtual environments\n' +
@@ -694,7 +711,7 @@ function reportDiagnosticsAsJson(
         });
     });
 
-    console.log(JSON.stringify(report, undefined, 4));
+    console.log(JSON.stringify(report, /* replacer */ undefined, 4));
 
     return {
         errorCount: report.summary.errorCount,
@@ -792,6 +809,10 @@ function logDiagnosticToConsole(diag: PyrightJsonDiagnostic, prefix = '  ') {
 
     console.log(message);
 }
+
+// Increase the default stack trace limit from 16 to 64 to help diagnose
+// crashes with deep stack traces.
+Error.stackTraceLimit = 64;
 
 export async function main() {
     if (process.env.NODE_ENV === 'production') {

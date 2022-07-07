@@ -35,7 +35,7 @@ import {
     lookUpClassMember,
 } from '../analyzer/typeUtils';
 import { throwIfCancellationRequested } from '../common/cancellationUtils';
-import { fail } from '../common/debug';
+import { assertNever, fail } from '../common/debug';
 import { convertOffsetToPosition, convertPositionToOffset } from '../common/positionUtils';
 import { Position, Range } from '../common/textRange';
 import { TextRange } from '../common/textRange';
@@ -124,8 +124,15 @@ export class HoverProvider {
                         typeText = node.value + ': ' + evaluator.printType(type, /* expandTypeAlias */ false);
                     }
 
-                    this._addResultsPart(results.parts, typeText, true);
-                    this._addDocumentationPart(format, sourceMapper, results.parts, node, evaluator, undefined);
+                    this._addResultsPart(results.parts, typeText, /* python */ true);
+                    this._addDocumentationPart(
+                        format,
+                        sourceMapper,
+                        results.parts,
+                        node,
+                        evaluator,
+                        /* resolvedDecl */ undefined
+                    );
                 }
             }
         } else if (node.nodeType === ParseNodeType.String) {
@@ -148,13 +155,17 @@ export class HoverProvider {
     ): void {
         const resolvedDecl = evaluator.resolveAliasDeclaration(declaration, /* resolveLocalNames */ true);
         if (!resolvedDecl) {
-            this._addResultsPart(parts, `(import) ` + node.value + this._getTypeText(node, evaluator), true);
+            this._addResultsPart(
+                parts,
+                `(import) ` + node.value + this._getTypeText(node, evaluator),
+                /* python */ true
+            );
             return;
         }
 
         switch (resolvedDecl.type) {
             case DeclarationType.Intrinsic: {
-                this._addResultsPart(parts, node.value + this._getTypeText(node, evaluator), true);
+                this._addResultsPart(parts, node.value + this._getTypeText(node, evaluator), /* python */ true);
                 this._addDocumentationPart(format, sourceMapper, parts, node, evaluator, resolvedDecl);
                 break;
             }
@@ -204,13 +215,27 @@ export class HoverProvider {
                 }
 
                 const typeText = typeVarName || node.value + this._getTypeText(typeNode, evaluator, expandTypeAlias);
-                this._addResultsPart(parts, `(${label}) ${typeText}`, true);
+                this._addResultsPart(parts, `(${label}) ${typeText}`, /* python */ true);
                 this._addDocumentationPart(format, sourceMapper, parts, node, evaluator, resolvedDecl);
                 break;
             }
 
             case DeclarationType.Parameter: {
-                this._addResultsPart(parts, '(parameter) ' + node.value + this._getTypeText(node, evaluator), true);
+                this._addResultsPart(
+                    parts,
+                    '(parameter) ' + node.value + this._getTypeText(node, evaluator),
+                    /* python */ true
+                );
+                this._addDocumentationPart(format, sourceMapper, parts, node, evaluator, resolvedDecl);
+                break;
+            }
+
+            case DeclarationType.TypeParameter: {
+                this._addResultsPart(
+                    parts,
+                    '(type parameter) ' + node.value + this._getTypeText(node, evaluator),
+                    /* python */ true
+                );
                 this._addDocumentationPart(format, sourceMapper, parts, node, evaluator, resolvedDecl);
                 break;
             }
@@ -221,7 +246,7 @@ export class HoverProvider {
                     return;
                 }
 
-                this._addResultsPart(parts, '(class) ' + node.value, true);
+                this._addResultsPart(parts, '(class) ' + node.value, /* python */ true);
                 this._addDocumentationPart(format, sourceMapper, parts, node, evaluator, resolvedDecl);
                 break;
             }
@@ -238,9 +263,17 @@ export class HoverProvider {
 
                 const type = evaluator.getType(node);
                 if (type && isOverloadedFunction(type)) {
-                    this._addResultsPart(parts, `(${label})\n${getOverloadedFunctionTooltip(type, evaluator)}`, true);
+                    this._addResultsPart(
+                        parts,
+                        `(${label})\n${getOverloadedFunctionTooltip(type, evaluator)}`,
+                        /* python */ true
+                    );
                 } else {
-                    this._addResultsPart(parts, `(${label}) ` + node.value + this._getTypeText(node, evaluator), true);
+                    this._addResultsPart(
+                        parts,
+                        `(${label}) ` + node.value + this._getTypeText(node, evaluator),
+                        /* python */ true
+                    );
                 }
 
                 this._addDocumentationPart(format, sourceMapper, parts, node, evaluator, resolvedDecl);
@@ -248,10 +281,20 @@ export class HoverProvider {
             }
 
             case DeclarationType.Alias: {
-                this._addResultsPart(parts, '(module) ' + node.value, true);
+                this._addResultsPart(parts, '(module) ' + node.value, /* python */ true);
                 this._addDocumentationPart(format, sourceMapper, parts, node, evaluator, resolvedDecl);
                 break;
             }
+
+            case DeclarationType.TypeAlias: {
+                const typeText = node.value + this._getTypeText(node, evaluator, /* expandTypeAlias */ true);
+                this._addResultsPart(parts, `(type alias) ${typeText}`, /* python */ true);
+                this._addDocumentationPart(format, sourceMapper, parts, node, evaluator, resolvedDecl);
+                break;
+            }
+
+            default:
+                assertNever(resolvedDecl);
         }
     }
 
@@ -281,7 +324,7 @@ export class HoverProvider {
                         node.value +
                         ': ' +
                         evaluator.printType(entry.valueType, /* expandTypeAlias */ false);
-                    this._addResultsPart(parts, text, true);
+                    this._addResultsPart(parts, text, /* python */ true);
 
                     const declarations = subtype.details.fields.get(node.value)?.getDeclarations();
                     if (declarations !== undefined && declarations?.length !== 0) {
@@ -365,7 +408,7 @@ export class HoverProvider {
         const functionParts = evaluator.printFunctionParts(initMethodType);
         const classText = `${node.value}(${functionParts[0].join(', ')})`;
 
-        this._addResultsPart(parts, '(class) ' + classText, true);
+        this._addResultsPart(parts, '(class) ' + classText, /* python */ true);
         const addedDoc = this._addDocumentationPartForType(
             format,
             sourceMapper,

@@ -107,6 +107,12 @@ test('AbstractClass8', () => {
     TestUtils.validateResults(analysisResults, 1);
 });
 
+test('AbstractClass9', () => {
+    const analysisResults = TestUtils.typeAnalyzeSampleFiles(['abstractClass9.py']);
+
+    TestUtils.validateResults(analysisResults, 0);
+});
+
 test('Constants1', () => {
     const analysisResults = TestUtils.typeAnalyzeSampleFiles(['constants1.py']);
 
@@ -125,12 +131,11 @@ test('NoReturn2', () => {
     TestUtils.validateResults(analysisResults, 0);
 });
 
-// This test is commented out for now because we needed to revert the fix.
-// test('NoReturn3', () => {
-//     const analysisResults = TestUtils.typeAnalyzeSampleFiles(['noreturn3.py']);
+test('NoReturn3', () => {
+    const analysisResults = TestUtils.typeAnalyzeSampleFiles(['noreturn3.py']);
 
-//     TestUtils.validateResults(analysisResults, 0);
-// });
+    TestUtils.validateResults(analysisResults, 0);
+});
 
 test('NoReturn4', () => {
     const analysisResults = TestUtils.typeAnalyzeSampleFiles(['noreturn4.py']);
@@ -412,6 +417,19 @@ test('UnusedExpression1', () => {
     configOptions.diagnosticRuleSet.reportUnusedExpression = 'error';
     analysisResults = TestUtils.typeAnalyzeSampleFiles(['unusedExpression1.py'], configOptions);
     TestUtils.validateResults(analysisResults, 10);
+});
+
+test('UninitializedVariable1', () => {
+    const configOptions = new ConfigOptions('.');
+
+    // By default, this is off.
+    let analysisResults = TestUtils.typeAnalyzeSampleFiles(['uninitializedVariable1.py'], configOptions);
+    TestUtils.validateResults(analysisResults, 0);
+
+    // Enable it as an error.
+    configOptions.diagnosticRuleSet.reportUninitializedInstanceVariable = 'error';
+    analysisResults = TestUtils.typeAnalyzeSampleFiles(['uninitializedVariable1.py'], configOptions);
+    TestUtils.validateResults(analysisResults, 1);
 });
 
 // For now, this functionality is disabled.

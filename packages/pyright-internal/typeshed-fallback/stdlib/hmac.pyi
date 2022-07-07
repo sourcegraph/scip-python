@@ -1,7 +1,8 @@
 import sys
 from _typeshed import ReadableBuffer
+from collections.abc import Callable
 from types import ModuleType
-from typing import Any, AnyStr, Callable, overload
+from typing import Any, AnyStr, overload
 from typing_extensions import TypeAlias
 
 # TODO more precise type for object of hashlib
@@ -41,4 +42,4 @@ def compare_digest(__a: ReadableBuffer, __b: ReadableBuffer) -> bool: ...
 def compare_digest(__a: AnyStr, __b: AnyStr) -> bool: ...
 
 if sys.version_info >= (3, 7):
-    def digest(key: bytes, msg: ReadableBuffer, digest: str) -> bytes: ...
+    def digest(key: bytes, msg: ReadableBuffer, digest: _DigestMod) -> bytes: ...

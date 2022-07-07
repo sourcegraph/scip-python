@@ -39,6 +39,7 @@ import {
     StringNode,
     SuiteNode,
     TypeAnnotationNode,
+    TypeParameterScopeNode,
 } from '../parser/parseNodes';
 import { TokenizerOutput } from '../parser/tokenizer';
 import { KeywordType, OperatorType, StringToken, StringTokenFlags, Token, TokenType } from '../parser/tokenizerTypes';
@@ -50,6 +51,10 @@ export const enum PrintExpressionFlags {
 
     // Don't use string literals for forward declarations.
     ForwardDeclarations = 1 << 0,
+
+    // By default, strings are truncated. If this flag
+    // is specified, the full original string is used.
+    DoNotLimitStringLength = 1 << 1,
 }
 
 // Returns the depth of the node as measured from the root
@@ -173,8 +178,8 @@ export function printExpression(node: ExpressionNode, flags = PrintExpressionFla
                 printExpression(node.baseExpression, flags) +
                 '[' +
                 node.items.map((item) => printArgument(item, flags)).join(', ') +
-                ']' +
-                (node.trailingComma ? ',' : '')
+                (node.trailingComma ? ',' : '') +
+                ']'
             );
         }
 
@@ -237,18 +242,23 @@ export function printExpression(node: ExpressionNode, flags = PrintExpressionFla
                 exprString += 'f';
             }
 
-            const maxStringLength = 32;
+            let escapedString = node.token.escapedValue;
+            if ((flags & PrintExpressionFlags.DoNotLimitStringLength) === 0) {
+                const maxStringLength = 32;
+                escapedString = escapedString.substring(0, maxStringLength);
+            }
+
             if (node.token.flags & StringTokenFlags.Triplicate) {
                 if (node.token.flags & StringTokenFlags.SingleQuote) {
-                    exprString += `'''${node.token.escapedValue.substring(0, maxStringLength)}'''`;
+                    exprString += `'''${escapedString}'''`;
                 } else {
-                    exprString += `"""${node.token.escapedValue.substring(0, maxStringLength)}"""`;
+                    exprString += `"""${escapedString}"""`;
                 }
             } else {
                 if (node.token.flags & StringTokenFlags.SingleQuote) {
-                    exprString += `'${node.token.escapedValue.substring(0, maxStringLength)}'`;
+                    exprString += `'${escapedString}'`;
                 } else {
-                    exprString += `"${node.token.escapedValue.substring(0, maxStringLength)}"`;
+                    exprString += `"${escapedString}"`;
                 }
             }
 
@@ -361,15 +371,21 @@ export function printExpression(node: ExpressionNode, flags = PrintExpressionFla
 
         case ParseNodeType.Slice: {
             let result = '';
-            if (node.startValue) {
-                result += printExpression(node.startValue, flags);
+
+            if (node.startValue || node.endValue || node.stepValue) {
+                if (node.startValue) {
+                    result += printExpression(node.startValue, flags);
+                }
+                if (node.endValue) {
+                    result += ': ' + printExpression(node.endValue, flags);
+                }
+                if (node.stepValue) {
+                    result += ': ' + printExpression(node.stepValue, flags);
+                }
+            } else {
+                result += ':';
             }
-            if (node.endValue) {
-                result += ': ' + printExpression(node.endValue, flags);
-            }
-            if (node.stepValue) {
-                result += ': ' + printExpression(node.stepValue, flags);
-            }
+
             return result;
         }
 
@@ -388,6 +404,8 @@ export function printExpression(node: ExpressionNode, flags = PrintExpressionFla
 
                         if (param.name) {
                             paramStr += param.name.value;
+                        } else if (param.category === ParameterCategory.Simple) {
+                            paramStr += '/';
                         }
 
                         if (param.defaultValue) {
@@ -421,6 +439,8 @@ export function printExpression(node: ExpressionNode, flags = PrintExpressionFla
                         `${printExpression(entry.keyExpression, flags)}: ` +
                         `${printExpression(entry.valueExpression, flags)}`
                     );
+                } else if (entry.nodeType === ParseNodeType.DictionaryExpandEntry) {
+                    return `**${printExpression(entry.expandExpression, flags)}`;
                 } else {
                     return printExpression(entry, flags);
                 }
@@ -431,10 +451,6 @@ export function printExpression(node: ExpressionNode, flags = PrintExpressionFla
             }
 
             return '{}';
-        }
-
-        case ParseNodeType.DictionaryExpandEntry: {
-            return `**${printExpression(node.expandExpression, flags)}`;
         }
 
         case ParseNodeType.Set: {
@@ -783,30 +799,30 @@ export function getEvaluationScopeNode(node: ParseNode): EvaluationScopeNode {
     return undefined!;
 }
 
-// Returns the parse node corresponding to the function or class that
-// contains the specified typeVar reference.
-export function getTypeVarScopeNode(node: ParseNode, allowInFunctionSignature = false): EvaluationScopeNode {
+// Returns the parse node corresponding to the function, class, or type alias
+// that contains the specified typeVar reference.
+export function getTypeVarScopeNode(node: ParseNode): TypeParameterScopeNode {
     let prevNode: ParseNode | undefined;
     let curNode: ParseNode | undefined = node;
 
     while (curNode) {
         switch (curNode.nodeType) {
             case ParseNodeType.Function: {
-                if (prevNode === curNode.suite || allowInFunctionSignature) {
-                    if (!curNode.decorators.some((decorator) => decorator === prevNode)) {
-                        return curNode;
-                    }
+                if (!curNode.decorators.some((decorator) => decorator === prevNode)) {
+                    return curNode;
                 }
                 break;
             }
 
             case ParseNodeType.Class: {
-                if (prevNode === curNode.suite) {
-                    if (!curNode.decorators.some((decorator) => decorator === prevNode)) {
-                        return curNode;
-                    }
+                if (!curNode.decorators.some((decorator) => decorator === prevNode)) {
+                    return curNode;
                 }
                 break;
+            }
+
+            case ParseNodeType.TypeAlias: {
+                return curNode;
             }
         }
 
@@ -1767,6 +1783,15 @@ export function printParseNodeType(type: ParseNodeType) {
 
         case ParseNodeType.PatternClassArgument:
             return 'PatternClassArgument';
+
+        case ParseNodeType.TypeParameter:
+            return 'TypeParameter';
+
+        case ParseNodeType.TypeParameterList:
+            return 'TypeParameterList';
+
+        case ParseNodeType.TypeAlias:
+            return 'TypeAlias';
     }
 
     assertNever(type);

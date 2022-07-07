@@ -27,12 +27,13 @@ import { DiagnosticSink, TextRangeDiagnosticSink } from '../common/diagnosticSin
 import { TextEditAction } from '../common/editAction';
 import { FileSystem } from '../common/fileSystem';
 import { LogTracker } from '../common/logTracker';
+import { fromLSPAny } from '../common/lspUtils';
 import { getFileName, normalizeSlashes, stripFileExtension } from '../common/pathUtils';
 import { convertOffsetsToRange } from '../common/positionUtils';
 import * as StringUtils from '../common/stringUtils';
 import { DocumentRange, getEmptyRange, Position, TextRange } from '../common/textRange';
 import { TextRangeCollection } from '../common/textRangeCollection';
-import { timingStats } from '../common/timing';
+import { Duration, timingStats } from '../common/timing';
 import { ModuleSymbolMap } from '../languageService/autoImporter';
 import { AbbreviationMap, CompletionOptions, CompletionResults } from '../languageService/completionProvider';
 import { CompletionItemData, CompletionProvider } from '../languageService/completionProvider';
@@ -74,6 +75,18 @@ interface ResolveImportResult {
     imports: ImportResult[];
     builtinsImportResult?: ImportResult | undefined;
     ipythonDisplayImportResult?: ImportResult | undefined;
+}
+
+// Indicates whether IPython syntax is supported and if so, what
+// type of notebook support is in use.
+export enum IPythonMode {
+    // Not a notebook. This is the only falsy enum value, so you
+    // can test if IPython is supported via "if (ipythonMode)"
+    None = 0,
+    // All cells are concatenated into a single document.
+    ConcatDoc,
+    // Each cell is its own document.
+    CellDocs,
 }
 
 export class SourceFile {
@@ -156,6 +169,7 @@ export class SourceFile {
 
     // Circular dependencies that have been reported in this file.
     private _circularDependencies: CircularDependency[] = [];
+    private _noCircularDependencyConfirmed = false;
 
     // Did we hit the maximum import depth?
     private _hitMaxImportDepth: number | undefined;
@@ -166,11 +180,14 @@ export class SourceFile {
     // Do we have valid diagnostic results from a checking pass?
     private _isCheckingNeeded = true;
 
+    // Time (in ms) that the last check() call required for this file.
+    private _checkTime: number | undefined;
+
     // Do we need to perform an indexing step?
     private _indexingNeeded = true;
 
     // Indicate whether this file is for ipython or not.
-    private _ipythonMode = false;
+    private _ipythonMode = IPythonMode.None;
 
     // Information about implicit and explicit imports from this file.
     private _imports: ImportResult[] | undefined;
@@ -188,7 +205,7 @@ export class SourceFile {
         isThirdPartyPyTypedPresent: boolean,
         console?: ConsoleInterface,
         logTracker?: LogTracker,
-        ipythonMode = false
+        ipythonMode = IPythonMode.None
     ) {
         this.fileSystem = fs;
         this._console = console || new StandardConsole();
@@ -486,6 +503,10 @@ export class SourceFile {
         return this._moduleSymbolTable;
     }
 
+    getCheckTime() {
+        return this._checkTime;
+    }
+
     // Indicates whether the contents of the file have changed since
     // the last analysis was performed.
     didContentsChangeOnDisk(): boolean {
@@ -536,6 +557,7 @@ export class SourceFile {
 
     markDirty(indexingNeeded = true): void {
         this._fileContentsVersion++;
+        this._noCircularDependencyConfirmed = false;
         this._isCheckingNeeded = true;
         this._isBindingNeeded = true;
         this._indexingNeeded = indexingNeeded;
@@ -685,6 +707,14 @@ export class SourceFile {
         if (updatedDependencyList) {
             this._diagnosticVersion++;
         }
+    }
+
+    setNoCircularDependencyConfirmed() {
+        this._noCircularDependencyConfirmed = true;
+    }
+
+    isNoCircularDependencyConfirmed() {
+        return !this.isParseRequired() && this._noCircularDependencyConfirmed;
     }
 
     setHitMaxImportDepth(maxImportDepth: number) {
@@ -1107,7 +1137,7 @@ export class SourceFile {
             return;
         }
 
-        const completionData = completionItem.data as CompletionItemData;
+        const completionData = fromLSPAny<CompletionItemData>(completionItem.data);
         const completionProvider = new CompletionProvider(
             completionData.workspacePath,
             this._parseResults,
@@ -1222,12 +1252,14 @@ export class SourceFile {
         return this._logTracker.log(`checking: ${this._getPathForLogging(this._filePath)}`, () => {
             try {
                 timingStats.typeCheckerTime.timeOperation(() => {
+                    const checkDuration = new Duration();
                     const checker = new Checker(importResolver, evaluator, this._parseResults!.parseTree);
                     checker.check();
                     this._isCheckingNeeded = false;
 
                     const fileInfo = AnalyzerNodeInfo.getFileInfo(this._parseResults!.parseTree)!;
                     this._checkerDiagnostics = fileInfo.diagnosticSink.fetchAndClear();
+                    this._checkTime = checkDuration.getDurationInMilliseconds();
                 });
             } catch (e: any) {
                 const isCancellation = OperationCanceledException.is(e);
@@ -1263,7 +1295,7 @@ export class SourceFile {
     }
 
     test_enableIPythonMode(enable: boolean) {
-        this._ipythonMode = enable;
+        this._ipythonMode = enable ? IPythonMode.ConcatDoc : IPythonMode.None;
     }
 
     private _buildFileInfo(
@@ -1285,6 +1317,7 @@ export class SourceFile {
             fileContents,
             lines: this._parseResults!.tokenizerOutput.lines,
             typingSymbolAliases: this._parseResults!.typingSymbolAliases,
+            definedConstants: configOptions.defineConstant,
             filePath: this._filePath,
             moduleName: this._moduleName,
             isStubFile: this._isStubFile,
@@ -1292,8 +1325,8 @@ export class SourceFile {
             isTypingExtensionsStubFile: this._isTypingExtensionsStubFile,
             isBuiltInStubFile: this._isBuiltInStubFile,
             isInPyTypedPackage: this._isThirdPartyPyTypedPresent,
-            isIPythonMode: this._ipythonMode,
-            accessedSymbolMap: new Map<number, true>(),
+            ipythonMode: this._ipythonMode,
+            accessedSymbolSet: new Set<number>(),
         };
         return fileInfo;
     }
@@ -1341,7 +1374,7 @@ export class SourceFile {
         // If this is a project source file (not a stub), try to resolve
         // the __builtins__ stub first.
         if (!this._isThirdPartyImport && !this._isStubFile) {
-            builtinsImportResult = resolveAndAddIfNotSelf(['__builtins__'], /*skipMissingImport*/ true);
+            builtinsImportResult = resolveAndAddIfNotSelf(['__builtins__'], /* skipMissingImport */ true);
         }
 
         if (!builtinsImportResult) {
@@ -1375,10 +1408,10 @@ export class SourceFile {
     }
 
     private _getPathForLogging(filepath: string) {
-        if (!this.fileSystem.isMappedFilePath(filepath)) {
-            return filepath;
+        if (this.fileSystem.isMappedFilePath(filepath)) {
+            return this.fileSystem.getOriginalFilePath(filepath);
         }
 
-        return '[virtual] ' + filepath;
+        return filepath;
     }
 }

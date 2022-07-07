@@ -27,6 +27,7 @@ import {
     PatternValueNode,
 } from '../parser/parseNodes';
 import { getFileInfo } from './analyzerNodeInfo';
+import { populateTypeVarContextBasedOnExpectedType } from './constraintSolver';
 import { getTypedDictMembersForClass } from './typedDicts';
 import { EvaluatorFlags, TypeEvaluator } from './typeEvaluatorTypes';
 import { enumerateLiteralsForType } from './typeGuards';
@@ -175,7 +176,7 @@ function narrowTypeBasedOnSequencePattern(
         }
 
         pattern.entries.forEach((sequenceEntry, index) => {
-            const entryType = getTypeForPatternSequenceEntry(
+            const entryType = getTypeOfPatternSequenceEntry(
                 evaluator,
                 pattern,
                 entry,
@@ -422,7 +423,7 @@ function narrowTypeBasedOnLiteralPattern(
                 isLiteralType(literalType) &&
                 isClassInstance(subtype) &&
                 isLiteralType(subtype) &&
-                evaluator.canAssignType(literalType, subtype)
+                evaluator.assignType(literalType, subtype)
             ) {
                 return undefined;
             }
@@ -448,7 +449,7 @@ function narrowTypeBasedOnLiteralPattern(
     }
 
     return mapSubtypes(type, (subtype) => {
-        if (evaluator.canAssignType(subtype, literalType)) {
+        if (evaluator.assignType(subtype, literalType)) {
             return literalType;
         }
         return undefined;
@@ -478,7 +479,11 @@ function narrowTypeBasedOnClassPattern(
         let classType = exprType;
 
         if (classType.details.typeParameters.length > 0) {
-            classType = ClassType.cloneForSpecialization(classType, undefined, /* isTypeArgumentExplicit */ false);
+            classType = ClassType.cloneForSpecialization(
+                classType,
+                /* typeArguments */ undefined,
+                /* isTypeArgumentExplicit */ false
+            );
         }
 
         const classInstance = convertToInstance(classType);
@@ -490,7 +495,7 @@ function narrowTypeBasedOnClassPattern(
                     return subjectSubtypeUnexpanded;
                 }
 
-                if (!evaluator.canAssignType(classInstance, subjectSubtypeExpanded)) {
+                if (!evaluator.assignType(classInstance, subjectSubtypeExpanded)) {
                     return subjectSubtypeExpanded;
                 }
 
@@ -503,7 +508,7 @@ function narrowTypeBasedOnClassPattern(
                 // We might be able to narrow further based on arguments, but only
                 // if the types match exactly or the subtype is a final class and
                 // therefore cannot be subclassed.
-                if (!evaluator.canAssignType(subjectSubtypeExpanded, classInstance)) {
+                if (!evaluator.assignType(subjectSubtypeExpanded, classInstance)) {
                     if (!ClassType.isFinal(subjectSubtypeExpanded)) {
                         return subjectSubtypeExpanded;
                     }
@@ -539,7 +544,7 @@ function narrowTypeBasedOnClassPattern(
         );
     }
 
-    if (!TypeBase.isInstantiable(exprType)) {
+    if (!TypeBase.isInstantiable(exprType) && !isNever(exprType)) {
         evaluator.addDiagnostic(
             getFileInfo(pattern).diagnosticRuleSet.reportGeneralTypeIssues,
             DiagnosticRule.reportGeneralTypeIssues,
@@ -570,14 +575,14 @@ function narrowTypeBasedOnClassPattern(
                             let resultType: Type;
 
                             if (
-                                evaluator.canAssignType(
+                                evaluator.assignType(
                                     expandedSubtype,
                                     ClassType.cloneAsInstantiable(subjectSubtypeExpanded)
                                 )
                             ) {
                                 resultType = subjectSubtypeExpanded;
                             } else if (
-                                evaluator.canAssignType(
+                                evaluator.assignType(
                                     ClassType.cloneAsInstantiable(subjectSubtypeExpanded),
                                     expandedSubtype
                                 )
@@ -602,7 +607,8 @@ function narrowTypeBasedOnClassPattern(
 
                                         const matchTypeInstance = ClassType.cloneAsInstance(unspecializedMatchType);
                                         if (
-                                            evaluator.populateTypeVarContextBasedOnExpectedType(
+                                            populateTypeVarContextBasedOnExpectedType(
+                                                evaluator,
                                                 matchTypeInstance,
                                                 subjectSubtypeExpanded,
                                                 typeVarContext,
@@ -701,7 +707,7 @@ function narrowTypeOfClassPatternArgument(
             argType = evaluator.useSpeculativeMode(arg, () =>
                 // We need to apply a rather ugly cast here because PatternClassArgumentNode is
                 // not technically an ExpressionNode, but it is OK to use it in this context.
-                evaluator.getTypeFromObjectMember(
+                evaluator.getTypeOfObjectMember(
                     arg as any as ExpressionNode,
                     ClassType.cloneAsInstance(matchType),
                     argName!
@@ -789,7 +795,7 @@ function narrowTypeBasedOnValuePattern(
                         // Determine if we assignment is supported for this combination of
                         // value subtype and matching subtype.
                         const returnType = evaluator.useSpeculativeMode(pattern.expression, () =>
-                            evaluator.getTypeFromMagicMethodReturn(
+                            evaluator.getTypeOfMagicMethodReturn(
                                 valueSubtypeExpanded,
                                 [subjectSubtypeExpanded],
                                 '__eq__',
@@ -988,7 +994,7 @@ function getSequencePatternInfo(
     return sequenceInfo;
 }
 
-function getTypeForPatternSequenceEntry(
+function getTypeOfPatternSequenceEntry(
     evaluator: TypeEvaluator,
     node: ParseNode,
     sequenceInfo: SequencePatternInfo,
@@ -1070,7 +1076,7 @@ export function assignTypeToPatternTargets(
             pattern.entries.forEach((entry, index) => {
                 const entryType = combineTypes(
                     sequenceInfo.map((info) =>
-                        getTypeForPatternSequenceEntry(
+                        getTypeOfPatternSequenceEntry(
                             evaluator,
                             pattern,
                             info,
@@ -1316,13 +1322,15 @@ export function validateClassPattern(evaluator: TypeEvaluator, pattern: PatternC
             Localizer.Diagnostic.classPatternTypeAlias().format({ type: evaluator.printType(exprType) }),
             pattern.className
         );
-    } else if (!isInstantiableClass(exprType) || exprType.includeSubclasses) {
-        evaluator.addDiagnostic(
-            getFileInfo(pattern).diagnosticRuleSet.reportGeneralTypeIssues,
-            DiagnosticRule.reportGeneralTypeIssues,
-            Localizer.DiagnosticAddendum.typeNotClass().format({ type: evaluator.printType(exprType) }),
-            pattern.className
-        );
+    } else if (!isInstantiableClass(exprType)) {
+        if (!isNever(exprType)) {
+            evaluator.addDiagnostic(
+                getFileInfo(pattern).diagnosticRuleSet.reportGeneralTypeIssues,
+                DiagnosticRule.reportGeneralTypeIssues,
+                Localizer.DiagnosticAddendum.typeNotClass().format({ type: evaluator.printType(exprType) }),
+                pattern.className
+            );
+        }
     } else {
         const isBuiltIn = classPatternSpecialCases.some((className) => exprType.details.fullName === className);
 

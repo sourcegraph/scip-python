@@ -12,6 +12,7 @@
 
 import Char from 'typescript-char';
 
+import { IPythonMode } from '../analyzer/sourceFile';
 import { TextRange } from '../common/textRange';
 import { TextRangeCollection } from '../common/textRangeCollection';
 import {
@@ -78,6 +79,7 @@ const _keywords: Map<string, KeywordType> = new Map([
     ['raise', KeywordType.Raise],
     ['return', KeywordType.Return],
     ['try', KeywordType.Try],
+    ['type', KeywordType.Type],
     ['while', KeywordType.While],
     ['with', KeywordType.With],
     ['yield', KeywordType.Yield],
@@ -222,27 +224,27 @@ export class Tokenizer {
     private _doubleQuoteCount = 0;
 
     // ipython mode
-    private _ipythonMode = false;
+    private _ipythonMode = IPythonMode.None;
 
     tokenize(
         text: string,
         start?: number,
         length?: number,
         initialParenDepth = 0,
-        ipythonMode = false
+        ipythonMode = IPythonMode.None
     ): TokenizerOutput {
         if (start === undefined) {
             start = 0;
         } else if (start < 0 || start > text.length) {
-            throw new Error('Invalid range start');
+            throw new Error(`Invalid range start (start=${start}, text.length=${text.length})`);
         }
 
         if (length === undefined) {
             length = text.length;
         } else if (length < 0 || start + length > text.length) {
-            throw new Error('Invalid range length');
+            throw new Error(`Invalid range length (start=${start}, length=${length}, text.length=${text.length})`);
         } else if (start + length < text.length) {
-            text = text.substr(0, start + length);
+            text = text.substring(0, start + length);
         }
 
         this._cs = new CharacterStream(text);
@@ -358,7 +360,7 @@ export class Tokenizer {
         if (stringPrefixLength >= 0) {
             let stringPrefix = '';
             if (stringPrefixLength > 0) {
-                stringPrefix = this._cs.getText().substr(this._cs.position, stringPrefixLength);
+                stringPrefix = this._cs.getText().substring(this._cs.position, this._cs.position + stringPrefixLength);
                 // Indeed a string
                 this._cs.advance(stringPrefixLength);
             }
@@ -723,7 +725,7 @@ export class Tokenizer {
         }
 
         if (this._cs.position > start) {
-            const value = this._cs.getText().substr(start, this._cs.position - start);
+            const value = this._cs.getText().substring(start, this._cs.position);
             if (_keywords.has(value)) {
                 this._tokens.push(
                     KeywordToken.create(start, this._cs.position - start, _keywords.get(value)!, this._getComments())
@@ -766,7 +768,10 @@ export class Tokenizer {
             }
 
             // Try binary => bininteger: "0" ("b" | "B") (["_"] bindigit)+
-            if ((this._cs.nextChar === Char.b || this._cs.nextChar === Char.B) && isBinary(this._cs.lookAhead(2))) {
+            else if (
+                (this._cs.nextChar === Char.b || this._cs.nextChar === Char.B) &&
+                isBinary(this._cs.lookAhead(2))
+            ) {
                 this._cs.advance(2);
                 leadingChars = 2;
                 while (isBinary(this._cs.currentChar)) {
@@ -776,7 +781,7 @@ export class Tokenizer {
             }
 
             // Try octal => octinteger: "0" ("o" | "O") (["_"] octdigit)+
-            if ((this._cs.nextChar === Char.o || this._cs.nextChar === Char.O) && isOctal(this._cs.lookAhead(2))) {
+            else if ((this._cs.nextChar === Char.o || this._cs.nextChar === Char.O) && isOctal(this._cs.lookAhead(2))) {
                 this._cs.advance(2);
                 leadingChars = 2;
                 while (isOctal(this._cs.currentChar)) {
@@ -786,9 +791,9 @@ export class Tokenizer {
             }
 
             if (radix > 0) {
-                const text = this._cs.getText().substr(start, this._cs.position - start);
+                const text = this._cs.getText().substring(start, this._cs.position);
                 const simpleIntText = text.replace(/_/g, '');
-                let intValue: number | bigint = parseInt(simpleIntText.substr(leadingChars), radix);
+                let intValue: number | bigint = parseInt(simpleIntText.substring(leadingChars), radix);
 
                 if (!isNaN(intValue)) {
                     const bigIntValue = BigInt(simpleIntText);
@@ -834,7 +839,7 @@ export class Tokenizer {
         }
 
         if (isDecimalInteger) {
-            let text = this._cs.getText().substr(start, this._cs.position - start);
+            let text = this._cs.getText().substring(start, this._cs.position);
             const simpleIntText = text.replace(/_/g, '');
             let intValue: number | bigint = parseInt(simpleIntText, 10);
 
@@ -866,7 +871,7 @@ export class Tokenizer {
             (this._cs.currentChar === Char.Period && this._cs.nextChar >= Char._0 && this._cs.nextChar <= Char._9)
         ) {
             if (this._skipFloatingPointCandidate()) {
-                let text = this._cs.getText().substr(start, this._cs.position - start);
+                let text = this._cs.getText().substring(start, this._cs.position);
                 const value = parseFloat(text);
                 if (!isNaN(value)) {
                     let isImaginary = false;
@@ -1059,7 +1064,7 @@ export class Tokenizer {
             this._cs.skipToEol();
 
             const length = this._cs.position - begin;
-            const value = this._cs.getText().substr(begin, length);
+            const value = this._cs.getText().substring(begin, begin + length);
 
             // is it multiline magics?
             // %magic command \
@@ -1072,7 +1077,7 @@ export class Tokenizer {
         } while (!this._cs.isEndOfStream());
 
         const length = this._cs.position - start;
-        const value = this._cs.getText().substr(start, length);
+        const value = this._cs.getText().substring(start, start + length);
 
         const comment = Comment.create(start, length, value, type);
         this._addComments(comment);
@@ -1083,7 +1088,7 @@ export class Tokenizer {
         this._cs.skipToEol();
 
         const length = this._cs.position - start;
-        const value = this._cs.getText().substr(start, length);
+        const value = this._cs.getText().substring(start, start + length);
         const comment = Comment.create(start, length, value);
 
         const typeIgnoreRegexMatch = value.match(/^\s*type:\s*ignore(\s*\[([\s*\w-,]*)\]|\s|$)/);
@@ -1174,7 +1179,10 @@ export class Tokenizer {
         }
 
         if (this._cs.lookAhead(2) === Char.SingleQuote || this._cs.lookAhead(2) === Char.DoubleQuote) {
-            const prefix = this._cs.getText().substr(this._cs.position, 2).toLowerCase();
+            const prefix = this._cs
+                .getText()
+                .substring(this._cs.position, this._cs.position + 2)
+                .toLowerCase();
             switch (prefix) {
                 case 'rf':
                 case 'fr':
@@ -1345,7 +1353,7 @@ export class Tokenizer {
                 this._cs.moveNext();
 
                 // Skip exponent value
-                this._skipDecimalNumber(true);
+                this._skipDecimalNumber(/* allowSign */ true);
             }
         }
         return this._cs.position > start;

@@ -57,6 +57,7 @@ import {
     TypeVarType,
     UnionType,
     UnknownType,
+    WildcardTypeVarScopeId,
 } from './types';
 import { TypeVarContext } from './typeVarContext';
 
@@ -67,10 +68,14 @@ export interface ClassMember {
     // Partially-specialized class that contains the class member
     classType: ClassType | UnknownType;
 
-    // True if instance member, false if class member
+    // True if it is an instance or class member; it can be both a class and
+    // an instance member in cases where a class variable is overridden
+    // by an instance variable
     isInstanceMember: boolean;
+    isClassMember: boolean;
 
-    // True if explicitly declared as "ClassVar"
+    // True if explicitly declared as "ClassVar" and therefore is
+    // a type violation if it is overwritten by an instance variable
     isClassVar: boolean;
 
     // True if member has declared type, false if inferred
@@ -130,7 +135,7 @@ export const enum ClassIteratorFlags {
     SkipTypeBaseClass = 1 << 3,
 }
 
-export const enum CanAssignFlags {
+export const enum AssignTypeFlags {
     Default = 0,
 
     // Require invariance with respect to class matching? Normally
@@ -198,6 +203,7 @@ export enum ParameterSource {
 export interface VirtualParameterDetails {
     param: FunctionParameter;
     type: Type;
+    defaultArgType?: Type | undefined;
     index: number;
     source: ParameterSource;
 }
@@ -218,6 +224,7 @@ export interface ParameterListDetails {
 
     // Other information
     hasUnpackedVariadicTypeVar: boolean;
+    hasUnpackedTypedDict: boolean;
 }
 
 // Examines the input parameters within a function signature and creates a
@@ -230,6 +237,7 @@ export function getParameterListDetails(type: FunctionType): ParameterListDetail
         positionOnlyParamCount: 0,
         params: [],
         hasUnpackedVariadicTypeVar: false,
+        hasUnpackedTypedDict: false,
     };
 
     let positionOnlyIndex = type.details.parameters.findIndex(
@@ -271,7 +279,12 @@ export function getParameterListDetails(type: FunctionType): ParameterListDetail
 
     let sawKeywordOnlySeparator = false;
 
-    const addVirtualParameter = (param: FunctionParameter, index: number, typeOverride?: Type) => {
+    const addVirtualParameter = (
+        param: FunctionParameter,
+        index: number,
+        typeOverride?: Type,
+        defaultArgTypeOverride?: Type
+    ) => {
         if (param.name) {
             let source: ParameterSource;
             if (param.category === ParameterCategory.VarArgList) {
@@ -288,6 +301,7 @@ export function getParameterListDetails(type: FunctionType): ParameterListDetail
                 param,
                 index,
                 type: typeOverride ?? FunctionType.getEffectiveParameterType(type, index),
+                defaultArgType: defaultArgTypeOverride,
                 source,
             });
         }
@@ -369,6 +383,8 @@ export function getParameterListDetails(type: FunctionType): ParameterListDetail
                         entry.valueType
                     );
                 });
+
+                result.hasUnpackedTypedDict = true;
             } else if (param.name) {
                 if (result.kwargsIndex === undefined) {
                     result.kwargsIndex = result.params.length;
@@ -385,7 +401,14 @@ export function getParameterListDetails(type: FunctionType): ParameterListDetail
                 result.positionParamCount++;
             }
 
-            addVirtualParameter(param, index);
+            addVirtualParameter(
+                param,
+                index,
+                /* typeOverride */ undefined,
+                type.specializedTypes?.parameterDefaultArgs
+                    ? type.specializedTypes?.parameterDefaultArgs[index]
+                    : undefined
+            );
         }
     });
 
@@ -549,7 +572,7 @@ export function getFullNameOfType(type: Type): string | undefined {
 export function stripLiteralValue(type: Type): Type {
     if (isClass(type)) {
         if (type.literalValue !== undefined) {
-            type = ClassType.cloneWithLiteral(type, undefined);
+            type = ClassType.cloneWithLiteral(type, /* value */ undefined);
         }
 
         return type;
@@ -642,7 +665,10 @@ export function isTypeAliasRecursive(typeAliasPlaceholder: TypeVarType, type: Ty
         );
     }
 
-    return findSubtype(type, (subtype) => isTypeSame(typeAliasPlaceholder, subtype)) !== undefined;
+    return (
+        findSubtype(type, (subtype) => isTypeVar(subtype) && subtype.details === typeAliasPlaceholder.details) !==
+        undefined
+    );
 }
 
 export function transformPossibleRecursiveTypeAlias(type: Type): Type;
@@ -740,8 +766,14 @@ export function containsLiteralType(type: Type, includeTypeArgs = false, recursi
     }
     recursionCount++;
 
-    if (isClassInstance(type) && isLiteralType(type)) {
-        return true;
+    if (isClassInstance(type)) {
+        if (isLiteralType(type)) {
+            return true;
+        }
+
+        if (ClassType.isBuiltIn(type, 'LiteralString')) {
+            return true;
+        }
     }
 
     if (includeTypeArgs && isClass(type)) {
@@ -986,6 +1018,7 @@ function getProtocolSymbolsRecursive(classType: ClassType, symbolMap: Map<string
                 symbol,
                 classType,
                 isInstanceMember: symbol.isInstanceMember(),
+                isClassMember: symbol.isClassMember(),
                 isClassVar: symbol.isClassVar(),
                 isTypeDeclared: symbol.hasTypedDeclarations(),
                 skippedUndeclaredType: false,
@@ -1055,7 +1088,8 @@ export function* getClassMemberIterator(classType: Type, memberName: string, fla
                     const cm: ClassMember = {
                         symbol: Symbol.createWithType(SymbolFlags.None, UnknownType.create()),
                         isInstanceMember: false,
-                        isClassVar: true,
+                        isClassMember: true,
+                        isClassVar: false,
                         classType: UnknownType.create(),
                         isTypeDeclared: false,
                         skippedUndeclaredType: false,
@@ -1080,6 +1114,7 @@ export function* getClassMemberIterator(classType: Type, memberName: string, fla
                         const cm: ClassMember = {
                             symbol,
                             isInstanceMember: true,
+                            isClassMember: symbol.isClassMember(),
                             isClassVar: symbol.isClassVar(),
                             classType: specializedMroClass,
                             isTypeDeclared: hasDeclaredType,
@@ -1097,23 +1132,28 @@ export function* getClassMemberIterator(classType: Type, memberName: string, fla
             if (symbol && symbol.isClassMember()) {
                 const hasDeclaredType = symbol.hasTypedDeclarations();
                 if (!declaredTypesOnly || hasDeclaredType) {
-                    let isInstanceMember = false;
+                    let isInstanceMember = symbol.isInstanceMember();
+                    let isClassMember = true;
 
                     // For data classes and typed dicts, variables that are declared
                     // within the class are treated as instance variables. This distinction
                     // is important in cases where a variable is a callable type because
                     // we don't want to bind it to the instance like we would for a
                     // class member.
-                    if (ClassType.isDataClass(specializedMroClass) || ClassType.isTypedDictClass(specializedMroClass)) {
+                    const isDataclass = ClassType.isDataClass(specializedMroClass);
+                    const isTypedDict = ClassType.isTypedDictClass(specializedMroClass);
+                    if (isDataclass || isTypedDict) {
                         const decls = symbol.getDeclarations();
                         if (decls.length > 0 && decls[0].type === DeclarationType.Variable) {
                             isInstanceMember = true;
+                            isClassMember = isDataclass;
                         }
                     }
 
                     const cm: ClassMember = {
                         symbol,
                         isInstanceMember,
+                        isClassMember,
                         isClassVar: symbol.isClassVar(),
                         classType: specializedMroClass,
                         isTypeDeclared: hasDeclaredType,
@@ -1131,7 +1171,8 @@ export function* getClassMemberIterator(classType: Type, memberName: string, fla
         const cm: ClassMember = {
             symbol: Symbol.createWithType(SymbolFlags.None, UnknownType.create()),
             isInstanceMember: false,
-            isClassVar: true,
+            isClassMember: true,
+            isClassVar: false,
             classType: UnknownType.create(),
             isTypeDeclared: false,
             skippedUndeclaredType: false,
@@ -1189,29 +1230,29 @@ export function getClassFieldsRecursive(classType: ClassType): Map<string, Class
     const memberMap = new Map<string, ClassMember>();
 
     // Evaluate the types of members from the end of the MRO to the beginning.
-    for (let i = classType.details.mro.length - 1; i >= 0; i--) {
-        const mroClass = partiallySpecializeType(classType.details.mro[i], classType);
+    ClassType.getReverseMro(classType).forEach((mroClass) => {
+        const specializedMroClass = partiallySpecializeType(mroClass, classType);
 
-        // If this ancestor class is unknown, throw away all symbols
-        // found so far because they could be overridden by the unknown class.
-        if (!isClass(mroClass)) {
+        if (isClass(specializedMroClass)) {
+            specializedMroClass.details.fields.forEach((symbol, name) => {
+                if (!symbol.isIgnoredForProtocolMatch() && symbol.hasTypedDeclarations()) {
+                    memberMap.set(name, {
+                        classType: specializedMroClass,
+                        symbol,
+                        isInstanceMember: symbol.isInstanceMember(),
+                        isClassMember: symbol.isClassMember(),
+                        isClassVar: symbol.isClassVar(),
+                        isTypeDeclared: true,
+                        skippedUndeclaredType: false,
+                    });
+                }
+            });
+        } else {
+            // If this ancestor class is unknown, throw away all symbols
+            // found so far because they could be overridden by the unknown class.
             memberMap.clear();
-            continue;
         }
-
-        mroClass.details.fields.forEach((symbol, name) => {
-            if (!symbol.isIgnoredForProtocolMatch() && symbol.hasTypedDeclarations()) {
-                memberMap.set(name, {
-                    classType: mroClass,
-                    symbol,
-                    isInstanceMember: symbol.isInstanceMember(),
-                    isClassVar: symbol.isClassVar(),
-                    isTypeDeclared: true,
-                    skippedUndeclaredType: false,
-                });
-            }
-        });
-    }
+    });
 
     return memberMap;
 }
@@ -1480,7 +1521,7 @@ export function buildTypeVarContext(
                     } else if (isAnyOrUnknown(typeArgType)) {
                         // Fill in an empty signature if the arg type is Any or Unknown.
                         typeVarContext.setParamSpec(typeParam, {
-                            flags: FunctionTypeFlags.None,
+                            flags: FunctionTypeFlags.SkipArgsKwargsCompatibilityCheck,
                             parameters: FunctionType.getDefaultParameters(),
                             typeVarScopeId: undefined,
                             docString: undefined,
@@ -1627,7 +1668,7 @@ export function isEffectivelyInstantiable(type: Type): boolean {
     return false;
 }
 
-export function convertToInstance(type: Type): Type {
+export function convertToInstance(type: Type, includeSubclasses = true): Type {
     let result = mapSubtypes(type, (subtype) => {
         switch (subtype.category) {
             case TypeCategory.Class: {
@@ -1640,7 +1681,7 @@ export function convertToInstance(type: Type): Type {
                     }
                 }
 
-                return ClassType.cloneAsInstance(subtype);
+                return ClassType.cloneAsInstance(subtype, includeSubclasses);
             }
 
             case TypeCategory.None: {
@@ -1684,10 +1725,7 @@ export function convertToInstantiable(type: Type): Type {
     let result = mapSubtypes(type, (subtype) => {
         switch (subtype.category) {
             case TypeCategory.Class: {
-                if (TypeBase.isInstance(subtype)) {
-                    return ClassType.cloneAsInstantiable(subtype);
-                }
-                break;
+                return ClassType.cloneAsInstantiable(subtype);
             }
 
             case TypeCategory.None: {
@@ -1695,17 +1733,11 @@ export function convertToInstantiable(type: Type): Type {
             }
 
             case TypeCategory.Function: {
-                if (TypeBase.isInstance(subtype)) {
-                    return FunctionType.cloneAsInstantiable(subtype);
-                }
-                break;
+                return FunctionType.cloneAsInstantiable(subtype);
             }
 
             case TypeCategory.TypeVar: {
-                if (TypeBase.isInstance(subtype)) {
-                    return TypeVarType.cloneAsInstantiable(subtype);
-                }
-                break;
+                return TypeVarType.cloneAsInstantiable(subtype);
             }
         }
 
@@ -1728,9 +1760,7 @@ export function convertToInstantiable(type: Type): Type {
 }
 
 export function getMembersForClass(classType: ClassType, symbolTable: SymbolTable, includeInstanceVars: boolean) {
-    for (let i = 0; i < classType.details.mro.length; i++) {
-        const mroClass = classType.details.mro[i];
-
+    classType.details.mro.forEach((mroClass) => {
         if (isInstantiableClass(mroClass)) {
             // Add any new member variables from this class.
             const isClassTypedDict = ClassType.isTypedDictClass(mroClass);
@@ -1752,7 +1782,7 @@ export function getMembersForClass(classType: ClassType, symbolTable: SymbolTabl
                 }
             });
         }
-    }
+    });
 
     // Add members of the metaclass as well.
     if (!includeInstanceVars) {
@@ -2211,6 +2241,9 @@ export function requiresSpecialization(
 export function computeMroLinearization(classType: ClassType): boolean {
     let isMroFound = true;
 
+    // Clear out any existing MRO information.
+    classType.details.mro = [];
+
     const filteredBaseClasses = classType.details.baseClasses.filter((baseClass, index) => {
         if (isInstantiableClass(baseClass)) {
             // Generic has some special-case logic (see description of __mro_entries__
@@ -2525,7 +2558,7 @@ class TypeVarTransformer {
 
         if (isUnion(type)) {
             const newUnionType = mapSubtypes(type, (subtype) => {
-                let transformedType = this.apply(subtype, recursionCount);
+                let transformedType: Type = this.apply(subtype, recursionCount);
 
                 // If we're transforming a variadic type variable within a union,
                 // combine the individual types within the variadic type variable.
@@ -2538,14 +2571,14 @@ class TypeVarTransformer {
                     transformedType = combineTypes(subtypesToCombine);
                 }
 
+                if (this.transformUnionSubtype) {
+                    return this.transformUnionSubtype(subtype, transformedType);
+                }
+
                 return transformedType;
             });
 
-            if (this.transformUnion && isUnion(newUnionType)) {
-                return this.transformUnion(newUnionType);
-            }
-
-            return newUnionType;
+            return !isNever(newUnionType) ? newUnionType : UnknownType.create();
         }
 
         if (isClass(type)) {
@@ -2588,8 +2621,8 @@ class TypeVarTransformer {
         return undefined;
     }
 
-    transformUnion(type: UnionType): Type {
-        return type;
+    transformUnionSubtype(preTransform: Type, postTransform: Type): Type | undefined {
+        return postTransform;
     }
 
     private _transformGenericTypeAlias(type: Type, recursionCount: number) {
@@ -2797,11 +2830,24 @@ class TypeVarTransformer {
 
         let variadicParamIndex: number | undefined;
         let variadicTypesToUnpack: TupleTypeArgument[] | undefined;
+        const specializedDefaultArgs: (Type | undefined)[] = [];
 
         for (let i = 0; i < functionType.details.parameters.length; i++) {
             const paramType = FunctionType.getEffectiveParameterType(functionType, i);
             const specializedType = this.apply(paramType, recursionCount);
             specializedParameters.parameterTypes.push(specializedType);
+
+            // Do we need to specialize the default argument type for this parameter?
+            let defaultArgType = FunctionType.getEffectiveParameterDefaultArgType(functionType, i);
+            if (defaultArgType) {
+                const specializedArgType = this.apply(defaultArgType, recursionCount);
+                if (specializedArgType !== defaultArgType) {
+                    defaultArgType = specializedArgType;
+                    typesRequiredSpecialization = true;
+                }
+            }
+            specializedDefaultArgs.push(defaultArgType);
+
             if (
                 variadicParamIndex === undefined &&
                 isVariadicTypeVar(paramType) &&
@@ -2819,13 +2865,20 @@ class TypeVarTransformer {
             }
         }
 
+        let specializedInferredReturnType: Type | undefined;
+        if (functionType.inferredReturnType) {
+            specializedInferredReturnType = this.apply(functionType.inferredReturnType, recursionCount);
+            if (specializedInferredReturnType !== functionType.inferredReturnType) {
+                typesRequiredSpecialization = true;
+            }
+        }
+
         if (!typesRequiredSpecialization) {
             return functionType;
         }
 
-        let specializedInferredReturnType: Type | undefined;
-        if (functionType.inferredReturnType) {
-            specializedInferredReturnType = this.apply(functionType.inferredReturnType, recursionCount);
+        if (specializedDefaultArgs.some((t) => t !== undefined)) {
+            specializedParameters.parameterDefaultArgs = specializedDefaultArgs;
         }
 
         // If there was no unpacked variadic type variable, we're done.
@@ -2954,7 +3007,7 @@ class ApplySolvedTypeVarsTransformer extends TypeVarTransformer {
 
             // If this typeVar is in scope for what we're solving but the type
             // var map doesn't contain any entry for it, replace with Unknown.
-            if (this._unknownIfNotFound) {
+            if (this._unknownIfNotFound && !this._typeVarContext.hasSolveForScope(WildcardTypeVarScopeId)) {
                 return UnknownType.create();
             }
         }
@@ -2962,28 +3015,33 @@ class ApplySolvedTypeVarsTransformer extends TypeVarTransformer {
         return typeVar;
     }
 
-    override transformUnion(type: UnionType) {
+    override transformUnionSubtype(preTransform: Type, postTransform: Type): Type | undefined {
         // If a union contains unsolved TypeVars within scope, eliminate them
         // unless this results in an empty union. This elimination is needed
-        // in cases where TypeVars can go unmatched due to unions in parameter
+        // in cases where TypeVars can go unsolved due to unions in parameter
         // annotations, like this:
         //   def test(x: Union[str, T]) -> Union[str, T]
         if (this._eliminateUnsolvedInUnions) {
-            const updatedUnion = mapSubtypes(type, (subtype) => {
-                if (
-                    isTypeVar(subtype) &&
-                    subtype.scopeId !== undefined &&
-                    this._typeVarContext.hasSolveForScope(subtype.scopeId)
-                ) {
+            if (
+                isTypeVar(preTransform) &&
+                preTransform.scopeId !== undefined &&
+                this._typeVarContext.hasSolveForScope(preTransform.scopeId)
+            ) {
+                // If the TypeVar was not transformed, then it was unsolved,
+                // and we'll eliminate it.
+                if (preTransform === postTransform) {
                     return undefined;
                 }
-                return subtype;
-            });
 
-            return isNever(updatedUnion) ? type : updatedUnion;
+                // If _unknownIfNotFound is true, the postTransform type will
+                // be Unknown, which we want to eliminate.
+                if (isUnknown(postTransform) && this._unknownIfNotFound) {
+                    return undefined;
+                }
+            }
         }
 
-        return type;
+        return postTransform;
     }
 
     override transformVariadicTypeVar(typeVar: TypeVarType) {
@@ -3004,10 +3062,10 @@ class ApplySolvedTypeVarsTransformer extends TypeVarTransformer {
             return transformedParamSpec;
         }
 
-        if (this._unknownIfNotFound) {
+        if (this._unknownIfNotFound && !this._typeVarContext.hasSolveForScope(WildcardTypeVarScopeId)) {
             // Convert to the ParamSpec equivalent of "Unknown".
             const paramSpecValue: ParamSpecValue = {
-                flags: FunctionTypeFlags.None,
+                flags: FunctionTypeFlags.SkipArgsKwargsCompatibilityCheck,
                 parameters: FunctionType.getDefaultParameters(/* useUnknown */ true),
                 typeVarScopeId: undefined,
                 docString: undefined,
@@ -3059,7 +3117,8 @@ class ExpectedConstructorTypeTransformer extends TypeVarTransformer {
         newTypeVar.details.constraints = prevTypeVar.details.constraints;
 
         // Also copy the variance.
-        newTypeVar.details.variance = prevTypeVar.details.variance;
+        newTypeVar.details.declaredVariance = prevTypeVar.details.declaredVariance;
+        newTypeVar.computedVariance = prevTypeVar.computedVariance;
 
         ExpectedConstructorTypeTransformer.synthesizedTypeVarIndexForExpectedType++;
         return newTypeVar;

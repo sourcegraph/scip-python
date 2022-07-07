@@ -32,6 +32,8 @@ module.exports = (_, { mode }) => {
             all: false,
             errors: true,
             warnings: true,
+            publicPath: true,
+            timings: true,
         },
         resolve: {
             extensions: ['.ts', '.js'],
@@ -47,6 +49,16 @@ module.exports = (_, { mode }) => {
                     loader: 'ts-loader',
                     options: {
                         configFile: 'tsconfig.json',
+                    },
+                },
+                {
+                    // Transform pre-compiled JS files to use syntax available in Node 12+.
+                    // esbuild is fast, so let it run on all JS files rather than matching
+                    // only known-bad libs. ts-loader does this for us for TypeScript files.
+                    test: /\.js$/,
+                    loader: 'esbuild-loader',
+                    options: {
+                        target: 'node12',
                     },
                 },
             ],

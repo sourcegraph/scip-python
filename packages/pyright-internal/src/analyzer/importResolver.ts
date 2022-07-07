@@ -142,8 +142,8 @@ export class ImportResolver {
         execEnv: ExecutionEnvironment,
         moduleDescriptor: ImportedModuleDescriptor
     ): ImportResult {
-        // wrap internal call to _resolveImport() to prevent calling any
-        // child class version of resolveImport()
+        // Wrap internal call to _resolveImport() to prevent calling any
+        // child class version of resolveImport().
         return this._resolveImport(sourceFilePath, execEnv, moduleDescriptor);
     }
 
@@ -272,6 +272,7 @@ export class ImportResolver {
         } else {
             // Is it already cached?
             const cachedResults = this._lookUpResultsInCache(execEnv, importName, moduleDescriptor.importedSymbols);
+
             if (cachedResults) {
                 // In most cases, we can simply return a cached entry. However, there are cases
                 // where the cached entry refers to a previously-resolved namespace package
@@ -288,18 +289,29 @@ export class ImportResolver {
                 }
             }
 
-            const bestImport = this._resolveBestAbsoluteImport(sourceFilePath, execEnv, moduleDescriptor, true);
+            const bestImport = this._resolveBestAbsoluteImport(
+                sourceFilePath,
+                execEnv,
+                moduleDescriptor,
+                /* allowPyi */ true
+            );
+
             if (bestImport) {
                 if (bestImport.isStubFile) {
                     bestImport.nonStubImportResult =
-                        this._resolveBestAbsoluteImport(sourceFilePath, execEnv, moduleDescriptor, false) ||
-                        notFoundResult;
+                        this._resolveBestAbsoluteImport(
+                            sourceFilePath,
+                            execEnv,
+                            moduleDescriptor,
+                            /* allowPyi */ false
+                        ) || notFoundResult;
                 }
+
                 return this.addResultsToCache(execEnv, importName, bestImport, moduleDescriptor.importedSymbols);
             }
         }
 
-        return this.addResultsToCache(execEnv, importName, notFoundResult, undefined);
+        return this.addResultsToCache(execEnv, importName, notFoundResult, /* importedSymbols */ undefined);
     }
 
     getCompletionSuggestions(
@@ -327,7 +339,7 @@ export class ImportResolver {
                 current,
                 moduleDescriptor,
                 suggestions,
-                /*strictOnly*/ false
+                /* strictOnly */ false
             );
 
             let success;
@@ -1309,10 +1321,6 @@ export class ImportResolver {
                 if (thirdPartyImport) {
                     thirdPartyImport.importType = ImportType.ThirdParty;
 
-                    if (thirdPartyImport.isImportFound && thirdPartyImport.isStubFile) {
-                        return thirdPartyImport;
-                    }
-
                     bestResultSoFar = this._pickBestImport(bestResultSoFar, thirdPartyImport, moduleDescriptor);
                 }
             }
@@ -1512,6 +1520,7 @@ export class ImportResolver {
                         importName,
                         importFailureInfo
                     );
+
                     if (importInfo.isImportFound) {
                         importInfo.importType = isStdLib ? ImportType.BuiltIn : ImportType.ThirdParty;
                         return importInfo;
@@ -1589,7 +1598,7 @@ export class ImportResolver {
                 moduleDescriptor,
                 execEnv,
                 importFailureInfo,
-                /*includeMatchOnly*/ false
+                /* includeMatchOnly */ false
             );
 
             const typeshedPathEx = this.getTypeshedPathEx(execEnv, importFailureInfo);

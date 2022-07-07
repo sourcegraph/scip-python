@@ -2,8 +2,9 @@ import http.server
 import pydoc
 import socketserver
 import sys
+from collections.abc import Callable, Iterable, Mapping
 from datetime import datetime
-from typing import Any, Callable, Iterable, Mapping, Pattern, Protocol
+from typing import Any, ClassVar, Pattern, Protocol
 from typing_extensions import TypeAlias
 from xmlrpc.client import Fault
 
@@ -67,8 +68,7 @@ class SimpleXMLRPCDispatcher:  # undocumented
     def _dispatch(self, method: str, params: Iterable[_Marshallable]) -> _Marshallable: ...  # undocumented
 
 class SimpleXMLRPCRequestHandler(http.server.BaseHTTPRequestHandler):
-
-    rpc_paths: tuple[str, str]
+    rpc_paths: ClassVar[tuple[str, ...]]
     encode_threshold: int  # undocumented
     aepattern: Pattern[str]  # undocumented
     def accept_encodings(self) -> dict[str, float]: ...

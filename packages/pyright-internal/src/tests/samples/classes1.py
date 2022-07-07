@@ -2,23 +2,49 @@
 # handle various class definition cases.
 
 
-class Foo:
+from typing import Type
+
+
+class A:
+    ...
+
+
+class B:
+    C: Type[A]
+
+
+app = B()
+
+
+class D(app.C):
+    ...
+
+
+class E:
     pass
 
 
-class Bar(Foo):
+class F(E):
     pass
 
 
-class Bar2(Foo, metaclass=type):
+class G(E, metaclass=type):
     def my_method(self):
         print(__class__)
 
 
 # This should generate an error because only one metaclass is supported.
-class Bar3(Foo, metaclass=type, metaclass=type):
+class H(E, metaclass=type, metaclass=type):
     pass
 
 
-class Bar4(Foo, other_keyword=2):
+class I(E, other_keyword=2):
+    pass
+
+
+args = [1, 2, 3]
+kwargs = {"foo": 5}
+
+
+class J(*args, **kwargs):
     pass

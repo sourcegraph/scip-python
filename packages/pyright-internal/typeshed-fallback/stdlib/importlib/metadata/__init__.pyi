@@ -2,41 +2,28 @@ import abc
 import pathlib
 import sys
 from _typeshed import Self, StrPath
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from email.message import Message
 from importlib.abc import MetaPathFinder
 from os import PathLike
 from pathlib import Path
-from typing import Any, ClassVar, Iterable, NamedTuple, Pattern, overload
+from typing import Any, ClassVar, NamedTuple, Pattern, overload
+
+__all__ = [
+    "Distribution",
+    "DistributionFinder",
+    "PackageNotFoundError",
+    "distribution",
+    "distributions",
+    "entry_points",
+    "files",
+    "metadata",
+    "requires",
+    "version",
+]
 
 if sys.version_info >= (3, 10):
-    __all__ = [
-        "Distribution",
-        "DistributionFinder",
-        "PackageMetadata",
-        "PackageNotFoundError",
-        "distribution",
-        "distributions",
-        "entry_points",
-        "files",
-        "metadata",
-        "packages_distributions",
-        "requires",
-        "version",
-    ]
-else:
-    __all__ = [
-        "Distribution",
-        "DistributionFinder",
-        "PackageNotFoundError",
-        "distribution",
-        "distributions",
-        "entry_points",
-        "files",
-        "metadata",
-        "requires",
-        "version",
-    ]
+    __all__ += ["PackageMetadata", "packages_distributions"]
 
 if sys.version_info >= (3, 10):
     from importlib.metadata._meta import PackageMetadata as PackageMetadata

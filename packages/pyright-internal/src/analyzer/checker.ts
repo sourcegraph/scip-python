@@ -14,7 +14,7 @@
 
 import { Commands } from '../commands/commands';
 import { DiagnosticLevel } from '../common/configOptions';
-import { assert } from '../common/debug';
+import { assert, assertNever } from '../common/debug';
 import { Diagnostic, DiagnosticAddendum } from '../common/diagnostic';
 import { DiagnosticRule } from '../common/diagnosticRules';
 import { getFileExtension } from '../common/pathUtils';
@@ -58,6 +58,7 @@ import {
     NameNode,
     NonlocalNode,
     ParameterCategory,
+    ParameterNode,
     ParseNode,
     ParseNodeArray,
     ParseNodeType,
@@ -75,6 +76,8 @@ import {
     TryNode,
     TupleNode,
     TypeAnnotationNode,
+    TypeParameterListNode,
+    TypeParameterNode,
     UnaryOperationNode,
     UnpackNode,
     WhileNode,
@@ -96,12 +99,15 @@ import { ParseTreeWalker } from './parseTreeWalker';
 import { validateClassPattern } from './patternMatching';
 import { ScopeType } from './scope';
 import { getScopeForNode } from './scopeUtils';
+import { IPythonMode } from './sourceFile';
 import { isStubFile } from './sourceMapper';
 import { evaluateStaticBoolExpression } from './staticExpressions';
 import { Symbol } from './symbol';
 import * as SymbolNameUtils from './symbolNameUtils';
 import { getLastTypedDeclaredForSymbol, isFinalVariable } from './symbolUtils';
+import { maxCodeComplexity } from './typeEvaluator';
 import { TypeEvaluator } from './typeEvaluatorTypes';
+import { isIsinstanceFilterSubclass, isIsinstanceFilterSuperclass } from './typeGuards';
 import {
     ClassType,
     combineTypes,
@@ -123,7 +129,6 @@ import {
     isUnbound,
     isUnion,
     isUnknown,
-    isVariadicTypeVar,
     NoneType,
     Type,
     TypeBase,
@@ -134,7 +139,7 @@ import {
 } from './types';
 import {
     applySolvedTypeVars,
-    CanAssignFlags,
+    AssignTypeFlags,
     ClassMember,
     ClassMemberLookupFlags,
     convertToInstance,
@@ -163,8 +168,12 @@ import {
 } from './typeUtils';
 import { TypeVarContext } from './typeVarContext';
 
-interface LocalTypeVarInfo {
+interface TypeVarUsageInfo {
     isExempt: boolean;
+    returnTypeUsageCount: number;
+    paramTypeUsageCount: number;
+    paramTypeWithEllipsisUsageCount: number;
+    paramWithEllipsis: string | undefined;
     nodes: NameNode[];
 }
 
@@ -213,6 +222,10 @@ const deprecatedSpecialForms = new Map<string, DeprecatedForm>([
     ['Union', { version: PythonVersion.V3_10, fullName: 'typing.Union', replacementText: '|' }],
 ]);
 
+// When enabled, this debug flag causes the code complexity of
+// functions to be emitted.
+const isPrintCodeComplexityEnabled = false;
+
 export class Checker extends ParseTreeWalker {
     private readonly _fileInfo: AnalyzerFileInfo;
     private _isUnboundCheckSuppressed = false;
@@ -220,6 +233,9 @@ export class Checker extends ParseTreeWalker {
     // A list of all nodes that are defined within the module that
     // have their own scopes.
     private _scopedNodes: AnalyzerNodeInfo.ScopedNode[] = [];
+
+    // A list of all visited type parameter lists.
+    private _typeParameterLists: TypeParameterListNode[] = [];
 
     constructor(
         private _importResolver: ImportResolver,
@@ -286,6 +302,9 @@ export class Checker extends ParseTreeWalker {
     override visitClass(node: ClassNode): boolean {
         const classTypeResult = this._evaluator.getTypeOfClass(node);
 
+        if (node.typeParameters) {
+            this.walk(node.typeParameters);
+        }
         this.walk(node.suite);
         this.walkMultiple(node.decorators);
         this.walkMultiple(node.arguments);
@@ -363,6 +382,10 @@ export class Checker extends ParseTreeWalker {
     }
 
     override visitFunction(node: FunctionNode): boolean {
+        if (node.typeParameters) {
+            this.walk(node.typeParameters);
+        }
+
         const functionTypeResult = this._evaluator.getTypeOfFunction(node);
         const containingClassNode = ParseTreeUtils.getEnclosingClass(node, /* stopAtFunction */ true);
 
@@ -530,7 +553,7 @@ export class Checker extends ParseTreeWalker {
                     const paramType = functionTypeResult.functionType.details.parameters[index].type;
                     if (
                         isTypeVar(paramType) &&
-                        paramType.details.variance === Variance.Covariant &&
+                        paramType.details.declaredVariance === Variance.Covariant &&
                         !paramType.details.isSynthesized &&
                         functionTypeResult.functionType.details.name !== '__init__'
                     ) {
@@ -551,6 +574,18 @@ export class Checker extends ParseTreeWalker {
 
         if (node.functionAnnotationComment) {
             this.walk(node.functionAnnotationComment);
+
+            if (
+                this._fileInfo.diagnosticRuleSet.reportTypeCommentUsage !== 'none' &&
+                this._fileInfo.executionEnvironment.pythonVersion >= PythonVersion.V3_5
+            ) {
+                this._evaluator.addDiagnostic(
+                    this._fileInfo.diagnosticRuleSet.reportTypeCommentUsage,
+                    DiagnosticRule.reportTypeCommentUsage,
+                    Localizer.Diagnostic.typeCommentDeprecated(),
+                    node.functionAnnotationComment
+                );
+            }
         }
 
         this.walkMultiple(node.decorators);
@@ -561,11 +596,29 @@ export class Checker extends ParseTreeWalker {
             }
         });
 
-        this.walk(node.suite);
+        const codeComplexity = AnalyzerNodeInfo.getCodeFlowComplexity(node);
+        const isTooComplexToAnalyze = codeComplexity > maxCodeComplexity;
+
+        if (isPrintCodeComplexityEnabled) {
+            console.log(`Code complexity of function ${node.name.value} is ${codeComplexity.toString()}`);
+        }
+
+        if (isTooComplexToAnalyze) {
+            this._evaluator.addDiagnostic(
+                this._fileInfo.diagnosticRuleSet.reportGeneralTypeIssues,
+                DiagnosticRule.reportGeneralTypeIssues,
+                Localizer.Diagnostic.codeTooComplexToAnalyze(),
+                node.name
+            );
+        } else {
+            this.walk(node.suite);
+        }
 
         if (functionTypeResult) {
             // Validate that the function returns the declared type.
-            this._validateFunctionReturn(node, functionTypeResult.functionType);
+            if (!isTooComplexToAnalyze) {
+                this._validateFunctionReturn(node, functionTypeResult.functionType);
+            }
 
             // Verify common dunder signatures.
             this._validateDunderSignatures(node, functionTypeResult.functionType, containingClassNode !== undefined);
@@ -577,6 +630,8 @@ export class Checker extends ParseTreeWalker {
                 functionTypeResult.functionType,
                 containingClassNode !== undefined
             );
+
+            this._validateFunctionTypeVarUsage(node, functionTypeResult.functionType);
         }
 
         // If we're at the module level within a stub file, report a diagnostic
@@ -595,8 +650,6 @@ export class Checker extends ParseTreeWalker {
         }
 
         this._scopedNodes.push(node);
-
-        this._validateFunctionTypeVarUsage(node);
 
         if (functionTypeResult && isOverloadedFunction(functionTypeResult.decoratedType)) {
             const overloads = functionTypeResult.decoratedType.overloads;
@@ -739,6 +792,16 @@ export class Checker extends ParseTreeWalker {
 
     override visitFor(node: ForNode): boolean {
         this._evaluator.evaluateTypesForStatement(node);
+
+        if (node.typeComment) {
+            this._evaluator.addDiagnosticForTextRange(
+                this._fileInfo,
+                this._fileInfo.diagnosticRuleSet.reportGeneralTypeIssues,
+                DiagnosticRule.reportGeneralTypeIssues,
+                Localizer.Diagnostic.annotationNotSupported(),
+                node.typeComment
+            );
+        }
         return true;
     }
 
@@ -784,6 +847,16 @@ export class Checker extends ParseTreeWalker {
             this._evaluator.evaluateTypesForStatement(item);
         });
 
+        if (node.typeComment) {
+            this._evaluator.addDiagnosticForTextRange(
+                this._fileInfo,
+                this._fileInfo.diagnosticRuleSet.reportGeneralTypeIssues,
+                DiagnosticRule.reportGeneralTypeIssues,
+                Localizer.Diagnostic.annotationNotSupported(),
+                node.typeComment
+            );
+        }
+
         return true;
     }
 
@@ -816,12 +889,13 @@ export class Checker extends ParseTreeWalker {
                     let returnTypeMatches = false;
 
                     if (
-                        this._evaluator.canAssignType(
+                        this._evaluator.assignType(
                             declaredReturnType,
                             returnType,
                             diagAddendum,
                             new TypeVarContext(),
-                            CanAssignFlags.AllowBoolTypeGuard
+                            /* srcTypeVarContext */ undefined,
+                            AssignTypeFlags.AllowBoolTypeGuard
                         )
                     ) {
                         returnTypeMatches = true;
@@ -850,12 +924,13 @@ export class Checker extends ParseTreeWalker {
                                 const adjustedReturnType = applySolvedTypeVars(declaredReturnType, typeVarContext);
 
                                 if (
-                                    this._evaluator.canAssignType(
+                                    this._evaluator.assignType(
                                         adjustedReturnType,
                                         returnType,
                                         diagAddendum,
-                                        /* typeVarContext */ undefined,
-                                        CanAssignFlags.AllowBoolTypeGuard
+                                        /* destTypeVarContext */ undefined,
+                                        /* srcTypeVarContext */ undefined,
+                                        AssignTypeFlags.AllowBoolTypeGuard
                                     )
                                 ) {
                                     returnTypeMatches = true;
@@ -915,7 +990,7 @@ export class Checker extends ParseTreeWalker {
             yieldType = UnknownType.create();
         } else {
             yieldType =
-                this._evaluator.getTypeFromIterable(yieldFromType, /* isAsync */ false, node) || UnknownType.create();
+                this._evaluator.getTypeOfIterable(yieldFromType, /* isAsync */ false, node) || UnknownType.create();
 
             // Does the iterator return a Generator? If so, get the yield type from it.
             // If the iterator doesn't return a Generator, use the iterator return type
@@ -925,8 +1000,7 @@ export class Checker extends ParseTreeWalker {
                 yieldType = generatorTypeArgs.length >= 1 ? generatorTypeArgs[0] : UnknownType.create();
             } else {
                 yieldType =
-                    this._evaluator.getTypeFromIterator(yieldFromType, /* isAsync */ false, node) ||
-                    UnknownType.create();
+                    this._evaluator.getTypeOfIterator(yieldFromType, /* isAsync */ false, node) || UnknownType.create();
             }
         }
 
@@ -1025,6 +1099,18 @@ export class Checker extends ParseTreeWalker {
         this._evaluator.evaluateTypesForStatement(node);
         if (node.typeAnnotationComment) {
             this._evaluator.getType(node.typeAnnotationComment);
+
+            if (
+                this._fileInfo.diagnosticRuleSet.reportTypeCommentUsage !== 'none' &&
+                this._fileInfo.executionEnvironment.pythonVersion >= PythonVersion.V3_6
+            ) {
+                this._evaluator.addDiagnostic(
+                    this._fileInfo.diagnosticRuleSet.reportTypeCommentUsage,
+                    DiagnosticRule.reportTypeCommentUsage,
+                    Localizer.Diagnostic.typeCommentDeprecated(),
+                    node.typeAnnotationComment
+                );
+            }
         }
 
         return true;
@@ -1294,6 +1380,15 @@ export class Checker extends ParseTreeWalker {
         return false;
     }
 
+    override visitTypeParameterList(node: TypeParameterListNode): boolean {
+        this._typeParameterLists.push(node);
+        return true;
+    }
+
+    override visitTypeParameter(node: TypeParameterNode): boolean {
+        return false;
+    }
+
     override visitTypeAnnotation(node: TypeAnnotationNode): boolean {
         this._evaluator.getType(node.typeAnnotation);
         return true;
@@ -1402,7 +1497,7 @@ export class Checker extends ParseTreeWalker {
         }
 
         const narrowedTypeResult = this._evaluator.evaluateTypeForSubnode(node, () => {
-            this._evaluator.evaluateTypesForMatchNode(node);
+            this._evaluator.evaluateTypesForMatchStatement(node);
         });
 
         if (narrowedTypeResult && !isNever(narrowedTypeResult.type)) {
@@ -1457,13 +1552,29 @@ export class Checker extends ParseTreeWalker {
             return;
         }
 
+        if (isNever(leftType) || isNever(rightType)) {
+            return;
+        }
+
+        const getMessage = () => {
+            return node.operator === OperatorType.Equals
+                ? Localizer.Diagnostic.comparisonAlwaysFalse()
+                : Localizer.Diagnostic.comparisonAlwaysTrue();
+        };
+
         // Check for the special case where the LHS and RHS are both literals.
         if (isLiteralTypeOrUnion(rightType) && isLiteralTypeOrUnion(leftType)) {
-            if (evaluateStaticBoolExpression(node, this._fileInfo.executionEnvironment) === undefined) {
+            if (
+                evaluateStaticBoolExpression(
+                    node,
+                    this._fileInfo.executionEnvironment,
+                    this._fileInfo.definedConstants
+                ) === undefined
+            ) {
                 let isPossiblyTrue = false;
 
                 doForEachSubtype(leftType, (leftSubtype) => {
-                    if (this._evaluator.canAssignType(rightType, leftSubtype)) {
+                    if (this._evaluator.assignType(rightType, leftSubtype)) {
                         isPossiblyTrue = true;
                     }
                 });
@@ -1472,7 +1583,7 @@ export class Checker extends ParseTreeWalker {
                     this._evaluator.addDiagnostic(
                         this._fileInfo.diagnosticRuleSet.reportUnnecessaryComparison,
                         DiagnosticRule.reportUnnecessaryComparison,
-                        Localizer.Diagnostic.comparisonAlwaysFalse().format({
+                        getMessage().format({
                             leftType: this._evaluator.printType(leftType, /* expandTypeAlias */ true),
                             rightType: this._evaluator.printType(rightType, /* expandTypeAlias */ true),
                         }),
@@ -1506,15 +1617,10 @@ export class Checker extends ParseTreeWalker {
                 const leftTypeText = this._evaluator.printType(leftType, /* expandTypeAlias */ true);
                 const rightTypeText = this._evaluator.printType(rightType, /* expandTypeAlias */ true);
 
-                const message =
-                    node.operator === OperatorType.Equals
-                        ? Localizer.Diagnostic.comparisonAlwaysFalse()
-                        : Localizer.Diagnostic.comparisonAlwaysTrue();
-
                 this._evaluator.addDiagnostic(
                     this._fileInfo.diagnosticRuleSet.reportUnnecessaryComparison,
                     DiagnosticRule.reportUnnecessaryComparison,
-                    message.format({
+                    getMessage().format({
                         leftType: leftTypeText,
                         rightType: rightTypeText,
                     }),
@@ -1567,8 +1673,8 @@ export class Checker extends ParseTreeWalker {
                 );
 
                 if (
-                    this._evaluator.canAssignType(genericLeftType, genericRightType) ||
-                    this._evaluator.canAssignType(genericRightType, genericLeftType)
+                    this._evaluator.assignType(genericLeftType, genericRightType) ||
+                    this._evaluator.assignType(genericRightType, genericLeftType)
                 ) {
                     return true;
                 }
@@ -1599,8 +1705,8 @@ export class Checker extends ParseTreeWalker {
                 );
 
                 if (
-                    this._evaluator.canAssignType(genericLeftType, genericRightType) ||
-                    this._evaluator.canAssignType(genericRightType, genericLeftType)
+                    this._evaluator.assignType(genericLeftType, genericRightType) ||
+                    this._evaluator.assignType(genericRightType, genericLeftType)
                 ) {
                     return true;
                 }
@@ -1636,19 +1742,34 @@ export class Checker extends ParseTreeWalker {
     }
 
     // Verifies that each local type variable is used more than once.
-    private _validateFunctionTypeVarUsage(node: FunctionNode) {
+    private _validateFunctionTypeVarUsage(node: FunctionNode, type: FunctionType) {
         // Skip this check entirely if it's disabled.
         if (this._fileInfo.diagnosticRuleSet.reportInvalidTypeVarUse === 'none') {
             return;
         }
 
-        const localTypeVarUsage = new Map<string, LocalTypeVarInfo>();
+        const localTypeVarUsage = new Map<string, TypeVarUsageInfo>();
+        const classTypeVarUsage = new Map<string, TypeVarUsageInfo>();
         let exemptBoundTypeVar = true;
+        let curParamNode: ParameterNode | undefined;
+
+        // Is this a constructor (an __init__ method) for a generic class?
+        let constructorClass: ClassType | undefined;
+        if (FunctionType.isInstanceMethod(type) && node.name.value === '__init__') {
+            const containingClassNode = ParseTreeUtils.getEnclosingClassOrFunction(node);
+            if (containingClassNode && containingClassNode.nodeType === ParseNodeType.Class) {
+                const classType = this._evaluator.getTypeOfClass(containingClassNode);
+                if (classType && isClass(classType.classType)) {
+                    constructorClass = classType.classType;
+                }
+            }
+        }
 
         const nameWalker = new ParseTreeUtils.NameNodeWalker((nameNode, subscriptIndex, baseExpression) => {
             const nameType = this._evaluator.getType(nameNode);
             ``;
             if (nameType && isTypeVar(nameType)) {
+                // Does this name refer to a TypeVar that is scoped to this function?
                 if (nameType.scopeId === this._evaluator.getScopeIdForNode(node)) {
                     // We exempt constrained TypeVars, bound TypeVars that are type arguments of
                     // other types, and ParamSpecs. There are legitimate uses for singleton
@@ -1674,13 +1795,62 @@ export class Checker extends ParseTreeWalker {
                         }
                     }
 
-                    if (!localTypeVarUsage.has(nameType.details.name)) {
+                    const existingEntry = localTypeVarUsage.get(nameType.details.name);
+                    const isParamTypeWithEllipsisUsage =
+                        curParamNode?.defaultValue?.nodeType === ParseNodeType.Ellipsis;
+
+                    if (!existingEntry) {
                         localTypeVarUsage.set(nameType.details.name, {
                             nodes: [nameNode],
+                            paramTypeUsageCount: curParamNode !== undefined ? 1 : 0,
+                            paramTypeWithEllipsisUsageCount: isParamTypeWithEllipsisUsage ? 1 : 0,
+                            returnTypeUsageCount: curParamNode === undefined ? 1 : 0,
+                            paramWithEllipsis: isParamTypeWithEllipsisUsage ? curParamNode?.name?.value : undefined,
                             isExempt,
                         });
                     } else {
-                        localTypeVarUsage.get(nameType.details.name)!.nodes.push(nameNode);
+                        existingEntry.nodes.push(nameNode);
+                        if (curParamNode !== undefined) {
+                            existingEntry.paramTypeUsageCount += 1;
+                            if (isParamTypeWithEllipsisUsage) {
+                                existingEntry.paramTypeWithEllipsisUsageCount += 1;
+                                if (!existingEntry.paramWithEllipsis) {
+                                    existingEntry.paramWithEllipsis = curParamNode?.name?.value;
+                                }
+                            }
+                        } else {
+                            existingEntry.returnTypeUsageCount += 1;
+                        }
+                    }
+                }
+
+                // Does this name refer to a TypeVar that is scoped to the class associated with
+                // this constructor method?
+                if (constructorClass && nameType.scopeId === constructorClass.details.typeVarScopeId) {
+                    const existingEntry = classTypeVarUsage.get(nameType.details.name);
+                    const isParamTypeWithEllipsisUsage =
+                        curParamNode?.defaultValue?.nodeType === ParseNodeType.Ellipsis;
+
+                    if (!existingEntry) {
+                        classTypeVarUsage.set(nameType.details.name, {
+                            nodes: [nameNode],
+                            paramTypeUsageCount: curParamNode !== undefined ? 1 : 0,
+                            paramTypeWithEllipsisUsageCount: isParamTypeWithEllipsisUsage ? 1 : 0,
+                            returnTypeUsageCount: 0,
+                            paramWithEllipsis: isParamTypeWithEllipsisUsage ? curParamNode?.name?.value : undefined,
+                            isExempt: false,
+                        });
+                    } else {
+                        existingEntry.nodes.push(nameNode);
+                        if (curParamNode !== undefined) {
+                            existingEntry.paramTypeUsageCount += 1;
+                            if (isParamTypeWithEllipsisUsage) {
+                                existingEntry.paramTypeWithEllipsisUsageCount += 1;
+                                if (!existingEntry.paramWithEllipsis) {
+                                    existingEntry.paramWithEllipsis = curParamNode?.name?.value;
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -1690,9 +1860,11 @@ export class Checker extends ParseTreeWalker {
         node.parameters.forEach((param) => {
             const annotation = param.typeAnnotation || param.typeAnnotationComment;
             if (annotation) {
+                curParamNode = param;
                 nameWalker.walk(annotation);
             }
         });
+        curParamNode = undefined;
 
         if (node.returnTypeAnnotation) {
             // Don't exempt the use of a bound TypeVar when used as a type argument
@@ -1702,8 +1874,8 @@ export class Checker extends ParseTreeWalker {
             nameWalker.walk(node.returnTypeAnnotation);
         }
 
-        // Report errors for all local type variables that appear only once.
         localTypeVarUsage.forEach((usage) => {
+            // Report error for local type variable that appears only once.
             if (usage.nodes.length === 1 && !usage.isExempt) {
                 this._evaluator.addDiagnostic(
                     this._fileInfo.diagnosticRuleSet.reportInvalidTypeVarUse,
@@ -1711,6 +1883,67 @@ export class Checker extends ParseTreeWalker {
                     Localizer.Diagnostic.typeVarUsedOnlyOnce().format({
                         name: usage.nodes[0].value,
                     }),
+                    usage.nodes[0]
+                );
+            }
+
+            // Report error for local type variable that appears in return type
+            // (but not as a top-level TypeVar within a union) and appears only
+            // within parameters that have default values. These may go unsolved.
+            let isUsedInReturnType = usage.returnTypeUsageCount > 0;
+            if (usage.returnTypeUsageCount === 1 && type.details.declaredReturnType) {
+                // If the TypeVar appears only once in the return type and it's a top-level
+                // TypeVar within a union, exempt it from this check. Although these
+                // TypeVars may go unsolved, they can be safely eliminated from the union
+                // without generating an Unknown type.
+                const returnType = type.details.declaredReturnType;
+                if (
+                    isUnion(returnType) &&
+                    returnType.subtypes.some(
+                        (subtype) => isTypeVar(subtype) && subtype.details.name === usage.nodes[0].value
+                    )
+                ) {
+                    isUsedInReturnType = false;
+                }
+            }
+
+            if (
+                isUsedInReturnType &&
+                usage.paramTypeWithEllipsisUsageCount > 0 &&
+                usage.paramTypeUsageCount === usage.paramTypeWithEllipsisUsageCount
+            ) {
+                const diag = new DiagnosticAddendum();
+                diag.addMessage(Localizer.DiagnosticAddendum.typeVarUnsolvableRemedy());
+
+                this._evaluator.addDiagnostic(
+                    this._fileInfo.diagnosticRuleSet.reportInvalidTypeVarUse,
+                    DiagnosticRule.reportInvalidTypeVarUse,
+                    Localizer.Diagnostic.typeVarPossiblyUnsolvable().format({
+                        name: usage.nodes[0].value,
+                        param: usage.paramWithEllipsis ?? '',
+                    }) + diag.getString(),
+                    usage.nodes[0]
+                );
+            }
+        });
+
+        // Report error for a class type variable that appears only within
+        // constructor parameters that have default values. These may go unsolved.
+        classTypeVarUsage.forEach((usage) => {
+            if (
+                usage.paramTypeWithEllipsisUsageCount > 0 &&
+                usage.paramTypeUsageCount === usage.paramTypeWithEllipsisUsageCount
+            ) {
+                const diag = new DiagnosticAddendum();
+                diag.addMessage(Localizer.DiagnosticAddendum.typeVarUnsolvableRemedy());
+
+                this._evaluator.addDiagnostic(
+                    this._fileInfo.diagnosticRuleSet.reportInvalidTypeVarUse,
+                    DiagnosticRule.reportInvalidTypeVarUse,
+                    Localizer.Diagnostic.typeVarPossiblyUnsolvable().format({
+                        name: usage.nodes[0].value,
+                        param: usage.paramWithEllipsis ?? '',
+                    }) + diag.getString(),
                     usage.nodes[0]
                 );
             }
@@ -1756,12 +1989,13 @@ export class Checker extends ParseTreeWalker {
                 if (
                     prevReturnType &&
                     returnType &&
-                    !this._evaluator.canAssignType(
+                    !this._evaluator.assignType(
                         returnType,
                         prevReturnType,
                         /* diag */ undefined,
                         new TypeVarContext(),
-                        CanAssignFlags.SkipSolveTypeVars
+                        /* srcTypeVarContext */ undefined,
+                        AssignTypeFlags.SkipSolveTypeVars | AssignTypeFlags.IgnoreTypeVarScope
                     )
                 ) {
                     const altNode = this._findNodeForOverload(node, prevOverload);
@@ -1812,14 +2046,15 @@ export class Checker extends ParseTreeWalker {
             return false;
         }
 
-        return this._evaluator.canAssignType(
+        return this._evaluator.assignType(
             functionType,
             prevOverload,
             /* diag */ undefined,
             new TypeVarContext(getTypeVarScopeId(functionType)),
-            CanAssignFlags.SkipSolveTypeVars |
-                CanAssignFlags.SkipFunctionReturnTypeCheck |
-                CanAssignFlags.OverloadOverlapCheck
+            /* srcTypeVarContext */ undefined,
+            AssignTypeFlags.SkipSolveTypeVars |
+                AssignTypeFlags.SkipFunctionReturnTypeCheck |
+                AssignTypeFlags.OverloadOverlapCheck
         );
     }
 
@@ -1828,17 +2063,19 @@ export class Checker extends ParseTreeWalker {
         implementation: FunctionType,
         diag: DiagnosticAddendum | undefined
     ): boolean {
-        const typeVarContext = new TypeVarContext(getTypeVarScopeId(implementation));
+        const implTypeVarContext = new TypeVarContext(getTypeVarScopeId(implementation));
+        const overloadTypeVarContext = new TypeVarContext(getTypeVarScopeId(overload));
 
         // First check the parameters to see if they are assignable.
-        let isLegal = this._evaluator.canAssignType(
+        let isLegal = this._evaluator.assignType(
             overload,
             implementation,
             diag,
-            typeVarContext,
-            CanAssignFlags.SkipFunctionReturnTypeCheck |
-                CanAssignFlags.ReverseTypeVarMatching |
-                CanAssignFlags.SkipSelfClsTypeCheck
+            overloadTypeVarContext,
+            implTypeVarContext,
+            AssignTypeFlags.SkipFunctionReturnTypeCheck |
+                AssignTypeFlags.ReverseTypeVarMatching |
+                AssignTypeFlags.SkipSelfClsTypeCheck
         );
 
         // Now check the return types.
@@ -1846,18 +2083,19 @@ export class Checker extends ParseTreeWalker {
             overload.details.declaredReturnType ?? this._evaluator.getFunctionInferredReturnType(overload);
         const implementationReturnType = applySolvedTypeVars(
             implementation.details.declaredReturnType || this._evaluator.getFunctionInferredReturnType(implementation),
-            typeVarContext
+            implTypeVarContext
         );
 
         const returnDiag = new DiagnosticAddendum();
         if (
             !isNever(overloadReturnType) &&
-            !this._evaluator.canAssignType(
+            !this._evaluator.assignType(
                 implementationReturnType,
                 overloadReturnType,
                 returnDiag.createAddendum(),
-                typeVarContext,
-                CanAssignFlags.SkipSolveTypeVars
+                implTypeVarContext,
+                overloadTypeVarContext,
+                AssignTypeFlags.SkipSolveTypeVars
             )
         ) {
             returnDiag.addMessage(
@@ -1866,9 +2104,7 @@ export class Checker extends ParseTreeWalker {
                     destType: this._evaluator.printType(implementationReturnType, /* expandTypeAlias */ false),
                 })
             );
-            if (diag) {
-                diag.addAddendum(returnDiag);
-            }
+            diag?.addAddendum(returnDiag);
             isLegal = false;
         }
 
@@ -1931,13 +2167,13 @@ export class Checker extends ParseTreeWalker {
 
             case ParseNodeType.StatementList: {
                 for (const substatement of statement.statements) {
+                    let isValid = true;
+
                     switch (substatement.nodeType) {
                         case ParseNodeType.Assert:
                         case ParseNodeType.AssignmentExpression:
-                        case ParseNodeType.AugmentedAssignment:
                         case ParseNodeType.Await:
                         case ParseNodeType.BinaryOperation:
-                        case ParseNodeType.Call:
                         case ParseNodeType.Constant:
                         case ParseNodeType.Del:
                         case ParseNodeType.Dictionary:
@@ -1965,13 +2201,36 @@ export class Checker extends ParseTreeWalker {
                         case ParseNodeType.WithItem:
                         case ParseNodeType.Yield:
                         case ParseNodeType.YieldFrom: {
-                            this._evaluator.addDiagnostic(
-                                this._fileInfo.diagnosticRuleSet.reportInvalidStubStatement,
-                                DiagnosticRule.reportInvalidStubStatement,
-                                Localizer.Diagnostic.invalidStubStatement(),
-                                substatement
-                            );
+                            isValid = false;
+                            break;
                         }
+
+                        case ParseNodeType.AugmentedAssignment: {
+                            // Exempt __all__ manipulations.
+                            isValid =
+                                substatement.operator === OperatorType.AddEqual &&
+                                substatement.leftExpression.nodeType === ParseNodeType.Name &&
+                                substatement.leftExpression.value === '__all__';
+                            break;
+                        }
+
+                        case ParseNodeType.Call: {
+                            // Exempt __all__ manipulations.
+                            isValid =
+                                substatement.leftExpression.nodeType === ParseNodeType.MemberAccess &&
+                                substatement.leftExpression.leftExpression.nodeType === ParseNodeType.Name &&
+                                substatement.leftExpression.leftExpression.value === '__all__';
+                            break;
+                        }
+                    }
+
+                    if (!isValid) {
+                        this._evaluator.addDiagnostic(
+                            this._fileInfo.diagnosticRuleSet.reportInvalidStubStatement,
+                            DiagnosticRule.reportInvalidStubStatement,
+                            Localizer.Diagnostic.invalidStubStatement(),
+                            substatement
+                        );
                     }
                 }
             }
@@ -2005,7 +2264,7 @@ export class Checker extends ParseTreeWalker {
                 resultingExceptionType = ClassType.cloneAsInstance(exceptionType);
             } else if (isClassInstance(exceptionType)) {
                 const iterableType =
-                    this._evaluator.getTypeFromIterator(exceptionType, /* isAsync */ false, errorNode) ||
+                    this._evaluator.getTypeOfIterator(exceptionType, /* isAsync */ false, errorNode) ||
                     UnknownType.create();
 
                 resultingExceptionType = mapSubtypes(iterableType, (subtype) => {
@@ -2086,6 +2345,22 @@ export class Checker extends ParseTreeWalker {
 
                     this._reportInvalidOverload(name, symbol);
                 });
+            }
+        }
+
+        // Report unaccessed type parameters.
+        const accessedSymbolSet = this._fileInfo.accessedSymbolSet;
+        for (const paramList of this._typeParameterLists) {
+            for (const param of paramList.parameters) {
+                const symbol = AnalyzerNodeInfo.getTypeParameterSymbol(param.name);
+                assert(symbol);
+
+                if (!accessedSymbolSet.has(symbol.id)) {
+                    const decls = symbol.getDeclarations();
+                    decls.forEach((decl) => {
+                        this._conditionallyReportUnusedDeclaration(decl, /* isPrivate */ false);
+                    });
+                }
             }
         }
     }
@@ -2346,6 +2621,8 @@ export class Checker extends ParseTreeWalker {
             primaryDeclInfo = Localizer.DiagnosticAddendum.seeParameterDeclaration();
         } else if (primaryDecl.type === DeclarationType.Variable) {
             primaryDeclInfo = Localizer.DiagnosticAddendum.seeVariableDeclaration();
+        } else if (primaryDecl.type === DeclarationType.TypeAlias) {
+            primaryDeclInfo = Localizer.DiagnosticAddendum.seeTypeAliasDeclaration();
         } else {
             primaryDeclInfo = Localizer.DiagnosticAddendum.seeDeclaration();
         }
@@ -2359,7 +2636,10 @@ export class Checker extends ParseTreeWalker {
                     if (primaryDecl.node.nodeType === ParseNodeType.Name) {
                         primaryDeclNode = primaryDecl.node;
                     }
-                } else if (primaryDecl.type === DeclarationType.Parameter) {
+                } else if (
+                    primaryDecl.type === DeclarationType.Parameter ||
+                    primaryDecl.type === DeclarationType.TypeParameter
+                ) {
                     if (primaryDecl.node.name) {
                         primaryDeclNode = primaryDecl.node.name;
                     }
@@ -2373,27 +2653,40 @@ export class Checker extends ParseTreeWalker {
 
         for (const otherDecl of otherDecls) {
             if (otherDecl.type === DeclarationType.Class) {
-                const diag = this._evaluator.addDiagnostic(
-                    this._fileInfo.diagnosticRuleSet.reportGeneralTypeIssues,
-                    DiagnosticRule.reportGeneralTypeIssues,
-                    Localizer.Diagnostic.obscuredClassDeclaration().format({ name }),
-                    otherDecl.node.name
-                );
-                addPrimaryDeclInfo(diag);
+                let duplicateIsOk = false;
+
+                if (primaryDecl.type === DeclarationType.TypeParameter) {
+                    // The error will be reported elsewhere if a type parameter is
+                    // involved, so don't report it here.
+                    duplicateIsOk = true;
+                }
+
+                if (!duplicateIsOk) {
+                    const diag = this._evaluator.addDiagnostic(
+                        this._fileInfo.diagnosticRuleSet.reportGeneralTypeIssues,
+                        DiagnosticRule.reportGeneralTypeIssues,
+                        Localizer.Diagnostic.obscuredClassDeclaration().format({ name }),
+                        otherDecl.node.name
+                    );
+                    addPrimaryDeclInfo(diag);
+                }
             } else if (otherDecl.type === DeclarationType.Function) {
                 const primaryType = this._evaluator.getTypeForDeclaration(primaryDecl);
+                let duplicateIsOk = false;
 
                 // If the return type has not yet been inferred, do so now.
                 if (primaryType && isFunction(primaryType)) {
                     this._evaluator.getFunctionInferredReturnType(primaryType);
                 }
 
-                let duplicateIsOk = false;
                 const otherType = this._evaluator.getTypeForDeclaration(otherDecl);
 
                 const suite1 = ParseTreeUtils.getEnclosingSuite(primaryDecl.node);
                 const suite2 = ParseTreeUtils.getEnclosingSuite(otherDecl.node);
 
+                // Allow same-signature overrides in cases where the declarations
+                // are not within the same statement suite (e.g. one in the "if"
+                // and another in the "else").
                 const isInSameStatementList = suite1 === suite2;
 
                 // If the return type has not yet been inferred, do so now.
@@ -2403,11 +2696,17 @@ export class Checker extends ParseTreeWalker {
 
                 // If both declarations are functions, it's OK if they
                 // both have the same signatures.
-                if (primaryType && otherType && isTypeSame(primaryType, otherType)) {
+                if (!isInSameStatementList && primaryType && otherType && isTypeSame(primaryType, otherType)) {
                     duplicateIsOk = true;
                 }
 
-                if (!duplicateIsOk || isInSameStatementList) {
+                if (primaryDecl.type === DeclarationType.TypeParameter) {
+                    // The error will be reported elsewhere if a type parameter is
+                    // involved, so don't report it here.
+                    duplicateIsOk = true;
+                }
+
+                if (!duplicateIsOk) {
                     const diag = this._evaluator.addDiagnostic(
                         this._fileInfo.diagnosticRuleSet.reportGeneralTypeIssues,
                         DiagnosticRule.reportGeneralTypeIssues,
@@ -2420,13 +2719,24 @@ export class Checker extends ParseTreeWalker {
                 }
             } else if (otherDecl.type === DeclarationType.Parameter) {
                 if (otherDecl.node.name) {
-                    const diag = this._evaluator.addDiagnostic(
-                        this._fileInfo.diagnosticRuleSet.reportGeneralTypeIssues,
-                        DiagnosticRule.reportGeneralTypeIssues,
-                        Localizer.Diagnostic.obscuredParameterDeclaration().format({ name }),
-                        otherDecl.node.name
-                    );
-                    addPrimaryDeclInfo(diag);
+                    let duplicateIsOk = false;
+
+                    if (primaryDecl.type === DeclarationType.TypeParameter) {
+                        // The error will be reported elsewhere if a type parameter is
+                        // involved, so don't report it here.
+                        duplicateIsOk = true;
+                    }
+
+                    if (!duplicateIsOk) {
+                        const message = Localizer.Diagnostic.obscuredParameterDeclaration();
+                        const diag = this._evaluator.addDiagnostic(
+                            this._fileInfo.diagnosticRuleSet.reportGeneralTypeIssues,
+                            DiagnosticRule.reportGeneralTypeIssues,
+                            message.format({ name }),
+                            otherDecl.node.name
+                        );
+                        addPrimaryDeclInfo(diag);
+                    }
                 }
             } else if (otherDecl.type === DeclarationType.Variable) {
                 const primaryType = this._evaluator.getTypeForDeclaration(primaryDecl);
@@ -2441,6 +2751,12 @@ export class Checker extends ParseTreeWalker {
                             duplicateIsOk = true;
                         }
 
+                        if (primaryDecl.type === DeclarationType.TypeParameter) {
+                            // The error will be reported elsewhere if a type parameter is
+                            // involved, so don't report it here.
+                            duplicateIsOk = true;
+                        }
+
                         if (!duplicateIsOk) {
                             const diag = this._evaluator.addDiagnostic(
                                 this._fileInfo.diagnosticRuleSet.reportGeneralTypeIssues,
@@ -2451,24 +2767,27 @@ export class Checker extends ParseTreeWalker {
                             addPrimaryDeclInfo(diag);
                         }
                     }
-                } else if (primaryType && !isProperty(primaryType)) {
-                    if (primaryDecl.type === DeclarationType.Function || primaryDecl.type === DeclarationType.Class) {
-                        const diag = this._evaluator.addDiagnostic(
-                            this._fileInfo.diagnosticRuleSet.reportGeneralTypeIssues,
-                            DiagnosticRule.reportGeneralTypeIssues,
-                            Localizer.Diagnostic.obscuredVariableDeclaration().format({ name }),
-                            otherDecl.node
-                        );
-                        addPrimaryDeclInfo(diag);
-                    }
                 }
+            } else if (otherDecl.type === DeclarationType.TypeAlias) {
+                const diag = this._evaluator.addDiagnostic(
+                    this._fileInfo.diagnosticRuleSet.reportGeneralTypeIssues,
+                    DiagnosticRule.reportGeneralTypeIssues,
+                    Localizer.Diagnostic.obscuredTypeAliasDeclaration().format({ name }),
+                    otherDecl.node.name
+                );
+                addPrimaryDeclInfo(diag);
             }
         }
     }
 
     private _conditionallyReportUnusedSymbol(name: string, symbol: Symbol, scopeType: ScopeType) {
-        const accessedSymbolMap = this._fileInfo.accessedSymbolMap;
-        if (symbol.isIgnoredForProtocolMatch() || accessedSymbolMap.has(symbol.id)) {
+        const accessedSymbolSet = this._fileInfo.accessedSymbolSet;
+
+        if (
+            symbol.isIgnoredForProtocolMatch() ||
+            accessedSymbolSet.has(symbol.id) ||
+            this._fileInfo.ipythonMode === IPythonMode.CellDocs
+        ) {
             return;
         }
 
@@ -2549,6 +2868,7 @@ export class Checker extends ParseTreeWalker {
                 }
                 break;
 
+            case DeclarationType.TypeAlias:
             case DeclarationType.Variable:
             case DeclarationType.Parameter:
                 if (!isPrivate) {
@@ -2574,7 +2894,7 @@ export class Checker extends ParseTreeWalker {
                 } else if (decl.node.nodeType === ParseNodeType.Parameter) {
                     nameNode = decl.node.name;
 
-                    // Don't emit a diagnostic for unused parameters.
+                    // Don't emit a diagnostic for unused parameters or type parameters.
                     diagnosticLevel = 'none';
                 }
 
@@ -2618,18 +2938,31 @@ export class Checker extends ParseTreeWalker {
                 message = Localizer.Diagnostic.unaccessedFunction().format({ name: nameNode.value });
                 break;
 
-            default:
+            case DeclarationType.TypeParameter:
+                // Never report a diagnostic for an unused TypeParameter.
+                diagnosticLevel = 'none';
+                nameNode = decl.node.name;
+                break;
+
+            case DeclarationType.Intrinsic:
+            case DeclarationType.SpecialBuiltInClass:
                 return;
+
+            default:
+                assertNever(decl);
         }
 
-        if (nameNode && rule !== undefined && message) {
-            const action = rule === DiagnosticRule.reportUnusedImport ? { action: Commands.unusedImport } : undefined;
+        const action = rule === DiagnosticRule.reportUnusedImport ? { action: Commands.unusedImport } : undefined;
+        if (nameNode) {
             this._fileInfo.diagnosticSink.addUnusedCodeWithTextRange(
                 Localizer.Diagnostic.unaccessedSymbol().format({ name: nameNode.value }),
                 nameNode,
                 action
             );
-            this._evaluator.addDiagnostic(diagnosticLevel, rule, message, nameNode);
+
+            if (rule !== undefined && message) {
+                this._evaluator.addDiagnostic(diagnosticLevel, rule, message, nameNode);
+            }
         }
     }
 
@@ -2798,20 +3131,20 @@ export class Checker extends ParseTreeWalker {
             const filteredTypes: Type[] = [];
 
             for (const filterType of classTypeList) {
-                // Handle the special case where the variable type is a TypedDict and
-                // we're filtering against 'dict'. TypedDict isn't derived from dict,
-                // but at runtime, isinstance returns True.
-                const filterIsSuperclass =
-                    ClassType.isDerivedFrom(varType, filterType) ||
-                    (isInstanceCheck &&
-                        ClassType.isProtocolClass(filterType) &&
-                        this._evaluator.canAssignType(filterType, varType)) ||
-                    (ClassType.isBuiltIn(filterType, 'dict') && ClassType.isTypedDictClass(varType));
-                const filterIsSubclass =
-                    ClassType.isDerivedFrom(filterType, varType) ||
-                    (isInstanceCheck &&
-                        ClassType.isProtocolClass(varType) &&
-                        this._evaluator.canAssignType(varType, filterType));
+                const filterIsSuperclass = isIsinstanceFilterSuperclass(
+                    this._evaluator,
+                    varType,
+                    filterType,
+                    filterType,
+                    isInstanceCheck
+                );
+                const filterIsSubclass = isIsinstanceFilterSubclass(
+                    this._evaluator,
+                    varType,
+                    filterType,
+                    filterType,
+                    isInstanceCheck
+                );
 
                 // Normally, a class should never be both a subclass and a
                 // superclass. However, this can happen if one of the classes
@@ -3236,7 +3569,7 @@ export class Checker extends ParseTreeWalker {
         const paramType = FunctionType.getEffectiveParameterType(functionType, paramIndex);
 
         // Verify that the typeGuardType is a narrower type than the paramType.
-        if (!this._evaluator.canAssignType(paramType, typeGuardType)) {
+        if (!this._evaluator.assignType(paramType, typeGuardType)) {
             const returnAnnotation = node.returnTypeAnnotation || node.functionAnnotationComment?.returnTypeAnnotation;
             if (returnAnnotation) {
                 this._evaluator.addDiagnostic(
@@ -3321,7 +3654,10 @@ export class Checker extends ParseTreeWalker {
                 }
 
                 const diag = new DiagnosticAddendum();
-                if (isTypeVar(declaredReturnType) && declaredReturnType.details.variance === Variance.Contravariant) {
+                if (
+                    isTypeVar(declaredReturnType) &&
+                    declaredReturnType.details.declaredVariance === Variance.Contravariant
+                ) {
                     diag.addMessage(
                         Localizer.DiagnosticAddendum.typeVarIsContravariant().format({
                             name: TypeVarType.getReadableName(declaredReturnType),
@@ -3363,7 +3699,7 @@ export class Checker extends ParseTreeWalker {
                     const diagAddendum = new DiagnosticAddendum();
 
                     // If the declared type isn't compatible with 'None', flag an error.
-                    if (!this._evaluator.canAssignType(declaredReturnType, NoneType.createInstance(), diagAddendum)) {
+                    if (!this._evaluator.assignType(declaredReturnType, NoneType.createInstance(), diagAddendum)) {
                         // If the function consists entirely of "...", assume that it's
                         // an abstract method or a protocol method and don't require that
                         // the return type matches. This check can also be skipped for an overload.
@@ -3556,9 +3892,7 @@ export class Checker extends ParseTreeWalker {
 
         // Collect the list of init-only variables in the order they were declared.
         const initOnlySymbolMap = new Map<string, Symbol>();
-        for (let i = classType.details.mro.length - 1; i >= 0; i--) {
-            const mroClass = classType.details.mro[i];
-
+        ClassType.getReverseMro(classType).forEach((mroClass) => {
             if (isClass(mroClass) && ClassType.isDataClass(mroClass)) {
                 mroClass.details.fields.forEach((symbol, name) => {
                     if (symbol.isInitVar()) {
@@ -3566,7 +3900,7 @@ export class Checker extends ParseTreeWalker {
                     }
                 });
             }
-        }
+        });
 
         const postInitType = this._evaluator.getTypeOfMember(postInitMember);
         if (
@@ -3619,13 +3953,13 @@ export class Checker extends ParseTreeWalker {
                     postInitType,
                     paramListDetails.params[paramIndex].index
                 );
-                const canAssignDiag = new DiagnosticAddendum();
+                const assignTypeDiag = new DiagnosticAddendum();
 
-                if (fieldType && !this._evaluator.canAssignType(paramType, fieldType, canAssignDiag)) {
+                if (fieldType && !this._evaluator.assignType(paramType, fieldType, assignTypeDiag)) {
                     const diagnostic = this._evaluator.addDiagnostic(
                         this._fileInfo.diagnosticRuleSet.reportGeneralTypeIssues,
                         DiagnosticRule.reportGeneralTypeIssues,
-                        Localizer.Diagnostic.dataClassPostInitType().format({ fieldName }) + canAssignDiag.getString(),
+                        Localizer.Diagnostic.dataClassPostInitType().format({ fieldName }) + assignTypeDiag.getString(),
                         param.typeAnnotation
                     );
 
@@ -3717,8 +4051,36 @@ export class Checker extends ParseTreeWalker {
             if (
                 decls.find((decl) => {
                     const containingClass = ParseTreeUtils.getEnclosingClassOrFunction(decl.node);
-                    if (!containingClass || containingClass.nodeType === ParseNodeType.Class) {
+                    if (!containingClass) {
                         return true;
+                    }
+
+                    if (containingClass.nodeType === ParseNodeType.Class) {
+                        // If this is part of an assignment statement, assume it has been
+                        // initialized as a class variable.
+                        if (decl.node.parent?.nodeType === ParseNodeType.Assignment) {
+                            return true;
+                        }
+
+                        if (
+                            decl.node.parent?.nodeType === ParseNodeType.TypeAnnotation &&
+                            decl.node.parent.parent?.nodeType === ParseNodeType.Assignment
+                        ) {
+                            return true;
+                        }
+
+                        // If this is part of a dataclass or a class handled by a dataclass_transform,
+                        // exempt it because the class variable will be transformed into an instance
+                        // variable in this case.
+                        if (ClassType.isDataClass(classType)) {
+                            return true;
+                        }
+
+                        // If this is part of a TypedDict, exempt it because the class variables
+                        // are not actually class variables in a TypedDict.
+                        if (ClassType.isTypedDictClass(classType)) {
+                            return true;
+                        }
                     }
 
                     if (containingClass.name.value === '__init__') {
@@ -3752,10 +4114,8 @@ export class Checker extends ParseTreeWalker {
     // the proper variance (invariant, covariant, contravariant). See PEP 544
     // for an explanation for why this is important to enforce.
     private _validateProtocolTypeParamVariance(errorNode: ClassNode, classType: ClassType) {
-        const origTypeParams = classType.details.typeParameters.filter((typeParam) => !isParamSpec(typeParam));
-
-        // If this isn't a generic protocol, there's nothing to do here.
-        if (origTypeParams.length === 0) {
+        // If this protocol has no TypeVars with specified variance, there's nothing to do here.
+        if (classType.details.typeParameters.length === 0) {
             return;
         }
 
@@ -3765,26 +4125,22 @@ export class Checker extends ParseTreeWalker {
         }
 
         // Replace all of the type parameters with invariant TypeVars.
-        const updatedTypeParams = origTypeParams.map((typeParam) =>
-            isVariadicTypeVar(typeParam) ? typeParam : TypeVarType.cloneAsInvariant(typeParam)
+        const updatedTypeParams = classType.details.typeParameters.map((typeParam) =>
+            TypeVarType.cloneAsInvariant(typeParam)
         );
         const updatedClassType = ClassType.cloneWithNewTypeParameters(classType, updatedTypeParams);
 
         const objectObject = ClassType.cloneAsInstance(objectType);
-        const dummyTypeObject = ClassType.createInstantiable(
-            '__protocolVarianceDummy',
-            '',
-            '',
-            '',
-            0,
-            0,
-            undefined,
-            undefined
-        );
+        const dummyTypeObject = ClassType.createInstantiable('__varianceDummy', '', '', '', 0, 0, undefined, undefined);
 
         updatedTypeParams.forEach((param, paramIndex) => {
-            // Skip variadics.
-            if (param.details.isVariadic) {
+            // Skip variadics and ParamSpecs.
+            if (param.details.isVariadic || param.details.isParamSpec) {
+                return;
+            }
+
+            // Skip type variables with auto-variance.
+            if (param.details.declaredVariance === Variance.Auto) {
                 return;
             }
 
@@ -3814,13 +4170,13 @@ export class Checker extends ParseTreeWalker {
                 /* isTypeArgumentExplicit */ true
             );
 
-            const isDestSubtypeOfSrc = this._evaluator.canAssignProtocolClassToSelf(srcType, destType);
+            const isDestSubtypeOfSrc = this._evaluator.assignClassToSelf(srcType, destType);
 
             let expectedVariance: Variance;
             if (isDestSubtypeOfSrc) {
                 expectedVariance = Variance.Covariant;
             } else {
-                const isSrcSubtypeOfDest = this._evaluator.canAssignProtocolClassToSelf(destType, srcType);
+                const isSrcSubtypeOfDest = this._evaluator.assignClassToSelf(destType, srcType);
                 if (isSrcSubtypeOfDest) {
                     expectedVariance = Variance.Contravariant;
                 } else {
@@ -3828,7 +4184,7 @@ export class Checker extends ParseTreeWalker {
                 }
             }
 
-            if (expectedVariance !== origTypeParams[paramIndex].details.variance) {
+            if (expectedVariance !== classType.details.typeParameters[paramIndex].details.declaredVariance) {
                 let message: string;
                 if (expectedVariance === Variance.Covariant) {
                     message = Localizer.Diagnostic.protocolVarianceCovariant().format({
@@ -3862,6 +4218,12 @@ export class Checker extends ParseTreeWalker {
     private _validateSlotsClassVarConflict(classType: ClassType) {
         if (!classType.details.localSlotsNames) {
             // Nothing to check, since this class doesn't use __slots__.
+            return;
+        }
+
+        // Don't apply this for dataclasses because their class variables
+        // are transformed into instance variables.
+        if (ClassType.isDataClass(classType)) {
             return;
         }
 
@@ -4006,19 +4368,21 @@ export class Checker extends ParseTreeWalker {
         );
 
         if (
-            !this._evaluator.canAssignType(
+            !this._evaluator.assignType(
                 newMemberType,
                 initMemberType,
                 /* diag */ undefined,
-                /* typeVarContext */ undefined,
-                CanAssignFlags.SkipFunctionReturnTypeCheck
+                /* destTypeVarContext */ undefined,
+                /* srcTypeVarContext */ undefined,
+                AssignTypeFlags.SkipFunctionReturnTypeCheck
             ) ||
-            !this._evaluator.canAssignType(
+            !this._evaluator.assignType(
                 initMemberType,
                 newMemberType,
                 /* diag */ undefined,
-                /* typeVarContext */ undefined,
-                CanAssignFlags.SkipFunctionReturnTypeCheck
+                /* destTypeVarContext */ undefined,
+                /* srcTypeVarContext */ undefined,
+                AssignTypeFlags.SkipFunctionReturnTypeCheck
             )
         ) {
             const displayOnInit = ClassType.isSameGenericClass(initMember.classType, classType);
@@ -4168,6 +4532,12 @@ export class Checker extends ParseTreeWalker {
             return;
         }
 
+        // Special case the '_' symbol, which is used in single dispatch
+        // code and other cases where the name does not matter.
+        if (memberName === '_') {
+            return;
+        }
+
         let baseType = this._evaluator.getEffectiveTypeOfSymbol(baseClassAndSymbol.symbol);
         baseType = partiallySpecializeType(baseType, baseClassAndSymbol.classType);
 
@@ -4197,7 +4567,7 @@ export class Checker extends ParseTreeWalker {
 
             if (overrideFunction) {
                 if (
-                    !this._evaluator.canOverrideMethod(
+                    !this._evaluator.validateOverrideMethod(
                         baseType,
                         overrideFunction,
                         diagAddendum,
@@ -4343,6 +4713,12 @@ export class Checker extends ParseTreeWalker {
             return;
         }
 
+        // Special case the '_' symbol, which is used in single dispatch
+        // code and other cases where the name does not matter.
+        if (memberName === '_') {
+            return;
+        }
+
         const baseType = partiallySpecializeType(
             this._evaluator.getEffectiveTypeOfSymbol(baseClassAndSymbol.symbol),
             baseClassAndSymbol.classType
@@ -4373,7 +4749,7 @@ export class Checker extends ParseTreeWalker {
                     !SymbolNameUtils.isPrivateName(memberName)
                 ) {
                     if (
-                        !this._evaluator.canOverrideMethod(
+                        !this._evaluator.validateOverrideMethod(
                             baseType,
                             overrideFunction,
                             diagAddendum,
@@ -4526,7 +4902,7 @@ export class Checker extends ParseTreeWalker {
                                 );
                                 if (isFunction(subclassMethodType)) {
                                     if (
-                                        !this._evaluator.canOverrideMethod(
+                                        !this._evaluator.validateOverrideMethod(
                                             baseClassMethodType,
                                             subclassMethodType,
                                             diagAddendum.createAddendum()
@@ -4575,7 +4951,7 @@ export class Checker extends ParseTreeWalker {
                     // Verify that the override type is assignable to (same or narrower than)
                     // the declared type of the base symbol.
                     const diagAddendum = new DiagnosticAddendum();
-                    if (!this._evaluator.canAssignType(baseType, overrideType, diagAddendum)) {
+                    if (!this._evaluator.assignType(baseType, overrideType, diagAddendum)) {
                         const diag = this._evaluator.addDiagnostic(
                             this._fileInfo.diagnosticRuleSet.reportIncompatibleVariableOverride,
                             DiagnosticRule.reportIncompatibleVariableOverride,
@@ -4909,7 +5285,7 @@ export class Checker extends ParseTreeWalker {
             return;
         }
 
-        if (!this._evaluator.canAssignType(paramType, expectedType)) {
+        if (!this._evaluator.assignType(paramType, expectedType)) {
             this._evaluator.addDiagnostic(
                 this._fileInfo.diagnosticRuleSet.reportGeneralTypeIssues,
                 DiagnosticRule.reportGeneralTypeIssues,
@@ -4959,7 +5335,7 @@ export class Checker extends ParseTreeWalker {
                 );
             } else if (declaredYieldType) {
                 const diagAddendum = new DiagnosticAddendum();
-                if (!this._evaluator.canAssignType(declaredYieldType, yieldType, diagAddendum)) {
+                if (!this._evaluator.assignType(declaredYieldType, yieldType, diagAddendum)) {
                     this._evaluator.addDiagnostic(
                         this._fileInfo.diagnosticRuleSet.reportGeneralTypeIssues,
                         DiagnosticRule.reportGeneralTypeIssues,
@@ -4991,7 +5367,7 @@ export class Checker extends ParseTreeWalker {
                 return;
             }
 
-            const typesForThisExcept: ClassType[] = [];
+            const typesOfThisExcept: ClassType[] = [];
 
             if (isInstantiableClass(exceptionType)) {
                 // If the exception type is a variable whose type could represent
@@ -5000,14 +5376,11 @@ export class Checker extends ParseTreeWalker {
                     sawUnknownExceptionType = true;
                 }
 
-                typesForThisExcept.push(exceptionType);
+                typesOfThisExcept.push(exceptionType);
             } else if (isClassInstance(exceptionType)) {
                 const iterableType =
-                    this._evaluator.getTypeFromIterator(
-                        exceptionType,
-                        /* isAsync */ false,
-                        /* errorNode */ undefined
-                    ) || UnknownType.create();
+                    this._evaluator.getTypeOfIterator(exceptionType, /* isAsync */ false, /* errorNode */ undefined) ||
+                    UnknownType.create();
 
                 doForEachSubtype(iterableType, (subtype) => {
                     if (isAnyOrUnknown(subtype)) {
@@ -5020,7 +5393,7 @@ export class Checker extends ParseTreeWalker {
                         if (subtype.includeSubclasses) {
                             sawUnknownExceptionType = true;
                         }
-                        typesForThisExcept.push(subtype);
+                        typesOfThisExcept.push(subtype);
                     }
                 });
             } else {
@@ -5031,7 +5404,7 @@ export class Checker extends ParseTreeWalker {
                 const diagAddendum = new DiagnosticAddendum();
                 let overriddenExceptionCount = 0;
 
-                typesForThisExcept.forEach((thisExceptType) => {
+                typesOfThisExcept.forEach((thisExceptType) => {
                     const subtype = exceptionTypesSoFar.find((previousExceptType) => {
                         return derivesFromClassRecursive(thisExceptType, previousExceptType, /* ignoreUnknown */ true);
                     });
@@ -5048,7 +5421,7 @@ export class Checker extends ParseTreeWalker {
                 });
 
                 // Were all of the exception types overridden?
-                if (typesForThisExcept.length === overriddenExceptionCount) {
+                if (typesOfThisExcept.length === overriddenExceptionCount) {
                     this._evaluator.addDiagnostic(
                         this._fileInfo.diagnosticRuleSet.reportGeneralTypeIssues,
                         DiagnosticRule.reportGeneralTypeIssues,
@@ -5059,7 +5432,7 @@ export class Checker extends ParseTreeWalker {
                 }
             }
 
-            exceptionTypesSoFar.push(...typesForThisExcept);
+            exceptionTypesSoFar.push(...typesOfThisExcept);
         });
     }
 
@@ -5139,6 +5512,27 @@ class MissingModuleSourceReporter extends ParseTreeWalker {
         }
 
         return super.visitNode(node);
+    }
+
+    override visitModule(node: ModuleNode): boolean {
+        const codeComplexity = AnalyzerNodeInfo.getCodeFlowComplexity(node);
+
+        if (isPrintCodeComplexityEnabled) {
+            console.log(`Code complexity of module ${this._fileInfo.filePath} is ${codeComplexity.toString()}`);
+        }
+
+        if (codeComplexity > maxCodeComplexity) {
+            this._evaluator.addDiagnosticForTextRange(
+                this._fileInfo,
+                this._fileInfo.diagnosticRuleSet.reportGeneralTypeIssues,
+                DiagnosticRule.reportGeneralTypeIssues,
+                Localizer.Diagnostic.codeTooComplexToAnalyze(),
+                { start: 0, length: 0 }
+            );
+            return false;
+        }
+
+        return true;
     }
 
     override visitModuleName(node: ModuleNameNode): boolean {
