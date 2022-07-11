@@ -18,11 +18,11 @@ function checkIndexParser(args: string[], expectedOptions: Partial<IndexOptions>
 
 // defaults
 checkIndexParser([], {
-    progressBar: true,
+    quiet: false,
     cwd: process.cwd(),
     output: DEFAULT_OUTPUT_FILE,
     projectName: 'snapshot-util',
 });
 
 checkIndexParser(['--cwd', 'qux'], { cwd: 'qux' });
-checkIndexParser(['--no-progress-bar'], { progressBar: false });
+checkIndexParser(['--no-progress-bar'], { quiet: false });

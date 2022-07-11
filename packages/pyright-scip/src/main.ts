@@ -14,10 +14,9 @@ import { exit } from 'process';
 export function main(): void {
     const command = mainCommand(
         (options) => {
-            if (!options.progressBar) {
-                statusConfig.showProgress = false;
-            }
-            statusConfig.showProgress = false;
+            // Set quiet mode
+            statusConfig.quiet = options.quiet;
+            statusConfig.dev = options.dev;
 
             const workspaceRoot = options.cwd;
             const snapshotDir = options.snapshotDir;
@@ -90,7 +89,8 @@ export function main(): void {
             }
         },
         (snapshotRoot, options) => {
-            statusConfig.showProgress = false;
+            statusConfig.quiet = options.quiet;
+            statusConfig.dev = options.dev;
 
             console.log('... Snapshotting ... ');
             const projectName = options.projectName;

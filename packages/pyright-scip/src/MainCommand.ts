@@ -12,7 +12,7 @@ export interface IndexOptions {
     exclude: string;
     output: string;
     cwd: string;
-    progressBar: boolean;
+    quiet: boolean;
 }
 
 export interface SnapshotOptions extends IndexOptions {
@@ -42,7 +42,8 @@ export function mainCommand(
         .option('--cwd <path>', 'working directory for executing scip-python', process.cwd())
         .option('--output <path>', 'path to the output file', DEFAULT_OUTPUT_FILE)
         .option('--snapshot-dir <path>', 'the directory to output a snapshot of the SCIP dump')
-        .option('--no-progress-bar', 'whether to disable the progress bar')
+        .option('--no-progress-bar', '(deprecated, use "--quiet")')
+        .option('--quiet', 'run without logging and status information', false)
         .option('--environment <json-file>', 'the environment json file (experimental)')
         .option('--include <pattern>', 'comma-separated list of patterns to include (experimental)')
         .option('--exclude <pattern>', 'comma-separated list of patterns to exclude (experimental)')
@@ -61,7 +62,8 @@ export function mainCommand(
         .option('--output <path>', 'path to the output file', DEFAULT_OUTPUT_FILE)
         .option('--environment <json-file>', 'the environment json file (experimental)')
         .option('--no-index', 'skip indexing (and just use existing index.scip)')
-        .option('--no-progress-bar', 'whether to disable the progress bar')
+        .option('--no-progress-bar', '(deprecated, use "--quiet")')
+        .option('--quiet', 'run without logging and status information', true)
         .action((dir, parsedOptions) => {
             snapshotAction(dir, parsedOptions as SnapshotOptions);
         });

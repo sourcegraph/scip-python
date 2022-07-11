@@ -106,10 +106,8 @@ export class Indexer {
         });
 
         let projectSourceFiles: SourceFile[] = [];
-        withStatus('Index workspace and track project files', (spinner) => {
+        withStatus('Index workspace and track project files', () => {
             this.program.indexWorkspace((filepath: string, _results: IndexResults) => {
-                spinner.render();
-
                 // Filter out filepaths not part of this project
                 if (filepath.indexOf(this.scipConfig.projectRoot) != 0) {
                     return;
@@ -133,14 +131,14 @@ export class Indexer {
             sourceFile.markDirty(true);
         });
 
-        while (this.program.analyze()) {}
+        withStatus('Analyze project and dependencies', () => {
+            while (this.program.analyze()) {}
+        });
 
         let externalSymbols: Map<string, scip.SymbolInformation> = new Map();
-        withStatus('Parse and emit SCIP', (spinner) => {
+        withStatus('Parse and emit SCIP', () => {
             const typeEvaluator = this.program.evaluator!;
             projectSourceFiles.forEach((sourceFile) => {
-                spinner.render();
-
                 const filepath = sourceFile.getFilePath();
                 let doc = new scip.Document({
                     relative_path: path.relative(this.scipConfig.workspaceRoot, filepath),

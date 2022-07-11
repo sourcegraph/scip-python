@@ -1,22 +1,17 @@
-import ora, { Ora } from 'ora';
-
 export const statusConfig = {
-    showProgress: true,
+    quiet: true,
+    dev: false,
 };
 
-export function withStatus<T>(msg: string, f: (s: Ora) => T): T {
-    const spinner = ora({
-        text: msg,
-        spinner: 'arc',
-        interval: 100,
-    });
+export interface StatusUpdater {
+    progress: (msg: any) => void;
+    progressDev: (msg: any) => void;
+}
 
-    if (statusConfig.showProgress) {
-        spinner.start();
+export function withStatus<T>(msg: string, f: () => T): T {
+    if (!statusConfig.quiet) {
+        console.log(msg, '...');
     }
 
-    let v = f(spinner);
-
-    spinner.succeed();
-    return v;
+    return f();
 }

@@ -11,7 +11,8 @@
     "update-snapshots": "node ./index.js snapshot-dir snapshots --environment snapshots/testEnv.json --no-progress-bar",
     "test": "jest --forceExit --detectOpenHandles",
     "webpack": "webpack --mode development --progress",
-    "watch": "webpack --mode development --progress --watch"
+    "watch": "webpack --mode development --progress --watch",
+    "yup": "webpack --help"
   },
   "author": "Sourcegraph",
   "repository": {
@@ -29,6 +30,7 @@
     "@types/google-protobuf": "^3.15.5",
     "@types/jest": "^27.5.0",
     "@types/ora": "^3.2.0",
+    "clean-terminal-webpack-plugin": "^3.0.0",
     "copy-webpack-plugin": "^10.2.0",
     "jest": "^27.4.7",
     "jest-junit": "^13.0.0",
