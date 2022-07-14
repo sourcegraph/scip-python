@@ -1,4 +1,4 @@
-import { Command } from 'commander';
+import { Command, InvalidArgumentError } from 'commander';
 import packageJson from '../package.json';
 
 export interface IndexOptions {
@@ -12,7 +12,10 @@ export interface IndexOptions {
     exclude: string;
     output: string;
     cwd: string;
+
+    // Progress reporting configuration
     quiet: boolean;
+    showProgressRateLimit: number | undefined;
 }
 
 export interface SnapshotOptions extends IndexOptions {
@@ -26,6 +29,19 @@ export interface EnvironmentOptions {
 }
 
 export const DEFAULT_OUTPUT_FILE = 'index.scip';
+
+const parseOptionalInt = (value: string) => {
+    if (value === undefined) {
+        return undefined;
+    }
+
+    // parseInt takes a string and a radix
+    const parsedValue = parseInt(value, 10);
+    if (isNaN(parsedValue)) {
+        throw new InvalidArgumentError('Not a number.');
+    }
+    return parsedValue;
+};
 
 export function mainCommand(
     indexAction: (options: IndexOptions) => void,
@@ -44,6 +60,7 @@ export function mainCommand(
         .option('--snapshot-dir <path>', 'the directory to output a snapshot of the SCIP dump')
         .option('--no-progress-bar', '(deprecated, use "--quiet")')
         .option('--quiet', 'run without logging and status information', false)
+        .option('--show-progress-rate-limit <limit>', 'number of times to show progress per minute', parseOptionalInt)
         .option('--environment <json-file>', 'the environment json file (experimental)')
         .option('--include <pattern>', 'comma-separated list of patterns to include (experimental)')
         .option('--exclude <pattern>', 'comma-separated list of patterns to exclude (experimental)')
@@ -61,9 +78,10 @@ export function mainCommand(
         .option('--project-version <version>', 'the name of the current project, pypi name if applicable', '0.1')
         .option('--output <path>', 'path to the output file', DEFAULT_OUTPUT_FILE)
         .option('--environment <json-file>', 'the environment json file (experimental)')
-        .option('--no-index', 'skip indexing (and just use existing index.scip)')
+        .option('--no-index', 'skip indexing (use existing index.scip)')
         .option('--no-progress-bar', '(deprecated, use "--quiet")')
-        .option('--quiet', 'run without logging and status information', true)
+        .option('--quiet', 'run without logging and status information', false)
+        .option('--show-progress-rate-limit <limit>', 'number of times to show progress per minute', parseOptionalInt)
         .action((dir, parsedOptions) => {
             snapshotAction(dir, parsedOptions as SnapshotOptions);
         });

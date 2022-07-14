@@ -7,15 +7,20 @@ import { diffSnapshot, formatSnapshot, writeSnapshot } from './lib';
 import { Input } from './lsif-typescript/Input';
 import { join } from 'path';
 import { mainCommand } from './MainCommand';
-import { sendStatus, statusConfig } from './status';
+import { sendStatus, setQuiet, setShowProgressRateLimit } from './status';
 import { Indexer } from './indexer';
 import { exit } from 'process';
 
 export function main(): void {
     const command = mainCommand(
         (options) => {
-            statusConfig.quiet = options.quiet;
-            statusConfig.dev = options.dev;
+            setQuiet(options.quiet);
+            if (options.showProgressRateLimit !== undefined) {
+                setShowProgressRateLimit(options.showProgressRateLimit);
+            }
+
+            console.log(options);
+            exit(1);
 
             const workspaceRoot = options.cwd;
             const snapshotDir = options.snapshotDir;
@@ -93,8 +98,10 @@ export function main(): void {
             }
         },
         (snapshotRoot, options) => {
-            statusConfig.quiet = options.quiet;
-            statusConfig.dev = options.dev;
+            setQuiet(options.quiet);
+            if (options.showProgressRateLimit !== undefined) {
+                setShowProgressRateLimit(options.showProgressRateLimit);
+            }
 
             console.log('... Snapshotting ... ');
             const projectName = options.projectName;

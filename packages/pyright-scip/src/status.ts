@@ -1,13 +1,10 @@
-export const statusConfig = {
-    quiet: true,
-    dev: false,
-};
+const statusConfig = { quiet: true };
 
 class Logger {
     private lastProgressMsg: Date;
 
     /// control the rate to no faster than showProgressRateLimit / 60 seconds
-    private showProgressRateLimit: number;
+    public showProgressRateLimit: number;
 
     public depth: number;
 
@@ -75,6 +72,14 @@ export interface StatusUpdater {
     /// Do not use within tight loops that could generate thousands of messages,
     /// instead use StatusUpdater.progress
     message: (msg: any) => void;
+}
+
+export function setQuiet(quiet: boolean): void {
+    statusConfig.quiet = quiet;
+}
+
+export function setShowProgressRateLimit(ratelimit: number): void {
+    logger.showProgressRateLimit = ratelimit;
 }
 
 export function withStatus<T>(msg: string, f: (progress: StatusUpdater) => T): T {

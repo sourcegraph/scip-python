@@ -11,8 +11,7 @@
     "update-snapshots": "node ./index.js snapshot-dir snapshots --environment snapshots/testEnv.json --no-progress-bar",
     "test": "jest --forceExit --detectOpenHandles",
     "webpack": "webpack --mode development --progress",
-    "watch": "webpack --mode development --progress --watch",
-    "yup": "webpack --help"
+    "watch": "webpack --mode development --progress --watch"
   },
   "author": "Sourcegraph",
   "repository": {
