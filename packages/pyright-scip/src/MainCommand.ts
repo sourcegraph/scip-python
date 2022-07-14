@@ -30,13 +30,13 @@ export interface EnvironmentOptions {
 
 export const DEFAULT_OUTPUT_FILE = 'index.scip';
 
-const parseOptionalInt = (value: string) => {
+const parseOptionalNum = (value: string) => {
     if (value === undefined) {
         return undefined;
     }
 
     // parseInt takes a string and a radix
-    const parsedValue = parseInt(value, 10);
+    const parsedValue = parseFloat(value);
     if (isNaN(parsedValue)) {
         throw new InvalidArgumentError('Not a number.');
     }
@@ -60,7 +60,11 @@ export function mainCommand(
         .option('--snapshot-dir <path>', 'the directory to output a snapshot of the SCIP dump')
         .option('--no-progress-bar', '(deprecated, use "--quiet")')
         .option('--quiet', 'run without logging and status information', false)
-        .option('--show-progress-rate-limit <limit>', 'number of times to show progress per minute', parseOptionalInt)
+        .option(
+            '--show-progress-rate-limit <limit>',
+            'minimum number of seconds between progress messages in the output.',
+            parseOptionalNum
+        )
         .option('--environment <json-file>', 'the environment json file (experimental)')
         .option('--include <pattern>', 'comma-separated list of patterns to include (experimental)')
         .option('--exclude <pattern>', 'comma-separated list of patterns to exclude (experimental)')
@@ -81,7 +85,11 @@ export function mainCommand(
         .option('--no-index', 'skip indexing (use existing index.scip)')
         .option('--no-progress-bar', '(deprecated, use "--quiet")')
         .option('--quiet', 'run without logging and status information', false)
-        .option('--show-progress-rate-limit <limit>', 'number of times to show progress per minute', parseOptionalInt)
+        .option(
+            '--show-progress-rate-limit <limit>',
+            'minimum number of seconds between progress messages in the output.',
+            parseOptionalNum
+        )
         .action((dir, parsedOptions) => {
             snapshotAction(dir, parsedOptions as SnapshotOptions);
         });

@@ -3,12 +3,12 @@ const statusConfig = { quiet: true };
 class Logger {
     private lastProgressMsg: Date;
 
-    /// control the rate to no faster than showProgressRateLimit / 60 seconds
+    /// Minimum number of seconds between progress messages in the output.
     public showProgressRateLimit: number;
 
     public depth: number;
 
-    constructor(showProgressRateLimit = 6) {
+    constructor(showProgressRateLimit = 1) {
         this.depth = 0;
         this.showProgressRateLimit = showProgressRateLimit;
         this.lastProgressMsg = new Date();
@@ -52,7 +52,7 @@ class Logger {
         if (
             this.showProgressRateLimit == 0 ||
             !this.lastProgressMsg ||
-            now.getTime() - this.lastProgressMsg.getTime() > (60 / this.showProgressRateLimit) * 1000
+            (now.getTime() - this.lastProgressMsg.getTime()) / 1000 > this.showProgressRateLimit
         ) {
             this.lastProgressMsg = now;
             this.write_message(this.depth + 1, '- ' + msg);
