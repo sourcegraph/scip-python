@@ -19,9 +19,6 @@ export function main(): void {
                 setShowProgressRateLimit(options.showProgressRateLimit);
             }
 
-            console.log(options);
-            exit(1);
-
             const workspaceRoot = options.cwd;
             const snapshotDir = options.snapshotDir;
             const environment = options.environment;
