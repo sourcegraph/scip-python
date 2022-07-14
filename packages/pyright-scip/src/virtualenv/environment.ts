@@ -37,9 +37,13 @@ export default function getEnvironment(
         return new PythonEnvironment(projectFiles, projectVersion, f);
     }
 
-    return withStatus('Evaluating python environment dependencies', () => {
+    return withStatus('Evaluating python environment dependencies', (progress) => {
         const listed = pipList();
+
+        progress.message('Gathering environment information from `pip`');
         const bulk = pipBulkShow(listed.map((item) => item.name));
+
+        progress.message('Analyzing dependencies');
         const info = bulk.map((shown) => {
             return PythonPackage.fromPipShow(shown);
         });

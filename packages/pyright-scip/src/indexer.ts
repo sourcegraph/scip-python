@@ -18,7 +18,7 @@ import getEnvironment from './virtualenv/environment';
 import { version } from 'package.json';
 import { getFileSpec } from 'pyright-internal/common/pathUtils';
 import { FileMatcher } from './FileMatcher';
-import { withStatus } from './status';
+import { sendStatus, withStatus } from './status';
 import { scip } from './scip';
 
 export class Indexer {
@@ -101,13 +101,18 @@ export class Indexer {
         );
 
         // Run program analysis once.
-        withStatus('Parse and search for dependencies', () => {
-            while (this.program.analyze()) {}
+        withStatus('Parse and search for dependencies', (progress) => {
+            while (this.program.analyze({ openFilesTimeInMs: 10000, noOpenFilesTimeInMs: 10000 })) {
+                const filesCompleted = this.program.getFileCount() - this.program.getFilesToAnalyzeCount();
+                const filesTotal = this.program.getFileCount();
+                progress.message(`${filesCompleted} / ${filesTotal}`);
+            }
         });
 
+        // let projectSourceFiles: SourceFile[] = this.program.getTracked().map((f) => f.sourceFile);
         let projectSourceFiles: SourceFile[] = [];
         withStatus('Index workspace and track project files', () => {
-            this.program.indexWorkspace((filepath: string, _results: IndexResults) => {
+            this.program.indexWorkspace((filepath: string) => {
                 // Filter out filepaths not part of this project
                 if (filepath.indexOf(this.scipConfig.projectRoot) != 0) {
                     return;
@@ -131,14 +136,20 @@ export class Indexer {
             sourceFile.markDirty(true);
         });
 
-        withStatus('Analyze project and dependencies', () => {
-            while (this.program.analyze()) {}
+        withStatus('Analyze project and dependencies', (progress) => {
+            while (this.program.analyze({ openFilesTimeInMs: 10000, noOpenFilesTimeInMs: 10000 })) {
+                const filesCompleted = this.program.getFileCount() - this.program.getFilesToAnalyzeCount();
+                const filesTotal = this.program.getFileCount();
+                progress.message(`${filesCompleted} / ${filesTotal}`);
+            }
         });
 
         let externalSymbols: Map<string, scip.SymbolInformation> = new Map();
-        withStatus('Parse and emit SCIP', () => {
+        withStatus('Parse and emit SCIP', (progress) => {
             const typeEvaluator = this.program.evaluator!;
-            projectSourceFiles.forEach((sourceFile) => {
+            projectSourceFiles.forEach((sourceFile, index) => {
+                progress.progress(`(${index}/${projectSourceFiles.length}): ${sourceFile.getFilePath()}`);
+
                 const filepath = sourceFile.getFilePath();
                 let doc = new scip.Document({
                     relative_path: path.relative(this.scipConfig.workspaceRoot, filepath),
@@ -158,7 +169,15 @@ export class Indexer {
                     pythonEnvironment: packageConfig,
                     globalSymbols,
                 });
-                visitor.walk(tree);
+
+                try {
+                    visitor.walk(tree);
+                } catch (e) {
+                    throw {
+                        currentFilepath: sourceFile.getFilePath(),
+                        error: e,
+                    };
+                }
 
                 if (doc.occurrences.length === 0) {
                     console.log(`file:${filepath} had no occurrences`);
@@ -172,9 +191,13 @@ export class Indexer {
                 );
             });
 
-            const externalSymbolIndex = new scip.Index();
-            externalSymbolIndex.external_symbols = Array.from(externalSymbols.values());
-            this.scipConfig.writeIndex(externalSymbolIndex);
+            withStatus('Writing external symbols to SCIP index', () => {
+                const externalSymbolIndex = new scip.Index();
+                externalSymbolIndex.external_symbols = Array.from(externalSymbols.values());
+                this.scipConfig.writeIndex(externalSymbolIndex);
+            });
         });
+
+        sendStatus(`Sucessfully wrote SCIP index to ${this.scipConfig.output}`);
     }
 }

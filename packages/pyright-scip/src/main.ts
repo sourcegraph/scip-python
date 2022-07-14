@@ -7,14 +7,13 @@ import { diffSnapshot, formatSnapshot, writeSnapshot } from './lib';
 import { Input } from './lsif-typescript/Input';
 import { join } from 'path';
 import { mainCommand } from './MainCommand';
-import { withStatus, statusConfig } from './status';
+import { sendStatus, statusConfig } from './status';
 import { Indexer } from './indexer';
 import { exit } from 'process';
 
 export function main(): void {
     const command = mainCommand(
         (options) => {
-            // Set quiet mode
             statusConfig.quiet = options.quiet;
             statusConfig.dev = options.dev;
 
@@ -48,7 +47,7 @@ export function main(): void {
             const outputFile = path.join(projectRoot, options.output);
             const output = fs.openSync(outputFile, 'w');
 
-            console.log('Indexing Dir:', projectRoot, ' // version:', projectVersion);
+            sendStatus(`Indexing ${projectRoot} with version ${projectVersion}`);
 
             try {
                 let indexer = new Indexer({
@@ -65,14 +64,19 @@ export function main(): void {
 
                 indexer.index();
             } catch (e) {
-                console.warn('Experienced Fatal Error While Indexing: Please create an issue:', e);
+                console.warn(
+                    '\n\nExperienced Fatal Error While Indexing:\nPlease create an issue at github.com/sourcegraph/scip-python:',
+                    e
+                );
                 exit(1);
             }
 
             fs.close(output);
 
             if (snapshotDir) {
-                const scipIndex = scip.Index.deserializeBinary(fs.readFileSync(options.output));
+                sendStatus(`Writing snapshot from index: ${outputFile}`);
+
+                const scipIndex = scip.Index.deserializeBinary(fs.readFileSync(outputFile));
                 for (const doc of scipIndex.documents) {
                     if (doc.relative_path.startsWith('..')) {
                         console.log('Skipping Doc:', doc.relative_path);
