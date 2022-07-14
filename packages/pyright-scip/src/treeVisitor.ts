@@ -666,15 +666,46 @@ export class TreeVisitor extends ParseTreeWalker {
                     documentation.push(convertDocStringToMarkdown(doc));
                 }
 
+                let relationships: scip.Relationship[] | undefined = undefined;
+                if (type && type.category === TypeCategory.Class) {
+                    relationships = type.details.baseClasses
+                        .filter((base) => {
+                            if (base.category !== TypeCategory.Class) {
+                                return false;
+                            }
+
+                            // Don't show implementations for `object` cause that's pretty useless
+                            if (base.details.moduleName === 'builtins' && base.details.name == 'object') {
+                                return false;
+                            }
+
+                            return true;
+                        })
+                        .map((base) => {
+                            // Filtered out in previous filter
+                            assert(base.category === TypeCategory.Class);
+
+                            const pythonPackage = this.guessPackage(base.details.moduleName, base.details.filePath)!;
+                            const symbol = Symbols.makeClass(
+                                pythonPackage,
+                                base.details.moduleName,
+                                base.details.name
+                            ).value;
+
+                            return new scip.Relationship({
+                                symbol,
+                                is_implementation: true,
+                            });
+                        });
+                }
+
                 this.document.symbols.push(
                     new scip.SymbolInformation({
                         symbol: symbol.value,
                         documentation,
+                        relationships,
                     })
                 );
-
-                // this.walk(node.name);
-                // this.walk(node.suite);
             }
 
             this.pushNewOccurrence(node, this.getScipSymbol(decl.node), scip.SymbolRole.Definition);
@@ -1236,13 +1267,7 @@ export class TreeVisitor extends ParseTreeWalker {
             );
         } else if (Types.isClass(typeObj)) {
             const pythonPackage = this.getPackageInfo(node, typeObj.details.moduleName)!;
-            return ScipSymbol.global(
-                ScipSymbol.global(
-                    ScipSymbol.package(pythonPackage.name, pythonPackage.version),
-                    packageDescriptor(typeObj.details.moduleName)
-                ),
-                typeDescriptor(node.value)
-            );
+            return Symbols.makeClass(pythonPackage, typeObj.details.moduleName, node.value);
         } else if (Types.isClassInstance(typeObj)) {
             typeObj = typeObj as ClassType;
             throw 'oh yayaya';
