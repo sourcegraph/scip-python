@@ -67,7 +67,7 @@ export function isTypeImplementable(
 
                     for (let i = 0; i < type1TupleTypeArgs.length; i++) {
                         if (
-                            !isTypeSame(
+                            !isTypeImplementable(
                                 type1TupleTypeArgs[i].type,
                                 type2TupleTypeArgs[i].type,
                                 ignorePseudoGeneric,
@@ -94,7 +94,7 @@ export function isTypeImplementable(
                         const typeArg2 = i < type2TypeArgs.length ? type2TypeArgs[i] : AnyType.create();
 
                         if (
-                            !isTypeSame(
+                            !isTypeImplementable(
                                 typeArg1,
                                 typeArg2,
                                 ignorePseudoGeneric,
@@ -165,7 +165,7 @@ export function isTypeImplementable(
                 const param1Type = FunctionType.getEffectiveParameterType(type1, i);
                 const param2Type = FunctionType.getEffectiveParameterType(functionType2, i);
                 if (
-                    !isTypeSame(
+                    !isTypeImplementable(
                         param1Type,
                         param2Type,
                         ignorePseudoGeneric,
@@ -199,7 +199,7 @@ export function isTypeImplementable(
                 if (
                     !return1Type ||
                     !return2Type ||
-                    !isTypeSame(
+                    !isTypeImplementable(
                         return1Type,
                         return2Type,
                         ignorePseudoGeneric,
@@ -225,7 +225,7 @@ export function isTypeImplementable(
             // in the same order from one analysis pass to another.
             for (let i = 0; i < type1.overloads.length; i++) {
                 if (
-                    !isTypeSame(
+                    !isTypeImplementable(
                         type1.overloads[i],
                         functionType2.overloads[i],
                         ignorePseudoGeneric,
@@ -282,7 +282,7 @@ export function isTypeImplementable(
                     const typeArg2 = i < type2TypeArgs.length ? type2TypeArgs[i] : AnyType.create();
 
                     if (
-                        !isTypeSame(
+                        !isTypeImplementable(
                             typeArg1,
                             typeArg2,
                             ignorePseudoGeneric,
@@ -315,7 +315,7 @@ export function isTypeImplementable(
             if (boundType1) {
                 if (
                     !boundType2 ||
-                    !isTypeSame(
+                    !isTypeImplementable(
                         boundType1,
                         boundType2,
                         ignorePseudoGeneric,
@@ -339,7 +339,7 @@ export function isTypeImplementable(
 
             for (let i = 0; i < constraints1.length; i++) {
                 if (
-                    !isTypeSame(
+                    !isTypeImplementable(
                         constraints1[i],
                         constraints2[i],
                         ignorePseudoGeneric,
