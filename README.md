@@ -21,10 +21,16 @@ $ scip-python index . --project-name $MY_PROJECT
 
 $ # Make sure to point towards the sourcegraph instance you're interested in uploading to.
 $ #     more information at https://github.com/sourcegraph/src-cli
-$ src lsif upload
+$ src code-intel upload
 ```
 
 ## Sourcegraph Example Configuration
+
+Using the usage example above may be quite simple to add a CI pipeline (perhaps using the `sourcegraph/scip-python:autoindex`) image
+and uploading the corresponding index.scip file to Sourcegraph only for commits that you are intersted in (whether that's only HEAD
+or every branch).
+
+However, if you're interested in using the Auto-Indexing feature, an example configuration skeleton can be found below:
 
 ```
 {
@@ -34,7 +40,11 @@ $ src lsif upload
             "local_steps": [
                 "pip install . || true",
             ],
-            "indexer_args": ["--project-name", "<your name here>"],
+            "indexer_args": [
+              "scip-python", "index", ".",
+              "--project-name", "<your name here>",
+              "--project-version", "_"
+            ],
             "steps": [],
             "outfile": "",
             "root": ""
