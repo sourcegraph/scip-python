@@ -18,11 +18,13 @@ function checkIndexParser(args: string[], expectedOptions: Partial<IndexOptions>
 
 // defaults
 checkIndexParser([], {
-    progressBar: true,
+    quiet: false,
     cwd: process.cwd(),
     output: DEFAULT_OUTPUT_FILE,
     projectName: 'snapshot-util',
 });
 
 checkIndexParser(['--cwd', 'qux'], { cwd: 'qux' });
-checkIndexParser(['--no-progress-bar'], { progressBar: false });
+checkIndexParser(['--no-progress-bar'], { quiet: false });
+checkIndexParser(['--show-progress-rate-limit', '120'], { showProgressRateLimit: 120 });
+checkIndexParser(['--show-progress-rate-limit', '0.5'], { showProgressRateLimit: 0.5 });

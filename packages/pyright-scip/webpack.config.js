@@ -10,6 +10,7 @@ const path = require('path');
 const CopyPlugin = require('copy-webpack-plugin');
 const { TsconfigPathsPlugin } = require('tsconfig-paths-webpack-plugin');
 const { monorepoResourceNameMapper } = require('../../build/lib/webpack');
+const CleanTerminalPlugin = require('clean-terminal-webpack-plugin');
 
 const outPath = path.resolve(__dirname, 'dist');
 const typeshedFallback = path.resolve(__dirname, '..', 'pyright-internal', 'typeshed-fallback');
@@ -58,7 +59,10 @@ module.exports = (_, { mode }) => {
                 },
             ],
         },
-        plugins: [new CopyPlugin({ patterns: [{ from: typeshedFallback, to: 'typeshed-fallback' }] })],
+        plugins: [
+            new CopyPlugin({ patterns: [{ from: typeshedFallback, to: 'typeshed-fallback' }] }),
+            new CleanTerminalPlugin(),
+        ],
         optimization: {
             splitChunks: {
                 cacheGroups: {
