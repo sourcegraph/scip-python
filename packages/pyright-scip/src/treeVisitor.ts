@@ -23,6 +23,7 @@ import {
     TypeAnnotationNode,
 } from 'pyright-internal/parser/parseNodes';
 
+import * as ModifiedTypeUtils from './ModifiedTypeUtils';
 import { scip } from './scip';
 import * as Symbols from './symbols';
 import {
@@ -61,6 +62,7 @@ import { HoverResults } from 'pyright-internal/languageService/hoverProvider';
 import { convertDocStringToMarkdown } from 'pyright-internal/analyzer/docStringConversion';
 import { assert } from 'pyright-internal/common/debug';
 import { createTracePrinter } from 'pyright-internal/analyzer/tracePrinter';
+import { getClassFieldsRecursive } from 'pyright-internal/analyzer/typeUtils';
 
 //  Useful functions for later, but haven't gotten far enough yet to use them.
 //      extractParameterDocumentation
@@ -331,6 +333,82 @@ export class TreeVisitor extends ParseTreeWalker {
         return true;
     }
 
+    private getFunctionRelationships(node: FunctionNode): scip.Relationship[] | undefined {
+        // Skip all dunder methods. They all implement stuff but it's not helpful to see
+        // at this point in scip-python
+        if (node.name.value.startsWith('__')) {
+            return undefined;
+        }
+
+        let functionType = this.evaluator.getTypeOfFunction(node)!;
+        let enclosingClass = ParseTreeUtils.getEnclosingClass(node, true);
+        if (!enclosingClass) {
+            return undefined;
+        }
+
+        // methodAlwaysRaisesNotImplemented <- this is a good one for implemtnations, but maybe we don't need that
+        const enclosingClassType = this.evaluator.getTypeOfClass(enclosingClass);
+        if (!enclosingClassType) {
+            return undefined;
+        }
+
+        let relationshipMap: Map<string, scip.Relationship> = new Map();
+        let classType = enclosingClassType.classType;
+
+        // Use: getClassMemberIterator
+        //  Could use this to handle each of the fields with the same name
+        //  but it's a bit weird if you have A -> B -> C, and then you say
+        //  that C implements A's & B's... that seems perhaps a bit too verbose.
+        //
+        // See: https://github.com/sourcegraph/scip-python/issues/50
+        for (const base of classType.details.baseClasses) {
+            if (base.category !== TypeCategory.Class) {
+                continue;
+            }
+
+            let parentMethod = base.details.fields.get(node.name.value);
+            if (!parentMethod) {
+                let fieldLookup = getClassFieldsRecursive(base).get(node.name.value);
+                if (fieldLookup && fieldLookup.classType.category !== TypeCategory.Unknown) {
+                    parentMethod = fieldLookup.classType.details.fields.get(node.name.value)!;
+                } else {
+                    continue;
+                }
+            }
+
+            let parentMethodType = this.evaluator.getEffectiveTypeOfSymbol(parentMethod);
+            if (parentMethodType.category !== TypeCategory.Function) {
+                continue;
+            }
+
+            if (
+                !ModifiedTypeUtils.isTypeImplementable(
+                    functionType.functionType,
+                    parentMethodType,
+                    false,
+                    true,
+                    0,
+                    true
+                )
+            ) {
+                continue;
+            }
+
+            let decl = parentMethodType.details.declaration!;
+            let symbol = this.typeToSymbol(decl.node.name, decl.node, parentMethodType);
+            relationshipMap.set(
+                symbol.value,
+                new scip.Relationship({
+                    symbol: symbol.value,
+                    is_implementation: true,
+                })
+            );
+        }
+
+        let relationships = Array.from(relationshipMap.values());
+        return relationships.length > 0 ? relationships : undefined;
+    }
+
     override visitFunction(node: FunctionNode): boolean {
         this._docstringWriter.visitFunction(node);
 
@@ -345,10 +423,12 @@ export class TreeVisitor extends ParseTreeWalker {
             documentation.push(functionDoc);
         }
 
+        let relationships: scip.Relationship[] | undefined = this.getFunctionRelationships(node);
         this.document.symbols.push(
             new scip.SymbolInformation({
                 symbol: this.getScipSymbol(node).value,
                 documentation,
+                relationships,
             })
         );
 
@@ -652,29 +732,72 @@ export class TreeVisitor extends ParseTreeWalker {
         }
 
         if (isDefinition) {
-            if (parent.nodeType == ParseNodeType.Class) {
-                const symbol = this.getScipSymbol(parent);
+            switch (parent.nodeType) {
+                case ParseNodeType.Class: {
+                    const symbol = this.getScipSymbol(parent);
 
-                const documentation = [];
-                const stub = this._docstringWriter.docstrings.get(parent.id)!;
-                if (stub) {
-                    documentation.push('```python\n' + stub.join('\n') + '\n```');
+                    const documentation = [];
+                    const stub = this._docstringWriter.docstrings.get(parent.id)!;
+                    if (stub) {
+                        documentation.push('```python\n' + stub.join('\n') + '\n```');
+                    }
+
+                    const doc = ParseTreeUtils.getDocString(parent.suite.statements)?.trim();
+                    if (doc) {
+                        documentation.push(convertDocStringToMarkdown(doc));
+                    }
+
+                    let relationships: scip.Relationship[] | undefined = undefined;
+                    if (type && type.category === TypeCategory.Class) {
+                        // TODO: Add Protocol support with:
+                        //          base.compatibleProtocols
+                        relationships = type.details.baseClasses
+                            .filter((base) => {
+                                if (base.category !== TypeCategory.Class) {
+                                    return false;
+                                }
+
+                                // Don't show implementations for `object` cause that's pretty useless
+                                if (base.details.moduleName === 'builtins' && base.details.name == 'object') {
+                                    return false;
+                                }
+
+                                const pythonPackage = this.guessPackage(base.details.moduleName, base.details.filePath);
+                                if (!pythonPackage) {
+                                    return false;
+                                }
+
+                                return true;
+                            })
+                            .map((base) => {
+                                // Filtered out in previous filter
+                                assert(base.category === TypeCategory.Class);
+                                const pythonPackage = this.guessPackage(
+                                    base.details.moduleName,
+                                    base.details.filePath
+                                )!;
+
+                                const symbol = Symbols.makeClass(
+                                    pythonPackage,
+                                    base.details.moduleName,
+                                    base.details.name
+                                ).value;
+
+                                return new scip.Relationship({
+                                    symbol,
+                                    is_implementation: true,
+                                });
+                            });
+                    }
+
+                    this.document.symbols.push(
+                        new scip.SymbolInformation({
+                            symbol: symbol.value,
+                            documentation,
+                            relationships,
+                        })
+                    );
                 }
-
-                const doc = ParseTreeUtils.getDocString(parent.suite.statements)?.trim();
-                if (doc) {
-                    documentation.push(convertDocStringToMarkdown(doc));
-                }
-
-                this.document.symbols.push(
-                    new scip.SymbolInformation({
-                        symbol: symbol.value,
-                        documentation,
-                    })
-                );
-
-                // this.walk(node.name);
-                // this.walk(node.suite);
             }
 
             this.pushNewOccurrence(node, this.getScipSymbol(decl.node), scip.SymbolRole.Definition);
@@ -1221,28 +1344,39 @@ export class TreeVisitor extends ParseTreeWalker {
             }
 
             const declModuleName = decl.moduleName;
-
             let pythonPackage = this.guessPackage(declModuleName, decl.path);
             if (!pythonPackage) {
                 return ScipSymbol.local(this.counter.next());
             }
 
-            return ScipSymbol.global(
-                ScipSymbol.global(
-                    ScipSymbol.package(pythonPackage?.name, pythonPackage?.version),
-                    packageDescriptor(typeObj.details.moduleName)
-                ),
-                methodDescriptor(node.value)
-            );
+            const enclosingClass = ParseTreeUtils.getEnclosingClass(declNode);
+            if (enclosingClass) {
+                const enclosingClassType = this.evaluator.getTypeOfClass(enclosingClass);
+                if (enclosingClassType) {
+                    let classType = enclosingClassType.classType;
+                    const pythonPackage = this.guessPackage(classType.details.moduleName, classType.details.filePath)!;
+                    const symbol = Symbols.makeClass(
+                        pythonPackage,
+                        classType.details.moduleName,
+                        classType.details.name
+                    );
+
+                    return ScipSymbol.global(symbol, methodDescriptor(node.value));
+                }
+                // return ScipSymbol.global(this.makeScipSymbol(
+                return ScipSymbol.local(this.counter.next());
+            } else {
+                return ScipSymbol.global(
+                    ScipSymbol.global(
+                        ScipSymbol.package(pythonPackage?.name, pythonPackage?.version),
+                        packageDescriptor(typeObj.details.moduleName)
+                    ),
+                    methodDescriptor(node.value)
+                );
+            }
         } else if (Types.isClass(typeObj)) {
             const pythonPackage = this.getPackageInfo(node, typeObj.details.moduleName)!;
-            return ScipSymbol.global(
-                ScipSymbol.global(
-                    ScipSymbol.package(pythonPackage.name, pythonPackage.version),
-                    packageDescriptor(typeObj.details.moduleName)
-                ),
-                typeDescriptor(node.value)
-            );
+            return Symbols.makeClass(pythonPackage, typeObj.details.moduleName, node.value);
         } else if (Types.isClassInstance(typeObj)) {
             typeObj = typeObj as ClassType;
             throw 'oh yayaya';

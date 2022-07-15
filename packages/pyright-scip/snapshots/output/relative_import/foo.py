@@ -4,7 +4,7 @@
 def exported_function():
 #   ^^^^^^^^^^^^^^^^^ definition  snapshot-util 0.1 foo/exported_function().
 #   documentation ```python
-#               > def exported_function(): # -> Literal['function']:
+#               > def exported_function(): # -> Literal['f...
 #               > ```
     return "function"
 
