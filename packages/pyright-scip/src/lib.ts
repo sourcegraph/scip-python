@@ -69,18 +69,20 @@ export function formatSnapshot(
 
         emittedDocstrings.add(symbol);
 
-        const externalSymbol = externalSymbolTable.get(symbol);
-        if (externalSymbol) {
-            let docPrefix = '\n' + commentSyntax;
-            if (!isStartOfLine) {
-                docPrefix += ' '.repeat(range.start.character - 1);
-            }
+        let prefix = '\n' + commentSyntax;
+        if (!isStartOfLine) {
+            prefix += ' '.repeat(range.start.character - 1);
+        }
 
-            for (const documentation of externalSymbol.documentation) {
+        const pushOneDoc = (docs: string[], external: boolean) => {
+            for (const documentation of docs) {
                 for (const [idx, line] of documentation.split('\n').entries()) {
-                    out.push(docPrefix);
+                    out.push(prefix);
                     if (idx == 0) {
-                        out.push('external documentation ');
+                        if (external) {
+                            out.push('external ');
+                        }
+                        out.push('documentation ');
                     } else {
                         out.push('            > ');
                     }
@@ -90,25 +92,36 @@ export function formatSnapshot(
                     }
                 }
             }
+        };
+
+        const pushOneRelationship = (relationships: scip.Relationship[]) => {
+            relationships.sort((a, b) => a.symbol.localeCompare(b.symbol));
+
+            for (const relationship of relationships) {
+                out.push(prefix);
+                out.push('relationship');
+                if (relationship.is_implementation) {
+                    out.push(' implementation');
+                }
+                if (relationship.is_reference) {
+                    out.push(' reference');
+                }
+                if (relationship.is_type_definition) {
+                    out.push(' type_definition');
+                }
+                out.push(' ' + relationship.symbol);
+            }
+        };
+
+        const externalSymbol = externalSymbolTable.get(symbol);
+        if (externalSymbol) {
+            pushOneDoc(externalSymbol.documentation, true);
+            pushOneRelationship(externalSymbol.relationships);
         } else {
             const info = symbolTable.get(symbol);
             if (info) {
-                let docPrefix = '\n' + commentSyntax;
-                if (!isStartOfLine) {
-                    docPrefix += ' '.repeat(range.start.character - 1);
-                }
-
-                for (const documentation of info.documentation) {
-                    for (const [idx, line] of documentation.split('\n').entries()) {
-                        out.push(docPrefix);
-                        if (idx == 0) {
-                            out.push('documentation ');
-                        } else {
-                            out.push('            > ');
-                        }
-                        out.push(line);
-                    }
-                }
+                pushOneDoc(info.documentation, false);
+                pushOneRelationship(info.relationships);
             }
         }
         out.push('\n');

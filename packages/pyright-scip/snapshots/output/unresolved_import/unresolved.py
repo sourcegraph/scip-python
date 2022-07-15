@@ -3,7 +3,7 @@
 
 import this_is_not_real
 #      ^^^^^^^^^^^^^^^^ reference local 0
-#      documentation (module): this_is_not_real [unable to resolve module]
+#      documentation (module): this_is_not_real [unable to re...
 
 print(this_is_not_real.x)
 #^^^^ reference  python-stdlib 3.10 builtins/__init__:print().
