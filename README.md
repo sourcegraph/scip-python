@@ -11,6 +11,8 @@ $ # Install scip-python
 $ npm install -g @sourcegraph/scip-python
 ```
 
+scip-python requires Node v16 or newer. See the [Dockerfile](https://github.com/sourcegraph/scip-python/blob/scip/Dockerfile.autoindex) for an exact SHA that is tested.
+
 ## Usage
 
 ```
