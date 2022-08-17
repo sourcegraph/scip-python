@@ -71,6 +71,12 @@ export interface ImportNameInfo {
 
 export interface ImportNameWithModuleInfo extends ImportNameInfo {
     module: ModuleNameAndType;
+    nameForImportFrom?: string;
+}
+
+export interface ModuleNameInfo {
+    name: string;
+    nameForImportFrom?: string;
 }
 
 // Determines which import grouping should be used when sorting imports.
@@ -333,13 +339,13 @@ export function getTextEditsForAutoImportInsertions(
         return [];
     }
 
-    const map = createMapFromItems(importNameInfo, (i) => i.module.moduleName);
+    const map = createMapFromItems(importNameInfo, (i) => `${i.module.moduleName}-${i.nameForImportFrom ?? ''}`);
     for (const importInfo of map.values()) {
         insertionEdits.push(
             ..._getInsertionEditsForAutoImportInsertion(
                 importInfo,
+                { name: importInfo[0].module.moduleName, nameForImportFrom: importInfo[0].nameForImportFrom },
                 importStatements,
-                importInfo[0].module.moduleName,
                 getImportGroupFromModuleNameAndType(importInfo[0].module),
                 parseResults,
                 invocationPosition
@@ -352,16 +358,16 @@ export function getTextEditsForAutoImportInsertions(
 
 export function getTextEditsForAutoImportInsertion(
     importNameInfo: ImportNameInfo[] | ImportNameInfo,
+    moduleNameInfo: ModuleNameInfo,
     importStatements: ImportStatements,
-    moduleName: string,
     importGroup: ImportGroup,
     parseResults: ParseResults,
     invocationPosition: Position
 ): TextEditAction[] {
     const insertionEdits = _getInsertionEditsForAutoImportInsertion(
         importNameInfo,
+        moduleNameInfo,
         importStatements,
-        moduleName,
         importGroup,
         parseResults,
         invocationPosition
@@ -418,8 +424,8 @@ function _convertInsertionEditsToTextEdits(parseResults: ParseResults, insertion
 
 function _getInsertionEditsForAutoImportInsertion(
     importNameInfo: ImportNameInfo[] | ImportNameInfo,
+    moduleNameInfo: ModuleNameInfo,
     importStatements: ImportStatements,
-    moduleName: string,
     importGroup: ImportGroup,
     parseResults: ParseResults,
     invocationPosition: Position
@@ -444,7 +450,10 @@ function _getInsertionEditsForAutoImportInsertion(
     // Add from import statements next.
     const fromImports = map.get('from');
     if (fromImports) {
-        appendToEdits(fromImports, (names) => `from ${moduleName} import ${names.join(', ')}`);
+        appendToEdits(
+            fromImports,
+            (names) => `from ${moduleNameInfo.nameForImportFrom ?? moduleNameInfo.name} import ${names.join(', ')}`
+        );
     }
 
     return insertionEdits;
@@ -459,7 +468,7 @@ function _getInsertionEditsForAutoImportInsertion(
 
     function appendToEdits(importNameInfo: ImportNameInfo[], importStatementGetter: (n: string[]) => string) {
         const importNames = importNameInfo
-            .map((i) => getImportAsText(i, moduleName))
+            .map((i) => getImportAsText(i, moduleNameInfo.name))
             .sort((a, b) => _compareImportNames(a.sortText, b.sortText))
             .reduce((set, v) => addIfUnique(set, v.text), [] as string[]);
 
@@ -467,7 +476,7 @@ function _getInsertionEditsForAutoImportInsertion(
             _getInsertionEditForAutoImportInsertion(
                 importStatementGetter(importNames),
                 importStatements,
-                moduleName,
+                moduleNameInfo.name,
                 importGroup,
                 parseResults,
                 invocationPosition
@@ -740,25 +749,62 @@ export function getImportGroupFromModuleNameAndType(moduleNameAndType: ModuleNam
 
 export function getTextRangeForImportNameDeletion(
     nameNodes: ImportAsNode[] | ImportFromAsNode[],
-    nameNodeIndex: number
-): TextRange {
-    let editSpan: TextRange;
-    if (nameNodes.length === 1 && nameNodeIndex === 0) {
-        // get span of "import [|A|]"
-        editSpan = nameNodes[0];
-    } else if (nameNodeIndex === nameNodes.length - 1) {
-        // get span of "import A[|, B|]"
-        const start = TextRange.getEnd(nameNodes[nameNodeIndex - 1]);
-        const length = TextRange.getEnd(nameNodes[nameNodeIndex]) - start;
-        editSpan = { start, length };
-    } else {
-        // get span of "import [|A, |]B"
-        const start = nameNodes[nameNodeIndex].start;
-        const length = nameNodes[nameNodeIndex + 1].start - start;
-        editSpan = { start, length };
+    ...nameNodeIndexToDelete: number[]
+): TextRange[] {
+    const editSpans: TextRange[] = [];
+    for (const pair of getConsecutiveNumberPairs(nameNodeIndexToDelete)) {
+        const startNode = nameNodes[pair.start];
+        const endNode = nameNodes[pair.end];
+
+        if (pair.start === 0 && nameNodes.length === pair.end - pair.start + 1) {
+            // get span of whole statement. ex) "import [|A|]" or "import [|A, B|]"
+            editSpans.push(TextRange.fromBounds(startNode.start, TextRange.getEnd(endNode)));
+        } else if (pair.end === nameNodes.length - 1) {
+            // get span of "import A[|, B|]" or "import A[|, B, C|]"
+            const start = TextRange.getEnd(nameNodes[pair.start - 1]);
+            const length = TextRange.getEnd(endNode) - start;
+            editSpans.push({ start, length });
+        } else {
+            // get span of "import [|A, |]B" or "import [|A, B,|] C"
+            const start = startNode.start;
+            const length = nameNodes[pair.end + 1].start - start;
+            editSpans.push({ start, length });
+        }
+    }
+    return editSpans;
+}
+
+function getConsecutiveNumberPairs(indices: number[]) {
+    if (indices.length === 0) {
+        return [];
     }
 
-    return editSpan;
+    if (indices.length === 1) {
+        return [{ start: indices[0], end: indices[0] }];
+    }
+
+    const pairs: { start: number; end: number }[] = [];
+
+    let start = indices[0];
+    let current = start;
+    for (const index of indices) {
+        if (current === index) {
+            continue;
+        }
+
+        if (current + 1 === index) {
+            current = index;
+            continue;
+        }
+
+        pairs.push({ start, end: current });
+
+        start = index;
+        current = index;
+    }
+
+    pairs.push({ start, end: current });
+    return pairs;
 }
 
 export function getRelativeModuleName(
@@ -831,4 +877,27 @@ export function getDirectoryLeadingDotsPointsTo(fromDirectory: string, leadingDo
     }
 
     return currentDirectory;
+}
+
+export function getResolvedFilePath(importResult: ImportResult | undefined) {
+    if (!importResult || !importResult.isImportFound || importResult.resolvedPaths.length === 0) {
+        return undefined;
+    }
+
+    if (importResult.resolvedPaths.length === 1 && importResult.resolvedPaths[0] === '') {
+        // Import is resolved to namespace package folder.
+        if (importResult.packageDirectory) {
+            return importResult.packageDirectory;
+        }
+
+        // Absolute import is partially resolved from the path.
+        if (importResult.searchPath) {
+            return importResult.searchPath;
+        }
+
+        return undefined;
+    }
+
+    // Regular case.
+    return importResult.resolvedPaths[importResult.resolvedPaths.length - 1];
 }

@@ -97,6 +97,12 @@ export const maxTypeRecursionCount = 14;
 
 export type InheritanceChain = (ClassType | UnknownType)[];
 
+export interface TypeSameOptions {
+    ignorePseudoGeneric?: boolean;
+    ignoreTypeFlags?: boolean;
+    treatAnySameAsUnknown?: boolean;
+}
+
 interface TypeAliasInfo {
     name: string;
     fullName: string;
@@ -316,7 +322,7 @@ export namespace ModuleType {
         if (moduleType.loaderFields) {
             if (!symbol) {
                 symbol = moduleType.loaderFields.get(name);
-            } else if (symbol.isExternallyHidden()) {
+            } else {
                 // If the symbol is hidden when accessed via the module but is
                 // also accessible through a loader field, use the latter so it
                 // isn't flagged as an error.
@@ -724,6 +730,65 @@ export namespace ClassType {
         return type1.literalValue === type2.literalValue;
     }
 
+    // Determines whether two typed dict classes are equivalent given
+    // that one or both have narrowed entries (i.e. entries that are
+    // guaranteed to be present).
+    export function isTypedDictNarrowedEntriesSame(type1: ClassType, type2: ClassType): boolean {
+        if (type1.typedDictNarrowedEntries) {
+            if (!type2.typedDictNarrowedEntries) {
+                return false;
+            }
+
+            const tdEntries1 = type1.typedDictNarrowedEntries;
+            const tdEntries2 = type2.typedDictNarrowedEntries;
+
+            if (tdEntries1.size !== tdEntries2.size) {
+                return false;
+            }
+
+            let key: string;
+            let entry1: TypedDictEntry;
+            for ([key, entry1] of tdEntries1.entries()) {
+                const entry2 = tdEntries2.get(key);
+                if (!entry2) {
+                    return false;
+                }
+                if (entry1.isProvided !== entry2.isProvided) {
+                    return false;
+                }
+            }
+        } else if (type2.typedDictNarrowedEntries) {
+            return false;
+        }
+
+        return true;
+    }
+
+    // Determines whether typed dict class type1 is a narrower form of type2,
+    // i.e. all of the "narrowed entries" found within type2 are also found
+    // within type1.
+    export function isTypedDictNarrower(type1: ClassType, type2: ClassType): boolean {
+        const tdEntries2 = type2.typedDictNarrowedEntries;
+        if (!tdEntries2) {
+            return true;
+        }
+
+        const tdEntries1 = type1.typedDictNarrowedEntries ?? new Map<string, TypedDictEntry>();
+
+        let key: string;
+        let entry2: TypedDictEntry;
+        for ([key, entry2] of tdEntries2.entries()) {
+            if (entry2.isProvided) {
+                const entry1 = tdEntries1.get(key);
+                if (!entry1?.isProvided) {
+                    return false;
+                }
+            }
+        }
+
+        return true;
+    }
+
     // Is the class generic but not specialized?
     export function isUnspecialized(classType: ClassType) {
         return classType.details.typeParameters.length > 0 && classType.typeArguments === undefined;
@@ -927,8 +992,7 @@ export namespace ClassType {
                 !isTypeSame(
                     class1Details.baseClasses[i],
                     class2Details.baseClasses[i],
-                    /* ignorePseudoGeneric */ true,
-                    /* ignoreTypeFlags */ undefined,
+                    { ignorePseudoGeneric: true },
                     recursionCount
                 )
             ) {
@@ -943,8 +1007,7 @@ export namespace ClassType {
                 !isTypeSame(
                     class1Details.declaredMetaclass,
                     class2Details.declaredMetaclass,
-                    /* ignorePseudoGeneric */ true,
-                    /* ignoreTypeFlags */ undefined,
+                    { ignorePseudoGeneric: true },
                     recursionCount
                 )
             ) {
@@ -957,8 +1020,7 @@ export namespace ClassType {
                 !isTypeSame(
                     class1Details.typeParameters[i],
                     class2Details.typeParameters[i],
-                    /* ignorePseudoGeneric */ true,
-                    /* ignoreTypeFlags */ undefined,
+                    { ignorePseudoGeneric: true },
                     recursionCount
                 )
             ) {
@@ -993,6 +1055,16 @@ export namespace ClassType {
         if (isBuiltIn(subclassType) && isBuiltIn(parentClassType, 'object')) {
             if (inheritanceChain) {
                 inheritanceChain.push(parentClassType);
+            }
+            return true;
+        }
+
+        // Handle the case where both source and dest are property objects. This
+        // special case is needed because we synthesize a new class for each
+        // property declaration.
+        if (ClassType.isBuiltIn(subclassType, 'property') && ClassType.isBuiltIn(parentClassType, 'property')) {
+            if (inheritanceChain) {
+                inheritanceChain.push(subclassType);
             }
             return true;
         }
@@ -1147,6 +1219,11 @@ export interface SpecializedFunctionTypes {
     returnType?: Type | undefined;
 }
 
+export interface CallSiteInferenceTypeCacheEntry {
+    paramTypes: Type[];
+    returnType: Type;
+}
+
 export interface FunctionType extends TypeBase {
     category: TypeCategory.Function;
 
@@ -1156,8 +1233,11 @@ export interface FunctionType extends TypeBase {
     // variables replaced by a concrete type).
     specializedTypes?: SpecializedFunctionTypes | undefined;
 
-    // Filled in lazily
+    // Inferred return type. Filled in lazily.
     inferredReturnType?: Type | undefined;
+
+    // Call-site return type inference cache.
+    callSiteReturnTypeCache?: CallSiteInferenceTypeCacheEntry[];
 
     // If this is a bound function where the first parameter
     // was stripped from the original unbound function, the
@@ -1692,8 +1772,17 @@ export namespace OverloadedFunctionType {
         return newType;
     }
 
+    // Adds a new overload or an implementation.
     export function addOverload(type: OverloadedFunctionType, functionType: FunctionType) {
         type.overloads.push(functionType);
+    }
+
+    export function getOverloads(type: OverloadedFunctionType): FunctionType[] {
+        return type.overloads.filter((func) => FunctionType.isOverloaded(func));
+    }
+
+    export function getImplementation(type: OverloadedFunctionType): FunctionType | undefined {
+        return type.overloads.find((func) => !FunctionType.isOverloaded(func));
     }
 }
 
@@ -1921,17 +2010,7 @@ export namespace UnionType {
             }
         }
 
-        return (
-            unionType.subtypes.find((t) =>
-                isTypeSame(
-                    t,
-                    subtype,
-                    /* ignorePseudoGeneric */ undefined,
-                    /* ignoreTypeFlags */ undefined,
-                    recursionCount
-                )
-            ) !== undefined
-        );
+        return unionType.subtypes.find((t) => isTypeSame(t, subtype, {}, recursionCount)) !== undefined;
     }
 
     export function addTypeAliasSource(unionType: UnionType, typeAliasSource: Type) {
@@ -1953,6 +2032,7 @@ export namespace UnionType {
 
 export const enum Variance {
     Auto,
+    Unknown,
     Invariant,
     Covariant,
     Contravariant,
@@ -2292,22 +2372,25 @@ export function getTypeAliasInfo(type: Type) {
 // Determines whether two types are the same. If ignorePseudoGeneric is true,
 // type arguments for "pseudo-generic" classes (non-generic classes whose init
 // methods are not annotated and are therefore treated as generic) are ignored.
-export function isTypeSame(
-    type1: Type,
-    type2: Type,
-    ignorePseudoGeneric = false,
-    ignoreTypeFlags = false,
-    recursionCount = 0
-): boolean {
+export function isTypeSame(type1: Type, type2: Type, options: TypeSameOptions = {}, recursionCount = 0): boolean {
     if (type1 === type2) {
         return true;
     }
 
     if (type1.category !== type2.category) {
+        if (options.treatAnySameAsUnknown) {
+            if (type1.category === TypeCategory.Any && type2.category === TypeCategory.Unknown) {
+                return true;
+            }
+            if (type1.category === TypeCategory.Unknown && type2.category === TypeCategory.Any) {
+                return true;
+            }
+        }
+
         return false;
     }
 
-    if (!ignoreTypeFlags && type1.flags !== type2.flags) {
+    if (!options.ignoreTypeFlags && type1.flags !== type2.flags) {
         return false;
     }
 
@@ -2329,7 +2412,7 @@ export function isTypeSame(
                 return false;
             }
 
-            if (!ignorePseudoGeneric || !ClassType.isPseudoGenericClass(type1)) {
+            if (!options.ignorePseudoGeneric || !ClassType.isPseudoGenericClass(type1)) {
                 // Make sure the type args match.
                 if (type1.tupleTypeArguments && classType2.tupleTypeArguments) {
                     const type1TupleTypeArgs = type1.tupleTypeArguments || [];
@@ -2343,8 +2426,7 @@ export function isTypeSame(
                             !isTypeSame(
                                 type1TupleTypeArgs[i].type,
                                 type2TupleTypeArgs[i].type,
-                                ignorePseudoGeneric,
-                                /* ignoreTypeFlags */ false,
+                                { ...options, ignoreTypeFlags: false },
                                 recursionCount
                             )
                         ) {
@@ -2365,15 +2447,7 @@ export function isTypeSame(
                         const typeArg1 = i < type1TypeArgs.length ? type1TypeArgs[i] : AnyType.create();
                         const typeArg2 = i < type2TypeArgs.length ? type2TypeArgs[i] : AnyType.create();
 
-                        if (
-                            !isTypeSame(
-                                typeArg1,
-                                typeArg2,
-                                ignorePseudoGeneric,
-                                /* ignoreTypeFlags */ false,
-                                recursionCount
-                            )
-                        ) {
+                        if (!isTypeSame(typeArg1, typeArg2, { ...options, ignoreTypeFlags: false }, recursionCount)) {
                             return false;
                         }
                     }
@@ -2381,6 +2455,10 @@ export function isTypeSame(
             }
 
             if (!ClassType.isLiteralValueSame(type1, classType2)) {
+                return false;
+            }
+
+            if (!ClassType.isTypedDictNarrowedEntriesSame(type1, classType2)) {
                 return false;
             }
 
@@ -2428,15 +2506,7 @@ export function isTypeSame(
 
                 const param1Type = FunctionType.getEffectiveParameterType(type1, i);
                 const param2Type = FunctionType.getEffectiveParameterType(functionType2, i);
-                if (
-                    !isTypeSame(
-                        param1Type,
-                        param2Type,
-                        ignorePseudoGeneric,
-                        /* ignoreTypeFlags */ false,
-                        recursionCount
-                    )
-                ) {
+                if (!isTypeSame(param1Type, param2Type, { ...options, ignoreTypeFlags: false }, recursionCount)) {
                     return false;
                 }
             }
@@ -2462,13 +2532,7 @@ export function isTypeSame(
                 if (
                     !return1Type ||
                     !return2Type ||
-                    !isTypeSame(
-                        return1Type,
-                        return2Type,
-                        ignorePseudoGeneric,
-                        /* ignoreTypeFlags */ false,
-                        recursionCount
-                    )
+                    !isTypeSame(return1Type, return2Type, { ...options, ignoreTypeFlags: false }, recursionCount)
                 ) {
                     return false;
                 }
@@ -2487,15 +2551,7 @@ export function isTypeSame(
             // We assume here that overloaded functions always appear
             // in the same order from one analysis pass to another.
             for (let i = 0; i < type1.overloads.length; i++) {
-                if (
-                    !isTypeSame(
-                        type1.overloads[i],
-                        functionType2.overloads[i],
-                        ignorePseudoGeneric,
-                        ignoreTypeFlags,
-                        recursionCount
-                    )
-                ) {
+                if (!isTypeSame(type1.overloads[i], functionType2.overloads[i], options, recursionCount)) {
                     return false;
                 }
             }
@@ -2539,15 +2595,7 @@ export function isTypeSame(
                     const typeArg1 = i < type1TypeArgs.length ? type1TypeArgs[i] : AnyType.create();
                     const typeArg2 = i < type2TypeArgs.length ? type2TypeArgs[i] : AnyType.create();
 
-                    if (
-                        !isTypeSame(
-                            typeArg1,
-                            typeArg2,
-                            ignorePseudoGeneric,
-                            /* ignoreTypeFlags */ false,
-                            recursionCount
-                        )
-                    ) {
+                    if (!isTypeSame(typeArg1, typeArg2, { ...options, ignoreTypeFlags: false }, recursionCount)) {
                         return false;
                     }
                 }
@@ -2573,13 +2621,7 @@ export function isTypeSame(
             if (boundType1) {
                 if (
                     !boundType2 ||
-                    !isTypeSame(
-                        boundType1,
-                        boundType2,
-                        ignorePseudoGeneric,
-                        /* ignoreTypeFlags */ false,
-                        recursionCount
-                    )
+                    !isTypeSame(boundType1, boundType2, { ...options, ignoreTypeFlags: false }, recursionCount)
                 ) {
                     return false;
                 }
@@ -2600,8 +2642,7 @@ export function isTypeSame(
                     !isTypeSame(
                         constraints1[i],
                         constraints2[i],
-                        ignorePseudoGeneric,
-                        /* ignoreTypeFlags */ false,
+                        { ...options, ignoreTypeFlags: false },
                         recursionCount
                     )
                 ) {
@@ -2857,12 +2898,30 @@ function _addTypeIfUnique(unionType: UnionType, typeToAdd: UnionableType) {
         }
     }
 
+    const isPseudoGeneric = isClass(typeToAdd) && ClassType.isPseudoGenericClass(typeToAdd);
+
     for (let i = 0; i < unionType.subtypes.length; i++) {
         const type = unionType.subtypes[i];
 
         // Does this type already exist in the types array?
         if (isTypeSame(type, typeToAdd)) {
             return;
+        }
+
+        // Handle the case where pseudo-generic classes with different
+        // type arguments are being combined. Rather than add multiple
+        // specialized types, we will replace them with a single specialized
+        // type that is specialized with Unknowns. This is important because
+        // we can hit recursive cases (where a pseudo-generic class is
+        // parameterized with its own class) ad infinitum.
+        if (isPseudoGeneric) {
+            if (isTypeSame(type, typeToAdd, { ignorePseudoGeneric: true })) {
+                unionType.subtypes[i] = ClassType.cloneForSpecialization(
+                    typeToAdd,
+                    typeToAdd.details.typeParameters.map(() => UnknownType.create()),
+                    /* isTypeArgumentExplicit */ true
+                );
+            }
         }
 
         // If the typeToAdd is a literal value and there's already
@@ -2884,6 +2943,17 @@ function _addTypeIfUnique(unionType: UnionType, typeToAdd: UnionableType) {
             ) {
                 if (typeToAdd.literalValue !== undefined && !typeToAdd.literalValue === type.literalValue) {
                     unionType.subtypes[i] = ClassType.cloneWithLiteral(type, /* value */ undefined);
+                    return;
+                }
+            }
+
+            // If the typeToAdd is a TypedDict that is the same class as the
+            // existing type, see if one of them is a proper subset of the other.
+            if (ClassType.isTypedDictClass(type) && ClassType.isSameGenericClass(type, typeToAdd)) {
+                if (ClassType.isTypedDictNarrower(typeToAdd, type)) {
+                    return;
+                } else if (ClassType.isTypedDictNarrower(type, typeToAdd)) {
+                    unionType.subtypes[i] = typeToAdd;
                     return;
                 }
             }

@@ -831,6 +831,24 @@ export class Binder extends ParseTreeWalker {
             createdAssignmentTargetFlowNodes = true;
         }
 
+        // If the assignment target base expression is potentially a
+        // TypedDict, add the base expression to the flow expressions set
+        // to accommodate TypedDict type narrowing.
+        if (node.leftExpression.nodeType === ParseNodeType.Index) {
+            const target = node.leftExpression;
+
+            if (
+                target.items.length === 1 &&
+                !target.trailingComma &&
+                target.items[0].valueExpression.nodeType === ParseNodeType.StringList
+            ) {
+                if (isCodeFlowSupportedForReference(target.baseExpression)) {
+                    const baseExprReferenceKey = createKeyForReference(target.baseExpression);
+                    this._currentScopeCodeFlowExpressions!.add(baseExprReferenceKey);
+                }
+            }
+        }
+
         this.walk(node.rightExpression);
 
         let isPossibleTypeAlias = true;
@@ -2389,12 +2407,17 @@ export class Binder extends ParseTreeWalker {
             return undefined;
         }
 
-        const lookupInfo = this._fileInfo.importLookup(resolvedPath);
-        if (!lookupInfo) {
-            return undefined;
+        let lookupInfo = this._fileInfo.importLookup(resolvedPath);
+        if (lookupInfo?.dunderAllNames) {
+            return lookupInfo.dunderAllNames;
         }
 
-        return lookupInfo.dunderAllNames;
+        if (aliasDecl?.submoduleFallback?.path) {
+            lookupInfo = this._fileInfo.importLookup(aliasDecl.submoduleFallback.path);
+            return lookupInfo?.dunderAllNames;
+        }
+
+        return undefined;
     }
 
     private _addImplicitFromImport(node: ImportFromNode, importInfo?: ImportResult) {
@@ -3100,8 +3123,6 @@ export class Binder extends ParseTreeWalker {
 
             this._currentFlowNode = flowNode;
         }
-
-        AnalyzerNodeInfo.setFlowNode(node, this._currentFlowNode!);
 
         if (!this._isCodeUnreachable()) {
             this._addExceptTargets(this._currentFlowNode!);

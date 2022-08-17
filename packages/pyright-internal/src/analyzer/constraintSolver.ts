@@ -53,8 +53,8 @@ import {
     isPartlyUnknown,
     mapSubtypes,
     specializeTupleClass,
-    stripLiteralValue,
     transformExpectedTypeForConstructor,
+    transformPossibleRecursiveTypeAlias,
 } from './typeUtils';
 import { TypeVarContext } from './typeVarContext';
 
@@ -152,7 +152,6 @@ export function assignTypeToTypeVar(
                         tupleClassType,
                         [{ type: srcType, isUnbounded: false }],
                         /* isTypeArgumentExplicit */ true,
-                        /* stripLiterals */ true,
                         /* isUnpackedTuple */ true
                     )
                 );
@@ -379,7 +378,7 @@ export function assignTypeToTypeVar(
         typeVarContext.getRetainLiterals(destType) ||
         (destType.details.boundType && containsLiteralType(destType.details.boundType)) ||
         destType.details.constraints.some((t) => containsLiteralType(t));
-    let adjSrcType = retainLiterals ? srcType : stripLiteralValue(srcType);
+    let adjSrcType = retainLiterals ? srcType : evaluator.stripLiteralValue(srcType);
 
     if (TypeBase.isInstantiable(destType)) {
         if (isEffectivelyInstantiable(adjSrcType)) {
@@ -399,15 +398,7 @@ export function assignTypeToTypeVar(
         // Update the wide type bound.
         if (!curWideTypeBound) {
             newWideTypeBound = adjSrcType;
-        } else if (
-            !isTypeSame(
-                curWideTypeBound,
-                adjSrcType,
-                /* ignorePseudoGeneric */ undefined,
-                /* ignoreTypeFlags */ undefined,
-                recursionCount
-            )
-        ) {
+        } else if (!isTypeSame(curWideTypeBound, adjSrcType, {}, recursionCount)) {
             if (
                 evaluator.assignType(
                     curWideTypeBound,
@@ -474,15 +465,7 @@ export function assignTypeToTypeVar(
         if (!curNarrowTypeBound) {
             // There was previously no narrow bound. We've now established one.
             newNarrowTypeBound = adjSrcType;
-        } else if (
-            !isTypeSame(
-                curNarrowTypeBound,
-                adjSrcType,
-                /* ignorePseudoGeneric */ undefined,
-                /* ignoreTypeFlags */ undefined,
-                recursionCount
-            )
-        ) {
+        } else if (!isTypeSame(curNarrowTypeBound, adjSrcType, {}, recursionCount)) {
             if (
                 evaluator.assignType(
                     curNarrowTypeBound,
@@ -516,7 +499,7 @@ export function assignTypeToTypeVar(
                 }
             } else {
                 // We need to widen the type.
-                if (typeVarContext.isLocked() || isTypeVar(adjSrcType)) {
+                if (typeVarContext.isLocked()) {
                     diag?.addMessage(
                         Localizer.DiagnosticAddendum.typeAssignmentMismatch().format({
                             sourceType: evaluator.printType(curNarrowTypeBound),
@@ -575,15 +558,7 @@ export function assignTypeToTypeVar(
 
         // Make sure we don't exceed the wide type bound.
         if (curWideTypeBound && newNarrowTypeBound) {
-            if (
-                !isTypeSame(
-                    curWideTypeBound,
-                    newNarrowTypeBound,
-                    /* ignorePseudoGeneric */ undefined,
-                    /* ignoreTypeFlags */ undefined,
-                    recursionCount
-                )
-            ) {
+            if (!isTypeSame(curWideTypeBound, newNarrowTypeBound, {}, recursionCount)) {
                 let makeConcrete = true;
 
                 // Handle the case where the wide type is type T and the narrow type
@@ -689,15 +664,7 @@ function assignTypeToParamSpec(
         if (existingEntry) {
             if (existingEntry.parameters.length === 0 && existingEntry.paramSpec) {
                 // If there's an existing entry that matches, that's fine.
-                if (
-                    isTypeSame(
-                        existingEntry.paramSpec,
-                        srcType,
-                        /* ignorePseudoGeneric */ undefined,
-                        /* ignoreTypeFlags */ undefined,
-                        recursionCount
-                    )
-                ) {
+                if (isTypeSame(existingEntry.paramSpec, srcType, {}, recursionCount)) {
                     return true;
                 }
             }
@@ -802,6 +769,10 @@ export function populateTypeVarContextBasedOnExpectedType(
         return true;
     }
 
+    if (isTypeVar(expectedType) && expectedType.details.isSynthesizedSelf && expectedType.details.boundType) {
+        expectedType = expectedType.details.boundType;
+    }
+
     if (!isClass(expectedType)) {
         return false;
     }
@@ -898,7 +869,9 @@ export function populateTypeVarContextBasedOnExpectedType(
                 const targetTypeVar =
                     ClassType.getTypeParameters(specializedType)[synthTypeVar.details.synthesizedIndex];
                 if (index < expectedTypeArgs.length) {
-                    let expectedTypeArgValue: Type | undefined = expectedTypeArgs[index];
+                    let expectedTypeArgValue: Type | undefined = transformPossibleRecursiveTypeAlias(
+                        expectedTypeArgs[index]
+                    );
 
                     if (liveTypeVarScopes) {
                         expectedTypeArgValue = transformExpectedTypeForConstructor(

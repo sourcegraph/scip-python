@@ -98,7 +98,7 @@ import { Diagnostic as AnalyzerDiagnostic, DiagnosticCategory } from './common/d
 import { DiagnosticRule } from './common/diagnosticRules';
 import { FileDiagnostics } from './common/diagnosticSink';
 import { LanguageServiceExtension } from './common/extensibility';
-import { FileSystem, FileWatcherEventType, FileWatcherProvider } from './common/fileSystem';
+import { FileSystem, FileWatcherEventType, FileWatcherHandler } from './common/fileSystem';
 import { Host } from './common/host';
 import { fromLSPAny } from './common/lspUtils';
 import { convertPathToUri, deduplicateFolders, getDirectoryPath, getFileName, isFile } from './common/pathUtils';
@@ -107,6 +107,7 @@ import { DocumentRange, Position, Range } from './common/textRange';
 import { UriParser } from './common/uriParser';
 import { convertWorkspaceDocumentEdits } from './common/workspaceEditUtils';
 import { AnalyzerServiceExecutor } from './languageService/analyzerServiceExecutor';
+import { ImportFormat } from './languageService/autoImporter';
 import { CompletionItemData, CompletionOptions, CompletionResultsList } from './languageService/completionProvider';
 import { DefinitionFilter } from './languageService/definitionProvider';
 import { convertToFlatSymbols, WorkspaceSymbolCallback } from './languageService/documentSymbolProvider';
@@ -142,21 +143,28 @@ export interface ServerSettings {
 export enum WellKnownWorkspaceKinds {
     Default = 'default',
     Regular = 'regular',
+    Limited = 'limited',
     Cloned = 'cloned',
     Test = 'test',
 }
 
+// path and uri will point to a workspace itself. It could be a folder
+// if the workspace represents a folder. it could be '' if it is the default workspace.
+// But it also could be a file if it is a virtual workspace.
+// rootPath will always point to the folder that contains the workspace.
 export interface WorkspaceServiceInstance {
     workspaceName: string;
     rootPath: string;
-    rootUri: string;
-    kind: string;
+    path: string;
+    uri: string;
+    kinds: string[];
     serviceInstance: AnalyzerService;
     disableLanguageServices: boolean;
     disableOrganizeImports: boolean;
     disableWorkspaceSymbol: boolean;
     isInitialized: Deferred<boolean>;
     searchPathsToWatch: string[];
+    owns(filePath: string): boolean;
 }
 
 export interface MessageAction {
@@ -186,7 +194,6 @@ export interface LanguageServerInterface {
     readonly rootPath: string;
     readonly console: ConsoleInterface;
     readonly window: WindowInterface;
-    readonly fs: FileSystem;
     readonly supportAdvancedEdits: boolean;
 }
 
@@ -195,14 +202,19 @@ export interface ServerOptions {
     rootDirectory: string;
     version: string;
     workspaceMap: WorkspaceMap;
-    fileSystem: FileSystem;
-    fileWatcherProvider: FileWatcherProvider;
     cancellationProvider: CancellationProvider;
+    fileSystem: FileSystem;
+    fileWatcherHandler: FileWatcherHandler;
     extension?: LanguageServiceExtension;
     maxAnalysisTimeInForeground?: MaxAnalysisTime;
     disableChecker?: boolean;
     supportedCommands?: string[];
     supportedCodeActions?: string[];
+}
+
+export interface WorkspaceServices {
+    fs: FileSystem;
+    backgroundAnalysis: BackgroundAnalysisBase | undefined;
 }
 
 interface ClientCapabilities {
@@ -218,6 +230,7 @@ interface ClientCapabilities {
     hasGoToDeclarationCapability: boolean;
     hasDocumentChangeCapability: boolean;
     hasDocumentAnnotationCapability: boolean;
+    hasCompletionCommitCharCapability: boolean;
     hoverContentFormat: MarkupKind;
     completionDocFormat: MarkupKind;
     completionSupportsSnippet: boolean;
@@ -232,7 +245,6 @@ const nullProgressReporter = attachWorkDone(undefined as any, /* params */ undef
 export abstract class LanguageServerBase implements LanguageServerInterface {
     protected _defaultClientConfig: any;
     protected _workspaceMap: WorkspaceMap;
-    protected _fileWatcherProvider: FileWatcherProvider;
 
     // We support running only one "find all reference" at a time.
     private _pendingFindAllRefsCancellationSource: CancellationTokenSource | undefined;
@@ -262,6 +274,7 @@ export abstract class LanguageServerBase implements LanguageServerInterface {
         hasGoToDeclarationCapability: false,
         hasDocumentChangeCapability: false,
         hasDocumentAnnotationCapability: false,
+        hasCompletionCommitCharCapability: false,
         hoverContentFormat: MarkupKind.PlainText,
         completionDocFormat: MarkupKind.PlainText,
         completionSupportsSnippet: false,
@@ -272,7 +285,7 @@ export abstract class LanguageServerBase implements LanguageServerInterface {
     };
 
     // File system abstraction.
-    fs: FileSystem;
+    protected _serviceFS: PyrightFileSystem;
 
     protected _uriParser: UriParser;
 
@@ -295,17 +308,16 @@ export abstract class LanguageServerBase implements LanguageServerInterface {
         this.console.info(`Server root directory: ${_serverOptions.rootDirectory}`);
 
         this._workspaceMap = this._serverOptions.workspaceMap;
-        this._fileWatcherProvider = this._serverOptions.fileWatcherProvider;
 
-        this.fs = new PyrightFileSystem(this._serverOptions.fileSystem);
-        this._uriParser = uriParserFactory(this.fs);
+        this._serviceFS = new PyrightFileSystem(this._serverOptions.fileSystem);
+        this._uriParser = uriParserFactory(this._serviceFS);
 
         // Set the working directory to a known location within
         // the extension directory. Otherwise the execution of
         // python can have unintended and surprising results.
-        const moduleDirectory = this.fs.getModulePath();
+        const moduleDirectory = this._serviceFS.getModulePath();
         if (moduleDirectory) {
-            this.fs.chdir(moduleDirectory);
+            this._serviceFS.chdir(moduleDirectory);
         }
 
         // Set up callbacks.
@@ -416,23 +428,26 @@ export abstract class LanguageServerBase implements LanguageServerInterface {
 
     // Creates a service instance that's used for analyzing a
     // program within a workspace.
-    createAnalyzerService(name: string, libraryReanalysisTimeProvider?: () => number): AnalyzerService {
-        this.console.log(`Starting service instance "${name}"`);
+    createAnalyzerService(
+        name: string,
+        services?: WorkspaceServices,
+        libraryReanalysisTimeProvider?: () => number
+    ): AnalyzerService {
+        this.console.info(`Starting service instance "${name}"`);
 
-        const service = new AnalyzerService(name, this.fs, {
+        const service = new AnalyzerService(name, services?.fs ?? this._serviceFS, {
             console: this.console,
             hostFactory: this.createHost.bind(this),
             importResolverFactory: this.createImportResolver.bind(this),
             extension: this._serverOptions.extension,
-            backgroundAnalysis: this.createBackgroundAnalysis(),
+            backgroundAnalysis: services ? services.backgroundAnalysis : this.createBackgroundAnalysis(),
             maxAnalysisTime: this._serverOptions.maxAnalysisTimeInForeground,
             backgroundAnalysisProgramFactory: this.createBackgroundAnalysisProgram.bind(this),
             cancellationProvider: this._serverOptions.cancellationProvider,
             libraryReanalysisTimeProvider,
         });
 
-        service.setCompletionCallback((results) => this.onAnalysisCompletedHandler(results));
-
+        service.setCompletionCallback((results) => this.onAnalysisCompletedHandler(service.fs, results));
         return service;
     }
 
@@ -534,6 +549,9 @@ export abstract class LanguageServerBase implements LanguageServerInterface {
             !!capabilities.workspace?.workspaceEdit?.documentChanges &&
             !!capabilities.workspace.workspaceEdit?.resourceOperations;
         this.client.hasDocumentAnnotationCapability = !!capabilities.workspace?.workspaceEdit?.changeAnnotationSupport;
+        this.client.hasCompletionCommitCharCapability =
+            !!capabilities.textDocument?.completion?.completionList?.itemDefaults &&
+            !!capabilities.textDocument.completion.completionItem?.commitCharactersSupport;
 
         this.client.hoverContentFormat = this._getCompatibleMarkupKind(capabilities.textDocument?.hover?.contentFormat);
         this.client.completionDocFormat = this._getCompatibleMarkupKind(
@@ -561,10 +579,13 @@ export abstract class LanguageServerBase implements LanguageServerInterface {
         if (params.workspaceFolders) {
             params.workspaceFolders.forEach((folder) => {
                 const path = this._uriParser.decodeTextDocumentUri(folder.uri);
-                this._workspaceMap.set(path, this.createWorkspaceServiceInstance(folder, path));
+                this._workspaceMap.set(path, this.createWorkspaceServiceInstance(folder, path, path));
             });
         } else if (params.rootPath) {
-            this._workspaceMap.set(params.rootPath, this.createWorkspaceServiceInstance(undefined, params.rootPath));
+            this._workspaceMap.set(
+                params.rootPath,
+                this.createWorkspaceServiceInstance(undefined, params.rootPath, params.rootPath)
+            );
         }
 
         const result: InitializeResult = {
@@ -616,7 +637,7 @@ export abstract class LanguageServerBase implements LanguageServerInterface {
 
                 event.added.forEach(async (workspace) => {
                     const rootPath = this._uriParser.decodeTextDocumentUri(workspace.uri);
-                    const newWorkspace = this.createWorkspaceServiceInstance(workspace, rootPath);
+                    const newWorkspace = this.createWorkspaceServiceInstance(workspace, rootPath, rootPath);
                     this._workspaceMap.set(rootPath, newWorkspace);
                     await this.updateSettingsForWorkspace(newWorkspace);
                 });
@@ -644,14 +665,18 @@ export abstract class LanguageServerBase implements LanguageServerInterface {
         // Add all python search paths to watch list
         if (this.client.hasWatchFileRelativePathCapability) {
             // Dedup search paths from all workspaces.
+            // Get rid of any search path under workspace root since it is already watched by
+            // "**" above.
             const foldersToWatch = deduplicateFolders(
-                this._workspaceMap.getNonDefaultWorkspaces().map((w) => w.searchPathsToWatch)
+                this._workspaceMap
+                    .getNonDefaultWorkspaces()
+                    .map((w) => w.searchPathsToWatch.filter((p) => !p.startsWith(w.rootPath)))
             );
 
             foldersToWatch.forEach((p) => {
-                const globPattern = isFile(this.fs, p, /* treatZipDirectoryAsFile */ true)
-                    ? { baseUri: convertPathToUri(this.fs, getDirectoryPath(p)), pattern: getFileName(p) }
-                    : { baseUri: convertPathToUri(this.fs, p), pattern: '**' };
+                const globPattern = isFile(this._serviceFS, p, /* treatZipDirectoryAsFile */ true)
+                    ? { baseUri: convertPathToUri(this._serviceFS, getDirectoryPath(p)), pattern: getFileName(p) }
+                    : { baseUri: convertPathToUri(this._serviceFS, p), pattern: '**' };
 
                 watchers.push({ globPattern, kind: watchKind });
             });
@@ -736,8 +761,8 @@ export abstract class LanguageServerBase implements LanguageServerInterface {
             return undefined;
         }
         return locations
-            .filter((loc) => !this.fs.isInZipOrEgg(loc.path))
-            .map((loc) => Location.create(convertPathToUri(this.fs, loc.path), loc.range));
+            .filter((loc) => !workspace.serviceInstance.fs.isInZipOrEgg(loc.path))
+            .map((loc) => Location.create(convertPathToUri(workspace.serviceInstance.fs, loc.path), loc.range));
     }
 
     protected async onReferences(
@@ -776,8 +801,8 @@ export abstract class LanguageServerBase implements LanguageServerInterface {
 
             const convert = (locs: DocumentRange[]): Location[] => {
                 return locs
-                    .filter((loc) => !this.fs.isInZipOrEgg(loc.path))
-                    .map((loc) => Location.create(convertPathToUri(this.fs, loc.path), loc.range));
+                    .filter((loc) => !workspace.serviceInstance.fs.isInZipOrEgg(loc.path))
+                    .map((loc) => Location.create(convertPathToUri(workspace.serviceInstance.fs, loc.path), loc.range));
             };
 
             const locations: Location[] = [];
@@ -997,8 +1022,7 @@ export abstract class LanguageServerBase implements LanguageServerInterface {
             workspace,
             filePath,
             position,
-            workspace.rootPath,
-            this.getCompletionOptions(params),
+            this.getCompletionOptions(workspace, params),
             token
         );
 
@@ -1035,15 +1059,21 @@ export abstract class LanguageServerBase implements LanguageServerInterface {
             return null;
         }
 
-        const range = workspace.serviceInstance.canRenameSymbolAtPosition(
+        const result = workspace.serviceInstance.canRenameSymbolAtPosition(
             filePath,
             position,
-            workspace.rootPath === '',
+            workspace.path === '',
             this.allowModuleRename,
             token
         );
 
-        return range ?? null;
+        // We only allow renaming symbol defined in the files this workspace owns.
+        // This is to make sure we don't rename files across workspaces in multiple workspaces context.
+        if (result && result.declarations.some((d) => d.path && !workspace.owns(d.path))) {
+            return null;
+        }
+
+        return result?.range ?? null;
     }
 
     protected async onRenameRequest(
@@ -1061,7 +1091,7 @@ export abstract class LanguageServerBase implements LanguageServerInterface {
             filePath,
             position,
             params.newName,
-            workspace.rootPath === '',
+            workspace.path === '',
             this.allowModuleRename,
             token
         );
@@ -1070,7 +1100,7 @@ export abstract class LanguageServerBase implements LanguageServerInterface {
             return undefined;
         }
 
-        return convertWorkspaceDocumentEdits(this.fs, editActions);
+        return convertWorkspaceDocumentEdits(workspace.serviceInstance.fs, editActions);
     }
 
     protected async onPrepare(
@@ -1089,12 +1119,12 @@ export abstract class LanguageServerBase implements LanguageServerInterface {
             return null;
         }
 
-        if (this.fs.isInZipOrEgg(callItem.uri)) {
+        if (workspace.serviceInstance.fs.isInZipOrEgg(callItem.uri)) {
             return null;
         }
 
         // Convert the file path in the item to proper URI.
-        callItem.uri = convertPathToUri(this.fs, callItem.uri);
+        callItem.uri = convertPathToUri(workspace.serviceInstance.fs, callItem.uri);
 
         return [callItem];
     }
@@ -1112,11 +1142,11 @@ export abstract class LanguageServerBase implements LanguageServerInterface {
             return null;
         }
 
-        callItems = callItems.filter((item) => !this.fs.isInZipOrEgg(item.from.uri));
+        callItems = callItems.filter((item) => !workspace.serviceInstance.fs.isInZipOrEgg(item.from.uri));
 
         // Convert the file paths in the items to proper URIs.
         callItems.forEach((item) => {
-            item.from.uri = convertPathToUri(this.fs, item.from.uri);
+            item.from.uri = convertPathToUri(workspace.serviceInstance.fs, item.from.uri);
         });
 
         return callItems;
@@ -1138,11 +1168,11 @@ export abstract class LanguageServerBase implements LanguageServerInterface {
             return null;
         }
 
-        callItems = callItems.filter((item) => !this.fs.isInZipOrEgg(item.to.uri));
+        callItems = callItems.filter((item) => !workspace.serviceInstance.fs.isInZipOrEgg(item.to.uri));
 
         // Convert the file paths in the items to proper URIs.
         callItems.forEach((item) => {
-            item.to.uri = convertPathToUri(this.fs, item.to.uri);
+            item.to.uri = convertPathToUri(workspace.serviceInstance.fs, item.to.uri);
         });
 
         return callItems;
@@ -1151,7 +1181,7 @@ export abstract class LanguageServerBase implements LanguageServerInterface {
     protected async onDidOpenTextDocument(params: DidOpenTextDocumentParams, ipythonMode = IPythonMode.None) {
         const filePath = this._uriParser.decodeTextDocumentUri(params.textDocument.uri);
 
-        if (!(this.fs as PyrightFileSystem).addUriMap(params.textDocument.uri, filePath)) {
+        if (!this._serviceFS.addUriMap(params.textDocument.uri, filePath)) {
             // We do not support opening 1 file with 2 different uri.
             return;
         }
@@ -1169,7 +1199,7 @@ export abstract class LanguageServerBase implements LanguageServerInterface {
         this.recordUserInteractionTime();
 
         const filePath = this._uriParser.decodeTextDocumentUri(params.textDocument.uri);
-        if (!(this.fs as PyrightFileSystem).hasUriMapEntry(params.textDocument.uri, filePath)) {
+        if (!this._serviceFS.hasUriMapEntry(params.textDocument.uri, filePath)) {
             // We do not support opening 1 file with 2 different uri.
             return;
         }
@@ -1185,7 +1215,7 @@ export abstract class LanguageServerBase implements LanguageServerInterface {
 
     protected async onDidCloseTextDocument(params: DidCloseTextDocumentParams) {
         const filePath = this._uriParser.decodeTextDocumentUri(params.textDocument.uri);
-        if (!(this.fs as PyrightFileSystem).removeUriMap(params.textDocument.uri, filePath)) {
+        if (!this._serviceFS.removeUriMap(params.textDocument.uri, filePath)) {
             // We do not support opening 1 file with 2 different uri.
             return;
         }
@@ -1196,9 +1226,9 @@ export abstract class LanguageServerBase implements LanguageServerInterface {
 
     protected onDidChangeWatchedFiles(params: DidChangeWatchedFilesParams) {
         params.changes.forEach((change) => {
-            const filePath = this.fs.realCasePath(this._uriParser.decodeTextDocumentUri(change.uri));
+            const filePath = this._serviceFS.realCasePath(this._uriParser.decodeTextDocumentUri(change.uri));
             const eventType: FileWatcherEventType = change.type === 1 ? 'add' : 'change';
-            this._fileWatcherProvider.onFileChange(eventType, filePath);
+            this._serverOptions.fileWatcherHandler.onFileChange(eventType, filePath);
         });
     }
 
@@ -1259,7 +1289,7 @@ export abstract class LanguageServerBase implements LanguageServerInterface {
         workspace.serviceInstance.resolveCompletionItem(
             filePath,
             item,
-            this.getCompletionOptions(),
+            this.getCompletionOptions(workspace),
             /* nameMap */ undefined,
             token
         );
@@ -1269,14 +1299,13 @@ export abstract class LanguageServerBase implements LanguageServerInterface {
         workspace: WorkspaceServiceInstance,
         filePath: string,
         position: Position,
-        workspacePath: string,
         options: CompletionOptions,
         token: CancellationToken
     ): Promise<CompletionResultsList | undefined> {
         return workspace.serviceInstance.getCompletionsForPosition(
             filePath,
             position,
-            workspacePath,
+            workspace.path,
             options,
             undefined,
             token
@@ -1294,19 +1323,24 @@ export abstract class LanguageServerBase implements LanguageServerInterface {
         });
     }
 
-    protected getCompletionOptions(params?: CompletionParams) {
+    protected getCompletionOptions(workspace: WorkspaceServiceInstance, params?: CompletionParams): CompletionOptions {
         return {
             format: this.client.completionDocFormat,
             snippet: this.client.completionSupportsSnippet,
             lazyEdit: this.client.completionItemResolveSupportsAdditionalTextEdits,
             autoImport: true,
+            extraCommitChars: false,
+            importFormat: ImportFormat.Absolute,
         };
     }
 
     protected createWorkspaceServiceInstance(
-        workspace: WorkspaceFolder | undefined,
+        workspaceFolder: WorkspaceFolder | undefined,
         rootPath: string,
-        kind: string = WellKnownWorkspaceKinds.Regular
+        path: string,
+        kinds: string[] = [WellKnownWorkspaceKinds.Regular],
+        owns?: (filePath: string) => boolean,
+        services?: WorkspaceServices
     ): WorkspaceServiceInstance {
         // 5 seconds default
         const defaultBackOffTime = 5 * 1000;
@@ -1315,44 +1349,55 @@ export abstract class LanguageServerBase implements LanguageServerInterface {
         const multiWorkspaceBackOffTime = 10 * 60 * 1000;
 
         const libraryReanalysisTimeProvider =
-            kind === WellKnownWorkspaceKinds.Regular
+            kinds.length === 1 && kinds[0] === WellKnownWorkspaceKinds.Regular
                 ? () =>
-                      this._workspaceMap.hasMultipleWorkspaces(kind) ? multiWorkspaceBackOffTime : defaultBackOffTime
+                      this._workspaceMap.hasMultipleWorkspaces(kinds[0])
+                          ? multiWorkspaceBackOffTime
+                          : defaultBackOffTime
                 : () => defaultBackOffTime;
 
+        const rootUri = workspaceFolder?.uri ?? '';
+        owns = owns ?? ((f) => f.startsWith(rootPath));
+
         return {
-            workspaceName: workspace?.name ?? '',
+            workspaceName: workspaceFolder?.name ?? '',
             rootPath,
-            rootUri: workspace?.uri ?? '',
-            kind,
-            serviceInstance: this.createAnalyzerService(workspace?.name ?? rootPath, libraryReanalysisTimeProvider),
+            path,
+            uri: rootUri,
+            kinds,
+            serviceInstance: this.createAnalyzerService(
+                workspaceFolder?.name ?? path,
+                services,
+                libraryReanalysisTimeProvider
+            ),
             disableLanguageServices: false,
             disableOrganizeImports: false,
             disableWorkspaceSymbol: false,
             isInitialized: createDeferred<boolean>(),
             searchPathsToWatch: [],
+            owns,
         };
     }
 
-    protected convertDiagnostics(fileDiagnostics: FileDiagnostics): PublishDiagnosticsParams[] {
+    protected convertDiagnostics(fs: FileSystem, fileDiagnostics: FileDiagnostics): PublishDiagnosticsParams[] {
         return [
             {
-                uri: convertPathToUri(this.fs, fileDiagnostics.filePath),
+                uri: convertPathToUri(fs, fileDiagnostics.filePath),
                 version: fileDiagnostics.version,
-                diagnostics: this._convertDiagnostics(fileDiagnostics.diagnostics),
+                diagnostics: this._convertDiagnostics(fs, fileDiagnostics.diagnostics),
             },
         ];
     }
 
-    protected onAnalysisCompletedHandler(results: AnalysisResults): void {
+    protected onAnalysisCompletedHandler(fs: FileSystem, results: AnalysisResults): void {
         // Send the computed diagnostics to the client.
         results.diagnostics.forEach((fileDiag) => {
-            if (this.fs.isInZipOrEgg(fileDiag.filePath)) {
+            if (fs.isInZipOrEgg(fileDiag.filePath)) {
                 return;
             }
 
-            this._sendDiagnostics(this.convertDiagnostics(fileDiag));
-            (this.fs as PyrightFileSystem).pendingRequest(fileDiag.filePath, fileDiag.diagnostics.length > 0);
+            this._sendDiagnostics(this.convertDiagnostics(fs, fileDiag));
+            this._serviceFS.pendingRequest(fileDiag.filePath, fileDiag.diagnostics.length > 0);
         });
 
         if (!this._progressReporter.isEnabled(results)) {
@@ -1470,7 +1515,7 @@ export abstract class LanguageServerBase implements LanguageServerInterface {
         };
     }
 
-    private _convertDiagnostics(diags: AnalyzerDiagnostic[]): Diagnostic[] {
+    private _convertDiagnostics(fs: FileSystem, diags: AnalyzerDiagnostic[]): Diagnostic[] {
         const convertedDiags: Diagnostic[] = [];
 
         diags.forEach((diag) => {
@@ -1478,7 +1523,10 @@ export abstract class LanguageServerBase implements LanguageServerInterface {
             const rule = diag.getRule();
             const vsDiag = Diagnostic.create(diag.range, diag.message, severity, rule, this._serverOptions.productName);
 
-            if (diag.category === DiagnosticCategory.UnusedCode) {
+            if (
+                diag.category === DiagnosticCategory.UnusedCode ||
+                diag.category === DiagnosticCategory.UnreachableCode
+            ) {
                 vsDiag.tags = [DiagnosticTag.Unnecessary];
                 vsDiag.severity = DiagnosticSeverity.Hint;
 
@@ -1508,10 +1556,10 @@ export abstract class LanguageServerBase implements LanguageServerInterface {
             const relatedInfo = diag.getRelatedInfo();
             if (relatedInfo.length > 0) {
                 vsDiag.relatedInformation = relatedInfo
-                    .filter((info) => !this.fs.isInZipOrEgg(info.filePath))
+                    .filter((info) => !fs.isInZipOrEgg(info.filePath))
                     .map((info) =>
                         DiagnosticRelatedInformation.create(
-                            Location.create(convertPathToUri(this.fs, info.filePath), info.range),
+                            Location.create(convertPathToUri(fs, info.filePath), info.range),
                             info.message
                         )
                     );
@@ -1532,6 +1580,7 @@ export abstract class LanguageServerBase implements LanguageServerInterface {
                     return DiagnosticSeverity.Information;
 
                 case DiagnosticCategory.UnusedCode:
+                case DiagnosticCategory.UnreachableCode:
                 case DiagnosticCategory.Deprecated:
                     return DiagnosticSeverity.Hint;
             }

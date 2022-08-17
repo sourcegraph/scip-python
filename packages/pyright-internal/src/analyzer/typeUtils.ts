@@ -53,6 +53,7 @@ import {
     TypeCategory,
     TypeCondition,
     TypeFlags,
+    TypeSameOptions,
     TypeVarScopeId,
     TypeVarType,
     UnionType,
@@ -464,9 +465,148 @@ export function mapSubtypes(type: Type, callback: (type: Type) => Type | undefin
     return transformedSubtype;
 }
 
-export function doForEachSubtype(type: Type, callback: (type: Type, index: number) => void): void {
+// Sorts types into a deterministic order.
+export function sortTypes(types: Type[]): Type[] {
+    return types.slice(0).sort((a, b) => {
+        return compareTypes(a, b);
+    });
+}
+
+function compareTypes(a: Type, b: Type): number {
+    if (a.category !== b.category) {
+        return b.category - a.category;
+    }
+
+    switch (a.category) {
+        case TypeCategory.Unbound:
+        case TypeCategory.Unknown:
+        case TypeCategory.Any:
+        case TypeCategory.None:
+        case TypeCategory.Never:
+        case TypeCategory.Union: {
+            return 0;
+        }
+
+        case TypeCategory.Function: {
+            const bFunc = b as FunctionType;
+
+            const aParamCount = a.details.parameters.length;
+            const bParamCount = bFunc.details.parameters.length;
+            if (aParamCount !== bParamCount) {
+                return bParamCount - aParamCount;
+            }
+
+            for (let i = 0; i < aParamCount; i++) {
+                const aParam = a.details.parameters[i];
+                const bParam = bFunc.details.parameters[i];
+                if (aParam.category !== bParam.category) {
+                    return bParam.category - aParam.category;
+                }
+
+                const typeComparison = compareTypes(aParam.type, bParam.type);
+                if (typeComparison !== 0) {
+                    return typeComparison;
+                }
+            }
+
+            const returnTypeComparison = compareTypes(
+                a.details.declaredReturnType ?? UnknownType.create(),
+                bFunc.details.declaredReturnType ?? UnknownType.create()
+            );
+
+            if (returnTypeComparison !== 0) {
+                return returnTypeComparison;
+            }
+
+            const aName = a.details.name;
+            const bName = bFunc.details.name;
+
+            if (aName < bName) {
+                return -1;
+            } else if (aName > bName) {
+                return 1;
+            }
+
+            return 0;
+        }
+
+        case TypeCategory.OverloadedFunction: {
+            const bOver = b as OverloadedFunctionType;
+
+            const aOverloadCount = a.overloads.length;
+            const bOverloadCount = bOver.overloads.length;
+            if (aOverloadCount !== bOverloadCount) {
+                return bOverloadCount - aOverloadCount;
+            }
+
+            for (let i = 0; i < aOverloadCount; i++) {
+                const typeComparison = compareTypes(a.overloads[i], bOver.overloads[i]);
+                if (typeComparison !== 0) {
+                    return typeComparison;
+                }
+            }
+
+            return 0;
+        }
+
+        case TypeCategory.Class: {
+            const bClass = b as ClassType;
+
+            // Sort instances before instantiables.
+            if (isClassInstance(a) && isInstantiableClass(bClass)) {
+                return -1;
+            } else if (isInstantiableClass(a) && isClassInstance(bClass)) {
+                return 1;
+            }
+
+            // Sort literals before non-literals.
+            if (isLiteralType(a)) {
+                if (!isLiteralType(bClass)) {
+                    return -1;
+                }
+            } else if (isLiteralType(bClass)) {
+                return 1;
+            }
+
+            // Sort non-generics before generics.
+            if (a.details.typeParameters.length > 0 || isTupleClass(a)) {
+                if (bClass.details.typeParameters.length === 0) {
+                    return 1;
+                }
+            } else if (bClass.details.typeParameters.length > 0 || isTupleClass(bClass)) {
+                return -1;
+            }
+
+            // Sort by class name.
+            const aName = a.details.name;
+            const bName = (b as ClassType).details.name;
+            return aName < bName ? -1 : aName === bName ? 0 : 1;
+        }
+
+        case TypeCategory.Module: {
+            const aName = a.moduleName;
+            const bName = (b as ModuleType).moduleName;
+            return aName < bName ? -1 : aName === bName ? 0 : 1;
+        }
+
+        case TypeCategory.TypeVar: {
+            const aName = a.details.name;
+            const bName = (b as TypeVarType).details.name;
+            return aName < bName ? -1 : aName === bName ? 0 : 1;
+        }
+    }
+
+    return 1;
+}
+
+export function doForEachSubtype(
+    type: Type,
+    callback: (type: Type, index: number) => void,
+    sortSubtypes = false
+): void {
     if (isUnion(type)) {
-        type.subtypes.forEach((subtype, index) => {
+        const subtypes = sortSubtypes ? sortTypes(type.subtypes) : type.subtypes;
+        subtypes.forEach((subtype, index) => {
             callback(subtype, index);
         });
     } else {
@@ -475,13 +615,13 @@ export function doForEachSubtype(type: Type, callback: (type: Type, index: numbe
 }
 
 // Determines if all of the types in the array are the same.
-export function areTypesSame(types: Type[], ignorePseudoGeneric: boolean): boolean {
+export function areTypesSame(types: Type[], options: TypeSameOptions): boolean {
     if (types.length < 2) {
         return true;
     }
 
     for (let i = 1; i < types.length; i++) {
-        if (!isTypeSame(types[0], types[i], ignorePseudoGeneric)) {
+        if (!isTypeSame(types[0], types[i], options)) {
             return false;
         }
     }
@@ -567,24 +707,6 @@ export function getFullNameOfType(type: Type): string | undefined {
     }
 
     return undefined;
-}
-
-export function stripLiteralValue(type: Type): Type {
-    if (isClass(type)) {
-        if (type.literalValue !== undefined) {
-            type = ClassType.cloneWithLiteral(type, /* value */ undefined);
-        }
-
-        return type;
-    }
-
-    if (isUnion(type)) {
-        return mapSubtypes(type, (subtype) => {
-            return stripLiteralValue(subtype);
-        });
-    }
-
-    return type;
 }
 
 export function addConditionToType(type: Type, condition: TypeCondition[] | undefined): Type {
@@ -760,52 +882,66 @@ export function isLiteralTypeOrUnion(type: Type): boolean {
     return false;
 }
 
-export function containsLiteralType(type: Type, includeTypeArgs = false, recursionCount = 0): boolean {
+export function containsType(
+    type: Type,
+    predicate: (t: Type) => boolean,
+    includeTypeArgs = false,
+    recursionCount = 0
+): boolean {
     if (recursionCount > maxTypeRecursionCount) {
         return false;
     }
     recursionCount++;
 
-    if (isClassInstance(type)) {
-        if (isLiteralType(type)) {
-            return true;
-        }
-
-        if (ClassType.isBuiltIn(type, 'LiteralString')) {
-            return true;
-        }
+    if (predicate(type)) {
+        return true;
     }
 
     if (includeTypeArgs && isClass(type)) {
         const typeArgs = type.tupleTypeArguments?.map((t) => t.type) || type.typeArguments;
         if (typeArgs) {
-            return typeArgs.some((typeArg) => containsLiteralType(typeArg, includeTypeArgs, recursionCount));
+            return typeArgs.some((typeArg) => containsType(typeArg, predicate, includeTypeArgs, recursionCount));
         }
     }
 
     if (isUnion(type)) {
-        return type.subtypes.some((subtype) => containsLiteralType(subtype, includeTypeArgs, recursionCount));
+        return type.subtypes.some((subtype) => containsType(subtype, predicate, includeTypeArgs, recursionCount));
     }
 
     if (isOverloadedFunction(type)) {
-        return type.overloads.some((overload) => containsLiteralType(overload, includeTypeArgs, recursionCount));
+        return type.overloads.some((overload) => containsType(overload, predicate, includeTypeArgs, recursionCount));
     }
 
     if (isFunction(type)) {
         const returnType = FunctionType.getSpecializedReturnType(type);
-        if (returnType && containsLiteralType(returnType, includeTypeArgs, recursionCount)) {
+        if (returnType && containsType(returnType, predicate, includeTypeArgs, recursionCount)) {
             return true;
         }
 
         for (let i = 0; i < type.details.parameters.length; i++) {
             const paramType = FunctionType.getEffectiveParameterType(type, i);
-            if (containsLiteralType(paramType, includeTypeArgs, recursionCount)) {
+            if (containsType(paramType, predicate, includeTypeArgs, recursionCount)) {
                 return true;
             }
         }
     }
 
     return false;
+}
+
+export function containsLiteralType(type: Type, includeTypeArgs = false, recursionCount = 0): boolean {
+    return containsType(
+        type,
+        (t) => {
+            if (!isClassInstance(t)) {
+                return false;
+            }
+
+            return isLiteralType(t) || ClassType.isBuiltIn(t, 'LiteralString');
+        },
+        includeTypeArgs,
+        recursionCount
+    );
 }
 
 // If all of the subtypes are literals with the same built-in class (e.g.
@@ -1997,20 +2133,14 @@ export function combineSameSizedTuples(type: Type, tupleType: Type | undefined) 
 
 // Tuples require special handling for specialization. This method computes
 // the "effective" type argument, which is a union of the variadic type
-// arguments. If stripLiterals is true, literal values are stripped when
-// computing the effective type args.
+// arguments.
 export function specializeTupleClass(
     classType: ClassType,
     typeArgs: TupleTypeArgument[],
     isTypeArgumentExplicit = true,
-    stripLiterals = true,
     isUnpackedTuple = false
 ): ClassType {
     let combinedTupleType = combineTypes(typeArgs.map((t) => t.type));
-
-    if (stripLiterals) {
-        combinedTupleType = stripLiteralValue(combinedTupleType);
-    }
 
     // An empty tuple has an effective type of Any.
     if (isNever(combinedTupleType)) {
@@ -2832,6 +2962,9 @@ class TypeVarTransformer {
         let variadicTypesToUnpack: TupleTypeArgument[] | undefined;
         const specializedDefaultArgs: (Type | undefined)[] = [];
 
+        const wasTransformingTypeArg = this._isTransformingTypeArg;
+        this._isTransformingTypeArg = true;
+
         for (let i = 0; i < functionType.details.parameters.length; i++) {
             const paramType = FunctionType.getEffectiveParameterType(functionType, i);
             const specializedType = this.apply(paramType, recursionCount);
@@ -2872,6 +3005,8 @@ class TypeVarTransformer {
                 typesRequiredSpecialization = true;
             }
         }
+
+        this._isTransformingTypeArg = wasTransformingTypeArg;
 
         if (!typesRequiredSpecialization) {
             return functionType;

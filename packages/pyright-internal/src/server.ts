@@ -61,8 +61,8 @@ export class PyrightServer extends LanguageServerBase {
                 rootDirectory,
                 version,
                 workspaceMap,
-                fileSystem: fileSystem,
-                fileWatcherProvider,
+                fileSystem,
+                fileWatcherHandler: fileWatcherProvider,
                 cancellationProvider: new FileBasedCancellationProvider('bg'),
                 maxAnalysisTimeInForeground,
                 supportedCodeActions: [CodeActionKind.QuickFix, CodeActionKind.SourceOrganizeImports],
@@ -90,7 +90,7 @@ export class PyrightServer extends LanguageServerBase {
         };
 
         try {
-            const pythonSection = await this.getConfiguration(workspace.rootUri, 'python');
+            const pythonSection = await this.getConfiguration(workspace.uri, 'python');
             if (pythonSection) {
                 const pythonPath = pythonSection.pythonPath;
                 if (pythonPath && isString(pythonPath) && !isPythonBinary(pythonPath)) {
@@ -110,7 +110,7 @@ export class PyrightServer extends LanguageServerBase {
                 }
             }
 
-            const pythonAnalysisSection = await this.getConfiguration(workspace.rootUri, 'python.analysis');
+            const pythonAnalysisSection = await this.getConfiguration(workspace.uri, 'python.analysis');
             if (pythonAnalysisSection) {
                 const typeshedPaths = pythonAnalysisSection.typeshedPaths;
                 if (typeshedPaths && Array.isArray(typeshedPaths) && typeshedPaths.length > 0) {
@@ -184,7 +184,7 @@ export class PyrightServer extends LanguageServerBase {
                 serverSettings.autoSearchPaths = true;
             }
 
-            const pyrightSection = await this.getConfiguration(workspace.rootUri, 'pyright');
+            const pyrightSection = await this.getConfiguration(workspace.uri, 'pyright');
             if (pyrightSection) {
                 if (pyrightSection.openFilesOnly !== undefined) {
                     serverSettings.openFilesOnly = !!pyrightSection.openFilesOnly;
@@ -219,7 +219,7 @@ export class PyrightServer extends LanguageServerBase {
     }
 
     protected override createHost() {
-        return new FullAccessHost(this.fs);
+        return new FullAccessHost(this._serviceFS);
     }
 
     protected override createImportResolver(fs: FileSystem, options: ConfigOptions, host: Host): ImportResolver {
@@ -248,7 +248,13 @@ export class PyrightServer extends LanguageServerBase {
 
         const filePath = this._uriParser.decodeTextDocumentUri(params.textDocument.uri);
         const workspace = await this.getWorkspaceForFile(filePath);
-        return CodeActionProvider.getCodeActionsForPosition(workspace, filePath, params.range, token);
+        return CodeActionProvider.getCodeActionsForPosition(
+            workspace,
+            filePath,
+            params.range,
+            params.context.only,
+            token
+        );
     }
 
     protected createProgressReporter(): ProgressReporter {

@@ -42,7 +42,7 @@ import { PythonVersion, versionFromString } from '../common/pythonVersion';
 import { equateStringsCaseInsensitive } from '../common/stringUtils';
 import * as StringUtils from '../common/stringUtils';
 import { isIdentifierChar, isIdentifierStartChar } from '../parser/characters';
-import { PyrightFileSystem } from '../pyrightFileSystem';
+import { SupportPartialStubs } from '../pyrightFileSystem';
 import { ImplicitImport, ImportResult, ImportType } from './importResult';
 import { getDirectoryLeadingDotsPointsTo } from './importStatementUtils';
 import { ImportPath, ParentDirectoryCache } from './parentDirectoryCache';
@@ -130,7 +130,7 @@ export class ImportResolver {
 
         this._invalidateFileSystemCache();
 
-        if (this.fileSystem instanceof PyrightFileSystem) {
+        if (SupportPartialStubs.is(this.fileSystem)) {
             this.fileSystem.clearPartialStubs();
         }
     }
@@ -771,7 +771,7 @@ export class ImportResolver {
     }
 
     ensurePartialStubPackages(execEnv: ExecutionEnvironment) {
-        if (!(this.fileSystem instanceof PyrightFileSystem)) {
+        if (!SupportPartialStubs.is(this.fileSystem)) {
             return false;
         }
 
@@ -782,15 +782,16 @@ export class ImportResolver {
         const fs = this.fileSystem;
         const ignored: string[] = [];
         const paths: string[] = [];
+        const typeshedPathEx = this.getTypeshedPathEx(execEnv, ignored);
 
         // Add paths to search stub packages.
         addPaths(this._configOptions.stubPath);
         addPaths(execEnv.root);
         execEnv.extraPaths.forEach((p) => addPaths(p));
-        addPaths(this.getTypeshedPathEx(execEnv, ignored));
+        addPaths(typeshedPathEx);
         this.getPythonSearchPaths(ignored).forEach((p) => addPaths(p));
 
-        this.fileSystem.processPartialStubPackages(paths, this.getImportRoots(execEnv));
+        this.fileSystem.processPartialStubPackages(paths, this.getImportRoots(execEnv), typeshedPathEx);
         this._invalidateFileSystemCache();
         return true;
 
@@ -1363,7 +1364,7 @@ export class ImportResolver {
             );
 
             if (typeshedStdlibImport) {
-                typeshedStdlibImport.isTypeshedFile = true;
+                typeshedStdlibImport.isStdlibTypeshedFile = true;
                 return typeshedStdlibImport;
             }
 
@@ -1378,7 +1379,7 @@ export class ImportResolver {
             );
 
             if (typeshedImport) {
-                typeshedImport.isTypeshedFile = true;
+                typeshedImport.isThirdPartyTypeshedFile = true;
                 bestResultSoFar = this._pickBestImport(bestResultSoFar, typeshedImport, moduleDescriptor);
             }
         }

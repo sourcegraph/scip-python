@@ -291,6 +291,14 @@ export namespace Localizer {
             new ParameterizedString<{ type: string }>(getRawString('Diagnostic.constructorNoArgs'));
         export const constructorParametersMismatch = () =>
             new ParameterizedString<{ classType: string }>(getRawString('Diagnostic.constructorParametersMismatch'));
+        export const containmentAlwaysFalse = () =>
+            new ParameterizedString<{ leftType: string; rightType: string }>(
+                getRawString('Diagnostic.containmentAlwaysFalse')
+            );
+        export const containmentAlwaysTrue = () =>
+            new ParameterizedString<{ leftType: string; rightType: string }>(
+                getRawString('Diagnostic.containmentAlwaysTrue')
+            );
         export const continueInFinally = () => getRawString('Diagnostic.continueInFinally');
         export const continueOutsideLoop = () => getRawString('Diagnostic.continueOutsideLoop');
         export const dataClassBaseClassNotFrozen = () => getRawString('Diagnostic.dataClassBaseClassNotFrozen');
@@ -953,6 +961,10 @@ export namespace Localizer {
         export const unusedCoroutine = () => getRawString('Diagnostic.unusedCoroutine');
         export const unusedExpression = () => getRawString('Diagnostic.unusedExpression');
         export const varAnnotationIllegal = () => getRawString('Diagnostic.varAnnotationIllegal');
+        export const variableFinalOverride = () =>
+            new ParameterizedString<{ className: string; name: string }>(
+                getRawString('Diagnostic.variableFinalOverride')
+            );
         export const variadicTypeArgsTooMany = () => getRawString('Diagnostic.variadicTypeArgsTooMany');
         export const variadicTypeParamTooManyAlias = () =>
             new ParameterizedString<{ names: string }>(getRawString('Diagnostic.variadicTypeParamTooManyAlias'));
@@ -1096,6 +1108,7 @@ export namespace Localizer {
         export const overloadWithImplementation = () => getRawString('DiagnosticAddendum.overloadWithImplementation');
         export const overriddenMethod = () => getRawString('DiagnosticAddendum.overriddenMethod');
         export const overriddenSymbol = () => getRawString('DiagnosticAddendum.overriddenSymbol');
+        export const overrideNoOverloadMatches = () => getRawString('DiagnosticAddendum.overrideNoOverloadMatches');
         export const overrideNotClassMethod = () => getRawString('DiagnosticAddendum.overrideNotClassMethod');
         export const overrideNotInstanceMethod = () => getRawString('DiagnosticAddendum.overrideNotInstanceMethod');
         export const overrideNotStaticMethod = () => getRawString('DiagnosticAddendum.overrideNotStaticMethod');
