@@ -36,4 +36,6 @@ jobs:
 
       - run: cd ./packages/pyright-scip/ && npm install && npm run build
 
+      - run: python --version
+
       - run: cd ./packages/pyright-scip/ && npm run check-snapshots
