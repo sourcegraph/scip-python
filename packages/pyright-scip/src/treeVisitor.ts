@@ -1179,7 +1179,9 @@ export class TreeVisitor extends ParseTreeWalker {
                     }
                 }
 
-                const enclosingSuite = ParseTreeUtils.getEnclosingSuite(node as ParseNode);
+                // If possible, we use the name of the surrounding scope to
+                // make sure that we have the correct full path to the name.
+                const enclosingSuite = ParseTreeUtils.getEnclosingSuite(node);
                 if (enclosingSuite) {
                     const enclosingParent = enclosingSuite.parent;
                     if (enclosingParent) {
@@ -1187,6 +1189,24 @@ export class TreeVisitor extends ParseTreeWalker {
                             case ParseNodeType.Function:
                             case ParseNodeType.Lambda:
                                 return ScipSymbol.local(this.counter.next());
+
+                            // It's possible we can make a Suite that doesn't properly enclose
+                            // the scope of these items in a meaningful way for SCIP.
+                            //
+                            // So we need to check whether this scope should actually
+                            // be part public or private and therefore whether it
+                            // must be a local, otherwise it will be some other type
+                            // (not a ParseNodeType.Name)
+                            case ParseNodeType.If:
+                            case ParseNodeType.Try:
+                            case ParseNodeType.Except:
+                            case ParseNodeType.While:
+                            case ParseNodeType.For: {
+                                if (ParseTreeUtils.getEnclosingClassOrFunction(node)) {
+                                    return ScipSymbol.local(this.counter.next());
+                                }
+                                break;
+                            }
                         }
                     }
                 }
