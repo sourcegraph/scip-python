@@ -1179,20 +1179,26 @@ export class TreeVisitor extends ParseTreeWalker {
                     }
                 }
 
-                const enclosingSuite = ParseTreeUtils.getEnclosingSuite(node as ParseNode);
+                const enclosingSuite = ParseTreeUtils.getEnclosingSuite(node);
                 if (enclosingSuite) {
-                    const enclosingParent = enclosingSuite.parent;
-                    if (enclosingParent) {
-                        switch (enclosingParent.nodeType) {
-                            case ParseNodeType.Function:
-                            case ParseNodeType.Lambda:
-                                return ScipSymbol.local(this.counter.next());
-                        }
+                    // Certain enclosing suites contain their scope completely.
+                    //
+                    // For example, functions do not leak local variables.
+                    // However, if statements and for loops do leak local variables.
+                    //
+                    // Note:
+                    // It's possible we could have a performance improvement by
+                    // only walking these functions if the
+                    // enclosingSuite.parent is a certain nodetype, but for now
+                    // I don't want to do that because it's easy to miss a
+                    // case.
+                    if (ParseTreeUtils.getEnclosingFunction(node) || ParseTreeUtils.getEnclosingLambda(node)) {
+                        return ScipSymbol.local(this.counter.next());
                     }
                 }
 
                 return ScipSymbol.global(
-                    this.getScipSymbol(enclosingSuite || node.parent!),
+                    this.getScipSymbol(enclosingSuite || parent),
                     termDescriptor((node as NameNode).value)
                 );
             }
