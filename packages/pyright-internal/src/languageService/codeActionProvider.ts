@@ -21,6 +21,7 @@ export class CodeActionProvider {
         workspace: WorkspaceServiceInstance,
         filePath: string,
         range: Range,
+        kinds: CodeActionKind[] | undefined,
         token: CancellationToken
     ) {
         throwIfCancellationRequested(token);
@@ -44,7 +45,7 @@ export class CodeActionProvider {
                         Command.create(
                             Localizer.CodeAction.createTypeStub(),
                             Commands.createTypeStub,
-                            workspace.rootPath,
+                            workspace.path,
                             action.moduleName,
                             filePath
                         ),

@@ -188,12 +188,18 @@ export function printType(
                 return type.typeAliasInfo.name;
             }
 
-            return printType(
-                type,
-                printTypeFlags & ~PrintTypeFlags.ExpandTypeAlias,
-                returnTypeCallback,
-                recursionTypes
-            );
+            try {
+                recursionTypes.push(type);
+
+                return printType(
+                    type,
+                    printTypeFlags & ~PrintTypeFlags.ExpandTypeAlias,
+                    returnTypeCallback,
+                    recursionTypes
+                );
+            } finally {
+                recursionTypes.pop();
+            }
         }
 
         return '...';
@@ -303,14 +309,7 @@ export function printType(
                             let foundMatch = false;
 
                             for (const unionSubtype of type.subtypes) {
-                                if (
-                                    isTypeSame(
-                                        sourceSubtype,
-                                        unionSubtype,
-                                        /* ignorePseudoGeneric */ undefined,
-                                        /* ignoreTypeFlags */ true
-                                    )
-                                ) {
+                                if (isTypeSame(sourceSubtype, unionSubtype, { ignoreTypeFlags: true })) {
                                     if (!subtypeHandledSet.has(unionSubtypeIndex)) {
                                         allSubtypesPreviouslyHandled = false;
                                     }

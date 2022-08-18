@@ -311,6 +311,12 @@ test('Loops26', () => {
     TestUtils.validateResults(analysisResults, 0);
 });
 
+test('Loops27', () => {
+    const analysisResults = TestUtils.typeAnalyzeSampleFiles(['loops27.py']);
+
+    TestUtils.validateResults(analysisResults, 0);
+});
+
 test('ForLoop1', () => {
     const analysisResults = TestUtils.typeAnalyzeSampleFiles(['forLoop1.py']);
 
@@ -606,7 +612,7 @@ test('Classes5', () => {
     // Turn on reportIncompatibleVariableOverride.
     configOptions.diagnosticRuleSet.reportIncompatibleVariableOverride = 'error';
     analysisResults = TestUtils.typeAnalyzeSampleFiles(['classes5.py'], configOptions);
-    TestUtils.validateResults(analysisResults, 28);
+    TestUtils.validateResults(analysisResults, 32);
 });
 
 test('Classes6', () => {
@@ -719,6 +725,12 @@ test('Enums8', () => {
     TestUtils.validateResults(analysisResults, 1);
 });
 
+test('Enums9', () => {
+    const analysisResults = TestUtils.typeAnalyzeSampleFiles(['enums9.py']);
+
+    TestUtils.validateResults(analysisResults, 0);
+});
+
 test('TypeGuard1', () => {
     const analysisResults = TestUtils.typeAnalyzeSampleFiles(['typeGuard1.py']);
 
@@ -752,7 +764,7 @@ test('Never1', () => {
 test('Never2', () => {
     const analysisResults = TestUtils.typeAnalyzeSampleFiles(['never2.py']);
 
-    TestUtils.validateResults(analysisResults, 3);
+    TestUtils.validateResults(analysisResults, 4);
 });
 
 test('TypePromotions1', () => {
@@ -981,6 +993,11 @@ test('List1', () => {
     TestUtils.validateResults(analysisResults, 1);
 });
 
+test('List2', () => {
+    const analysisResults = TestUtils.typeAnalyzeSampleFiles(['list2.py']);
+    TestUtils.validateResults(analysisResults, 0);
+});
+
 test('Comparison1', () => {
     const configOptions = new ConfigOptions('.');
 
@@ -1106,6 +1123,12 @@ test('Constructor12', () => {
 
 test('Constructor13', () => {
     const analysisResults = TestUtils.typeAnalyzeSampleFiles(['constructor13.py']);
+
+    TestUtils.validateResults(analysisResults, 0);
+});
+
+test('Constructor14', () => {
+    const analysisResults = TestUtils.typeAnalyzeSampleFiles(['constructor14.py']);
 
     TestUtils.validateResults(analysisResults, 0);
 });

@@ -63,7 +63,6 @@ import {
     partiallySpecializeType,
     specializeClassType,
     specializeTupleClass,
-    stripLiteralValue,
 } from './typeUtils';
 import { TypeVarContext } from './typeVarContext';
 
@@ -248,7 +247,7 @@ function narrowTypeBasedOnSequencePattern(
                     entry.subtype = ClassType.cloneAsInstance(
                         ClassType.cloneForSpecialization(
                             sequenceType,
-                            [stripLiteralValue(combineTypes(narrowedEntryTypes))],
+                            [evaluator.stripLiteralValue(combineTypes(narrowedEntryTypes))],
                             /* isTypeArgumentExplicit */ true
                         )
                     );
@@ -792,12 +791,12 @@ function narrowTypeBasedOnValuePattern(
                                 : AnyType.create();
                         }
 
-                        // Determine if we assignment is supported for this combination of
+                        // Determine if assignment is supported for this combination of
                         // value subtype and matching subtype.
                         const returnType = evaluator.useSpeculativeMode(pattern.expression, () =>
                             evaluator.getTypeOfMagicMethodReturn(
                                 valueSubtypeExpanded,
-                                [subjectSubtypeExpanded],
+                                [{ type: subjectSubtypeExpanded }],
                                 '__eq__',
                                 pattern.expression,
                                 /* expectedType */ undefined
@@ -1033,7 +1032,7 @@ function getTypeOfPatternSequenceEntry(
         // Note that we strip literal types here.
         const starEntryTypes = sequenceInfo.entryTypes
             .slice(starEntryIndex, starEntryIndex + sequenceInfo.entryTypes.length - entryCount + 1)
-            .map((type) => stripLiteralValue(type));
+            .map((type) => evaluator.stripLiteralValue(type));
 
         let entryType = combineTypes(starEntryTypes);
 

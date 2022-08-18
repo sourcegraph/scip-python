@@ -2,7 +2,7 @@
     "name": "vscode-pyright",
     "displayName": "Pyright",
     "description": "VS Code static type checking for Python",
-    "version": "1.1.257",
+    "version": "1.1.267",
     "private": true,
     "license": "MIT",
     "author": {
@@ -630,6 +630,17 @@
                                 "error"
                             ]
                         },
+                        "reportUnnecessaryContains": {
+                            "type": "string",
+                            "description": "Diagnostics for 'in' operation that is statically determined to be unnecessary. Such operations are sometimes indicative of a programming error.",
+                            "default": "none",
+                            "enum": [
+                                "none",
+                                "information",
+                                "warning",
+                                "error"
+                            ]
+                        },
                         "reportAssertAlwaysTrue": {
                             "type": "string",
                             "description": "Diagnostics for 'assert' statement that will provably always assert. This can be indicative of a programming error.",
@@ -870,7 +881,7 @@
         "ts-loader": "^9.3.1",
         "typescript": "~4.4.4",
         "vsce": "^2.7.0",
-        "webpack": "^5.73.0",
+        "webpack": "^5.74.0",
         "webpack-cli": "^4.10.0"
     }
 }

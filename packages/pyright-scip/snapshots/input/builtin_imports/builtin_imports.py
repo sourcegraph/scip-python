@@ -1,4 +1,4 @@
 import re
-from typing import Callable, Match, Optional
+from typing import Callable, Optional
 
-print(re, Callable, Match, Optional)
+print(re, Callable, Optional)

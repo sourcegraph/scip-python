@@ -36,6 +36,7 @@ import { ImportResolver, ImportResolverFactory } from '../../../analyzer/importR
 import { findNodeByOffset } from '../../../analyzer/parseTreeUtils';
 import { Program } from '../../../analyzer/program';
 import { AnalyzerService, configFileNames } from '../../../analyzer/service';
+import { CommandResult } from '../../../commands/commandResult';
 import { appendArray } from '../../../common/collectionUtils';
 import { ConfigOptions } from '../../../common/configOptions';
 import { ConsoleInterface, NullConsole } from '../../../common/console';
@@ -64,7 +65,8 @@ import {
     WellKnownWorkspaceKinds,
     WorkspaceServiceInstance,
 } from '../../../languageServerBase';
-import { AbbreviationInfo } from '../../../languageService/autoImporter';
+import { AbbreviationInfo, ImportFormat } from '../../../languageService/autoImporter';
+import { CompletionOptions } from '../../../languageService/completionProvider';
 import { DefinitionFilter } from '../../../languageService/definitionProvider';
 import { convertHoverResults } from '../../../languageService/hoverProvider';
 import { ParseNode } from '../../../parser/parseNodes';
@@ -78,7 +80,6 @@ import { createFromFileSystem, distlibFolder, libFolder, typeshedFolder } from '
 import * as vfs from '../vfs/filesystem';
 import { parseTestData } from './fourSlashParser';
 import {
-    CompilerSettings,
     FourSlashData,
     FourSlashFile,
     GlobalMetadataOptionNames,
@@ -133,71 +134,53 @@ export class TestState {
     activeFile!: FourSlashFile;
 
     constructor(
-        basePath: string,
+        projectRoot: string,
         public testData: FourSlashData,
         mountPaths?: Map<string, string>,
         hostSpecificFeatures?: HostSpecificFeatures
     ) {
-        this._hostSpecificFeatures = hostSpecificFeatures ?? new TestFeatures();
-
-        const nullConsole = new NullConsole();
-        const ignoreCase = toBoolean(testData.globalOptions[GlobalMetadataOptionNames.ignoreCase]);
+        const vfsInfo = createVfsInfoFromFourSlashData(projectRoot, testData);
+        this.rawConfigJson = vfsInfo.rawConfigJson;
 
         this._cancellationToken = new TestCancellationToken();
+        this._hostSpecificFeatures = hostSpecificFeatures ?? new TestFeatures();
 
-        const sourceFiles = [];
-        const files: vfs.FileSet = {};
-        for (const file of testData.files) {
-            // if one of file is configuration file, set config options from the given json
-            if (this._isConfig(file, ignoreCase)) {
-                try {
-                    this.rawConfigJson = JSONC.parse(file.content);
-                } catch (e: any) {
-                    throw new Error(`Failed to parse test ${file.fileName}: ${e.message}`);
-                }
-            } else {
-                files[file.fileName] = new vfs.File(file.content, { meta: file.fileOptions, encoding: 'utf8' });
-
-                if (!toBoolean(file.fileOptions[MetadataOptionNames.library])) {
-                    sourceFiles.push(file.fileName);
-                }
-            }
-        }
-
-        this.console = nullConsole;
+        this.console = new NullConsole();
         this.testFS = createFromFileSystem(
             host.HOST,
-            ignoreCase,
-            { cwd: basePath, files, meta: testData.globalOptions },
+            vfsInfo.ignoreCase,
+            { cwd: vfsInfo.projectRoot, files: vfsInfo.files, meta: testData.globalOptions },
             mountPaths
         );
 
         this.fs = new PyrightFileSystem(this.testFS);
-        this._files = sourceFiles;
+        this._files = vfsInfo.sourceFileNames;
 
-        const configOptions = this._convertGlobalOptionsToConfigOptions(this.testData.globalOptions, mountPaths);
+        const configOptions = this._convertGlobalOptionsToConfigOptions(vfsInfo.projectRoot, mountPaths);
         if (this.rawConfigJson) {
-            configOptions.initializeFromJson(this.rawConfigJson, 'basic', nullConsole, this.fs, testAccessHost);
+            configOptions.initializeFromJson(this.rawConfigJson, 'basic', this.console, this.fs, testAccessHost);
             this._applyTestConfigOptions(configOptions);
         }
 
         const service = this._createAnalysisService(
-            nullConsole,
+            this.console,
             this._hostSpecificFeatures.importResolverFactory,
             configOptions
         );
 
         this.workspace = {
             workspaceName: 'test workspace',
-            rootPath: this.fs.getModulePath(),
-            rootUri: convertPathToUri(this.fs, this.fs.getModulePath()),
-            kind: WellKnownWorkspaceKinds.Test,
+            rootPath: vfsInfo.projectRoot,
+            path: vfsInfo.projectRoot,
+            uri: convertPathToUri(this.fs, vfsInfo.projectRoot),
+            kinds: [WellKnownWorkspaceKinds.Test],
             serviceInstance: service,
             disableLanguageServices: false,
             disableOrganizeImports: false,
             disableWorkspaceSymbol: false,
             isInitialized: createDeferred<boolean>(),
             searchPathsToWatch: [],
+            owns: (f) => true,
         };
 
         const indexer = toBoolean(testData.globalOptions[GlobalMetadataOptionNames.indexer]);
@@ -214,7 +197,7 @@ export class TestState {
         }
 
         for (const filePath of this._files) {
-            const file = files[filePath] as vfs.File;
+            const file = vfsInfo.files[filePath] as vfs.File;
             if (file.meta?.[MetadataOptionNames.ipythonMode]) {
                 this.program.getSourceFile(filePath)?.test_enableIPythonMode(true);
             }
@@ -959,14 +942,14 @@ export class TestState {
                 );
 
                 if (map[name].edits) {
-                    const workspaceEdits = results as WorkspaceEdit;
+                    const workspaceEdits = CommandResult.is(results) ? results.edits : (results as WorkspaceEdit);
                     for (const edits of Object.values(workspaceEdits.changes!)) {
                         for (const edit of edits) {
                             if (map[name].edits!.filter((e) => this._editsAreEqual(e, edit)).length !== 1) {
                                 this.raiseError(
-                                    `doesn't contain expected result: ${stringify(map[name])}, actual: ${stringify(
-                                        edits
-                                    )}`
+                                    `${name} doesn't contain expected result: ${stringify(
+                                        map[name]
+                                    )}, actual: ${stringify(edits)}`
                                 );
                             }
                         }
@@ -1089,12 +1072,19 @@ export class TestState {
             const expectedCompletions = map[markerName].completions;
             const completionPosition = this.convertOffsetToPosition(filePath, marker.position);
 
-            const options = { format: docFormat, snippet: true, lazyEdit: true, autoImport: true };
+            const options: CompletionOptions = {
+                format: docFormat,
+                snippet: true,
+                lazyEdit: true,
+                autoImport: true,
+                extraCommitChars: true,
+                importFormat: ImportFormat.Absolute,
+            };
             const nameMap = abbrMap ? new Map<string, AbbreviationInfo>(Object.entries(abbrMap)) : undefined;
             const result = await this.workspace.serviceInstance.getCompletionsForPosition(
                 filePath,
                 completionPosition,
-                this.workspace.rootPath,
+                this.workspace.path,
                 options,
                 nameMap,
                 CancellationToken.None
@@ -1484,17 +1474,7 @@ export class TestState {
         this._cancellationToken.resetCancelled();
     }
 
-    private _isConfig(file: FourSlashFile, ignoreCase: boolean): boolean {
-        const comparer = getStringComparer(ignoreCase);
-        return configFileNames.some((f) => comparer(getBaseFileName(file.fileName), f) === Comparison.EqualTo);
-    }
-
-    private _convertGlobalOptionsToConfigOptions(
-        globalOptions: CompilerSettings,
-        mountPaths?: Map<string, string>
-    ): ConfigOptions {
-        const srtRoot: string = GlobalMetadataOptionNames.projectRoot;
-        const projectRoot = normalizeSlashes(globalOptions[srtRoot] ?? vfs.MODULE_PATH);
+    private _convertGlobalOptionsToConfigOptions(projectRoot: string, mountPaths?: Map<string, string>): ConfigOptions {
         const configOptions = new ConfigOptions(projectRoot);
 
         // add more global options as we need them
@@ -1959,6 +1939,10 @@ export class TestState {
         if (expected.detailDescription !== undefined) {
             assert.strictEqual(actual.labelDetails?.description, expected.detailDescription);
         }
+
+        if (expected.commitCharacters !== undefined) {
+            expect(expected.commitCharacters.sort()).toEqual(actual.commitCharacters?.sort());
+        }
     }
 }
 
@@ -2003,4 +1987,38 @@ export function getNodeAtMarker(codeOrState: string | TestState, markerName = 'm
     assert(node);
 
     return node;
+}
+
+export function createVfsInfoFromFourSlashData(projectRoot: string, testData: FourSlashData) {
+    const metaProjectRoot = testData.globalOptions[GlobalMetadataOptionNames.projectRoot];
+    projectRoot = metaProjectRoot ? combinePaths(projectRoot, metaProjectRoot) : projectRoot;
+
+    const ignoreCase = toBoolean(testData.globalOptions[GlobalMetadataOptionNames.ignoreCase]);
+
+    let rawConfigJson = '';
+    const sourceFileNames: string[] = [];
+    const files: vfs.FileSet = {};
+
+    for (const file of testData.files) {
+        // if one of file is configuration file, set config options from the given json
+        if (isConfig(file, ignoreCase)) {
+            try {
+                rawConfigJson = JSONC.parse(file.content);
+            } catch (e: any) {
+                throw new Error(`Failed to parse test ${file.fileName}: ${e.message}`);
+            }
+        } else {
+            files[file.fileName] = new vfs.File(file.content, { meta: file.fileOptions, encoding: 'utf8' });
+
+            if (!toBoolean(file.fileOptions[MetadataOptionNames.library])) {
+                sourceFileNames.push(file.fileName);
+            }
+        }
+    }
+    return { files, sourceFileNames, projectRoot, ignoreCase, rawConfigJson };
+}
+
+function isConfig(file: FourSlashFile, ignoreCase: boolean): boolean {
+    const comparer = getStringComparer(ignoreCase);
+    return configFileNames.some((f) => comparer(getBaseFileName(file.fileName), f) === Comparison.EqualTo);
 }

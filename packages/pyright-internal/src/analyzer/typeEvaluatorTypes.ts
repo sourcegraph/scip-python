@@ -42,6 +42,7 @@ import {
     Type,
     TypeCondition,
     TypeVarType,
+    UnknownType,
 } from './types';
 import { AssignTypeFlags, ClassMember } from './typeUtils';
 import { TypeVarContext } from './typeVarContext';
@@ -137,27 +138,12 @@ export const enum EvaluatorFlags {
     AllowUnpackedTypedDict = 1 << 23,
 }
 
-export interface SimpleTypeResult {
+export interface TypeResult {
     type: Type;
 
     // Is the type incomplete (i.e. not fully evaluated) because
     // some of the paths involve cyclical dependencies?
     isIncomplete?: boolean | undefined;
-}
-
-export interface TypeResult extends SimpleTypeResult {
-    node: ParseNode;
-
-    // Type consistency errors detected when evaluating this type.
-    typeErrors?: boolean | undefined;
-
-    // Variadic type arguments allow the shorthand "()" to
-    // represent an empty tuple (i.e. Tuple[()]).
-    isEmptyTupleShorthand?: boolean | undefined;
-
-    unpackedType?: Type | undefined;
-    typeList?: TypeResult[] | undefined;
-    expectedTypeDiagAddendum?: DiagnosticAddendum | undefined;
 
     // Used for the output of "super" calls used on the LHS of
     // a member access. Normally the type of the LHS is the same
@@ -166,8 +152,21 @@ export interface TypeResult extends SimpleTypeResult {
     // bind.
     bindToType?: ClassType | TypeVarType | undefined;
 
-    // Indicates that the type comes from a super() call.
-    isSuperCall?: boolean;
+    unpackedType?: Type | undefined;
+    typeList?: TypeResultWithNode[] | undefined;
+
+    // Type consistency errors detected when evaluating this type.
+    typeErrors?: boolean | undefined;
+
+    // Used for getTypeOfObjectMember to indicate that class
+    // that declares the member.
+    classType?: ClassType | UnknownType;
+
+    // Variadic type arguments allow the shorthand "()" to
+    // represent an empty tuple (i.e. Tuple[()]).
+    isEmptyTupleShorthand?: boolean | undefined;
+
+    expectedTypeDiagAddendum?: DiagnosticAddendum | undefined;
 
     // Is member a descriptor object that is asymmetric with respect
     // to __get__ and __set__ types?
@@ -176,6 +175,10 @@ export interface TypeResult extends SimpleTypeResult {
     // Is the type wrapped in a "Required" or "NotRequired" class?
     isRequired?: boolean;
     isNotRequired?: boolean;
+}
+
+export interface TypeResultWithNode extends TypeResult {
+    node: ParseNode;
 }
 
 export interface EvaluatorUsage {
@@ -219,13 +222,13 @@ export interface FunctionArgumentBase {
     argumentCategory: ArgumentCategory;
     node?: ArgumentNode | undefined;
     name?: NameNode | undefined;
-    type?: Type | undefined;
+    typeResult?: TypeResult | undefined;
     valueExpression?: ExpressionNode | undefined;
     active?: boolean | undefined;
 }
 
 export interface FunctionArgumentWithType extends FunctionArgumentBase {
-    type: Type;
+    typeResult: TypeResult;
 }
 
 export interface FunctionArgumentWithExpression extends FunctionArgumentBase {
@@ -279,6 +282,27 @@ export interface FunctionResult {
     isTypeIncomplete: boolean;
 }
 
+export interface CallResult {
+    // Specialized return type of call
+    returnType?: Type | undefined;
+
+    // Is return type incomplete?
+    isTypeIncomplete?: boolean | undefined;
+
+    // Were any errors discovered when evaluating argument types?
+    argumentErrors: boolean;
+
+    // The parameter associated with the "active" argument (used
+    // for signature help provider)
+    activeParam?: FunctionParameter | undefined;
+
+    // If the call is to an __init__ with an annotated self parameter,
+    // this field indicates the specialized type of that self type; this
+    // is used for overloaded constructors where the arguments to the
+    // constructor influence the specialized type of the constructed object.
+    specializedInitSelfType?: Type | undefined;
+}
+
 export interface TypeEvaluator {
     runWithCancellationToken<T>(token: CancellationToken, callback: () => T): T;
 
@@ -300,12 +324,21 @@ export interface TypeEvaluator {
 
     canBeTruthy: (type: Type) => boolean;
     canBeFalsy: (type: Type) => boolean;
+    stripLiteralValue: (type: Type) => Type;
     removeTruthinessFromType: (type: Type) => Type;
     removeFalsinessFromType: (type: Type) => Type;
 
     getExpectedType: (node: ExpressionNode) => ExpectedTypeResult | undefined;
     verifyRaiseExceptionType: (node: RaiseNode) => void;
     verifyDeleteExpression: (node: ExpressionNode) => void;
+    validateOverloadedFunctionArguments: (
+        errorNode: ExpressionNode,
+        argList: FunctionArgument[],
+        type: OverloadedFunctionType,
+        typeVarContext: TypeVarContext | undefined,
+        skipUnknownArgCheck: boolean,
+        expectedType: Type | undefined
+    ) => CallResult;
 
     isAfterNodeReachable: (node: ParseNode) => boolean;
     isNodeReachable: (node: ParseNode, sourceNode: ParseNode | undefined) => boolean;
@@ -325,10 +358,10 @@ export interface TypeEvaluator {
         resolveLocalNames: boolean,
         allowExternallyHiddenAccess?: boolean
     ) => DeclarationUtils.ResolvedAliasInfo | undefined;
-    getTypeOfIterable: (type: Type, isAsync: boolean, errorNode: ParseNode | undefined) => Type | undefined;
-    getTypeOfIterator: (type: Type, isAsync: boolean, errorNode: ParseNode | undefined) => Type | undefined;
+    getTypeOfIterable: (type: Type, isAsync: boolean, errorNode: ExpressionNode | undefined) => Type | undefined;
+    getTypeOfIterator: (type: Type, isAsync: boolean, errorNode: ExpressionNode | undefined) => Type | undefined;
     getGetterTypeFromProperty: (propertyClass: ClassType, inferTypeIfNeeded: boolean) => Type | undefined;
-    getTypeOfArgument: (arg: FunctionArgument) => SimpleTypeResult;
+    getTypeOfArgument: (arg: FunctionArgument) => TypeResult;
     markNamesAccessed: (node: ParseNode, names: string[]) => void;
     getScopeIdForNode: (node: ParseNode) => string;
     makeTopLevelTypeVarsConcrete: (type: Type) => Type;
@@ -365,7 +398,7 @@ export interface TypeEvaluator {
     ) => FunctionType | OverloadedFunctionType | undefined;
     getTypeOfMagicMethodReturn: (
         objType: Type,
-        args: Type[],
+        args: TypeResult[],
         magicMethodName: string,
         errorNode: ExpressionNode,
         expectedType: Type | undefined
@@ -394,7 +427,7 @@ export interface TypeEvaluator {
     ) => boolean;
     validateOverrideMethod: (
         baseMethod: Type,
-        overrideMethod: FunctionType,
+        overrideMethod: FunctionType | OverloadedFunctionType,
         diag: DiagnosticAddendum,
         enforceParamNames?: boolean
     ) => boolean;
@@ -425,6 +458,7 @@ export interface TypeEvaluator {
     addWarning: (message: string, node: ParseNode) => Diagnostic | undefined;
     addInformation: (message: string, node: ParseNode) => Diagnostic | undefined;
     addUnusedCode: (node: ParseNode, textRange: TextRange) => void;
+    addUnreachableCode: (node: ParseNode, textRange: TextRange) => void;
     addDeprecated: (message: string, node: ParseNode) => void;
 
     addDiagnostic: (

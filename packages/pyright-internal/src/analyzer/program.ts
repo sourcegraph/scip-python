@@ -47,6 +47,7 @@ import { DocumentRange, doesRangeContain, doRangesIntersect, Position, Range } f
 import { Duration, timingStats } from '../common/timing';
 import {
     AutoImporter,
+    AutoImportOptions,
     AutoImportResult,
     buildModuleSymbolsMap,
     ModuleSymbolMap,
@@ -263,12 +264,16 @@ export class Program {
 
     addTrackedFile(filePath: string, isThirdPartyImport = false, isInPyTypedPackage = false): SourceFile {
         let sourceFileInfo = this._getSourceFileInfoFromPath(filePath);
+        const importName = this._getImportNameForFile(filePath);
+
         if (sourceFileInfo) {
+            // The module name may have changed based on updates to the
+            // search paths, so update it here.
+            sourceFileInfo.sourceFile.setModuleName(importName);
             sourceFileInfo.isTracked = true;
             return sourceFileInfo.sourceFile;
         }
 
-        const importName = this._getImportNameForFile(filePath);
         const sourceFile = new SourceFile(
             this._fs,
             filePath,
@@ -1253,9 +1258,7 @@ export class Program {
         range: Range,
         similarityLimit: number,
         nameMap: AbbreviationMap | undefined,
-        libraryMap: Map<string, IndexResults> | undefined,
-        lazyEdit: boolean,
-        allowVariableInAll: boolean,
+        options: AutoImportOptions,
         token: CancellationToken
     ): AutoImportResult[] {
         const sourceFileInfo = this._getSourceFileInfoFromPath(filePath);
@@ -1287,10 +1290,14 @@ export class Program {
             const writtenWord = fileContents.substr(textRange.start, textRange.length);
             const map = this._buildModuleSymbolsMap(
                 sourceFileInfo,
-                !!libraryMap,
+                !!options.libraryMap,
                 /* includeIndexUserSymbols */ true,
                 token
             );
+
+            options.patternMatcher =
+                options.patternMatcher ?? ((p, t) => computeCompletionSimilarity(p, t) > similarityLimit);
+
             const autoImporter = new AutoImporter(
                 this._configOptions.findExecEnvironment(filePath),
                 this._importResolver,
@@ -1298,12 +1305,7 @@ export class Program {
                 range.start,
                 new CompletionMap(),
                 map,
-                {
-                    lazyEdit,
-                    allowVariableInAll,
-                    libraryMap,
-                    patternMatcher: (p, t) => computeCompletionSimilarity(p, t) > similarityLimit,
-                }
+                options
             );
 
             // Filter out any name that is already defined in the current scope.
@@ -1889,7 +1891,7 @@ export class Program {
         isDefaultWorkspace: boolean,
         allowModuleRename: boolean,
         token: CancellationToken
-    ): Range | undefined {
+    ): { range: Range; declarations: Declaration[] } | undefined {
         return this._runEvaluatorWithCancellationToken(token, () => {
             const sourceFileInfo = this._getSourceFileInfoFromPath(filePath);
             if (!sourceFileInfo) {
@@ -1922,7 +1924,10 @@ export class Program {
 
             // Return the range of the symbol.
             const parseResult = sourceFileInfo.sourceFile.getParseResults()!;
-            return convertTextRangeToRange(referencesResult.nodeAtOffset, parseResult.tokenizerOutput.lines);
+            return {
+                range: convertTextRangeToRange(referencesResult.nodeAtOffset, parseResult.tokenizerOutput.lines),
+                declarations: referencesResult.declarations,
+            };
         });
     }
 
@@ -2640,7 +2645,8 @@ export class Program {
                             const thirdPartyTypeInfo = getThirdPartyImportInfo(importResult);
                             newImportPathMap.set(normalizePathCase(this._fs, filePath), {
                                 path: filePath,
-                                isTypeshedFile: !!importResult.isTypeshedFile,
+                                isTypeshedFile:
+                                    !!importResult.isStdlibTypeshedFile || !!importResult.isThirdPartyTypeshedFile,
                                 isThirdPartyImport: thirdPartyTypeInfo.isThirdPartyImport,
                                 isPyTypedPresent: thirdPartyTypeInfo.isPyTypedPresent,
                             });
@@ -2654,13 +2660,36 @@ export class Program {
                             const thirdPartyTypeInfo = getThirdPartyImportInfo(importResult);
                             newImportPathMap.set(normalizePathCase(this._fs, implicitImport.path), {
                                 path: implicitImport.path,
-                                isTypeshedFile: !!importResult.isTypeshedFile,
+                                isTypeshedFile:
+                                    !!importResult.isStdlibTypeshedFile || !!importResult.isThirdPartyTypeshedFile,
                                 isThirdPartyImport: thirdPartyTypeInfo.isThirdPartyImport,
                                 isPyTypedPresent: thirdPartyTypeInfo.isPyTypedPresent,
                             });
                         }
                     }
                 });
+
+                // If the stub was found but the non-stub (source) file was not, dump
+                // the failure to the log for diagnostic purposes.
+                if (importResult.nonStubImportResult && !importResult.nonStubImportResult.isImportFound) {
+                    // We'll skip this for imports from within stub files and imports that target
+                    // stdlib typeshed stubs because many of these are known to not have
+                    // associated source files, and we don't want to fill the logs with noise.
+                    if (!sourceFileInfo.sourceFile.isStubFile() && !importResult.isStdlibTypeshedFile) {
+                        if (options.verboseOutput) {
+                            this._console.info(
+                                `Could not resolve source for '${importResult.importName}' ` +
+                                    `in file '${sourceFileInfo.sourceFile.getFilePath()}'`
+                            );
+
+                            if (importResult.nonStubImportResult.importFailureInfo) {
+                                importResult.nonStubImportResult.importFailureInfo.forEach((diag) => {
+                                    this._console.info(`  ${diag}`);
+                                });
+                            }
+                        }
+                    }
+                }
             } else if (options.verboseOutput) {
                 this._console.info(
                     `Could not import '${importResult.importName}' ` +

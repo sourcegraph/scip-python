@@ -19,7 +19,7 @@ import * as TestUtils from './testUtils';
 test('Unreachable1', () => {
     const analysisResults = TestUtils.typeAnalyzeSampleFiles(['unreachable1.py']);
 
-    TestUtils.validateResults(analysisResults, 0, 0, 2, 5);
+    TestUtils.validateResults(analysisResults, 0, 0, 2, 1, 4);
 });
 
 test('Builtins1', () => {
@@ -419,7 +419,7 @@ test('TypeNarrowingTuple1', () => {
 test('TypeNarrowingTypedDict1', () => {
     const analysisResults = TestUtils.typeAnalyzeSampleFiles(['typeNarrowingTypedDict1.py']);
 
-    TestUtils.validateResults(analysisResults, 3);
+    TestUtils.validateResults(analysisResults, 4);
 });
 
 test('TypeNarrowingTypedDict2', () => {
@@ -456,6 +456,12 @@ test('ReturnTypes1', () => {
     const analysisResults = TestUtils.typeAnalyzeSampleFiles(['returnTypes1.py']);
 
     TestUtils.validateResults(analysisResults, 2);
+});
+
+test('ReturnTypes2', () => {
+    const analysisResults = TestUtils.typeAnalyzeSampleFiles(['returnTypes2.py']);
+
+    TestUtils.validateResults(analysisResults, 0);
 });
 
 test('Specialization1', () => {
@@ -969,12 +975,6 @@ test('Operators2', () => {
     TestUtils.validateResults(analysisResults, 1);
 });
 
-test('Operators3', () => {
-    const analysisResults = TestUtils.typeAnalyzeSampleFiles(['operators3.py']);
-
-    TestUtils.validateResults(analysisResults, 1);
-});
-
 test('Operators4', () => {
     const analysisResults = TestUtils.typeAnalyzeSampleFiles(['operators4.py']);
 
@@ -1322,7 +1322,7 @@ test('PseudoGeneric1', () => {
 test('LiteralString1', () => {
     const analysisResults = TestUtils.typeAnalyzeSampleFiles(['literalString1.py']);
 
-    TestUtils.validateResults(analysisResults, 6);
+    TestUtils.validateResults(analysisResults, 7);
 });
 
 test('LiteralString2', () => {

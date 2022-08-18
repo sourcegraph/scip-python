@@ -16,7 +16,7 @@ import { Binder } from '../analyzer/binder';
 import { ImportResolver } from '../analyzer/importResolver';
 import { Program } from '../analyzer/program';
 import { IPythonMode } from '../analyzer/sourceFile';
-import { NameTypeWalker, TestWalker } from '../analyzer/testWalker';
+import { NameTypeWalker } from '../analyzer/testWalker';
 import { TypeEvaluator } from '../analyzer/typeEvaluatorTypes';
 import { cloneDiagnosticRuleSet, ConfigOptions, ExecutionEnvironment } from '../common/configOptions';
 import { fail } from '../common/debug';
@@ -39,6 +39,7 @@ export interface FileAnalysisResult {
     warnings: Diagnostic[];
     infos: Diagnostic[];
     unusedCodes: Diagnostic[];
+    unreachableCodes: Diagnostic[];
     deprecateds: Diagnostic[];
 }
 
@@ -137,10 +138,6 @@ export function bindSampleFile(fileName: string, configOptions = new ConfigOptio
     const binder = new Binder(fileInfo);
     binder.bindModule(parseInfo.parseResults.parseTree);
 
-    // Walk the AST to verify internal consistency.
-    const testWalker = new TestWalker();
-    testWalker.walk(parseInfo.parseResults.parseTree);
-
     return {
         filePath,
         parseResults: parseInfo.parseResults,
@@ -148,6 +145,7 @@ export function bindSampleFile(fileName: string, configOptions = new ConfigOptio
         warnings: fileInfo.diagnosticSink.getWarnings(),
         infos: fileInfo.diagnosticSink.getInformation(),
         unusedCodes: fileInfo.diagnosticSink.getUnusedCode(),
+        unreachableCodes: fileInfo.diagnosticSink.getUnreachableCode(),
         deprecateds: fileInfo.diagnosticSink.getDeprecated(),
     };
 }
@@ -167,7 +165,7 @@ export function typeAnalyzeSampleFiles(
     program.setTrackedFiles(filePaths);
 
     // Set a "pre-check callback" so we can evaluate the types of each NameNode
-    // prior to checking the full document.This will exercise the contextual
+    // prior to checking the full document. This will exercise the contextual
     // evaluation logic.
     program.setPreCheckCallback((parseResults: ParseResults, evaluator: TypeEvaluator) => {
         const nameTypeWalker = new NameTypeWalker(evaluator);
@@ -190,6 +188,7 @@ export function typeAnalyzeSampleFiles(
                 warnings: diagnostics.filter((diag) => diag.category === DiagnosticCategory.Warning),
                 infos: diagnostics.filter((diag) => diag.category === DiagnosticCategory.Information),
                 unusedCodes: diagnostics.filter((diag) => diag.category === DiagnosticCategory.UnusedCode),
+                unreachableCodes: diagnostics.filter((diag) => diag.category === DiagnosticCategory.UnreachableCode),
                 deprecateds: diagnostics.filter((diag) => diag.category === DiagnosticCategory.Deprecated),
             };
             return analysisResult;
@@ -203,6 +202,7 @@ export function typeAnalyzeSampleFiles(
                 warnings: [],
                 infos: [],
                 unusedCodes: [],
+                unreachableCodes: [],
                 deprecateds: [],
             };
             return analysisResult;
@@ -232,6 +232,7 @@ export function validateResults(
     warningCount = 0,
     infoCount?: number,
     unusedCode?: number,
+    unreachableCode?: number,
     deprecated?: number
 ) {
     assert.strictEqual(results.length, 1);
@@ -244,6 +245,10 @@ export function validateResults(
 
     if (unusedCode !== undefined) {
         assert.strictEqual(results[0].unusedCodes.length, unusedCode);
+    }
+
+    if (unreachableCode !== undefined) {
+        assert.strictEqual(results[0].unreachableCodes.length, unreachableCode);
     }
 
     if (deprecated !== undefined) {

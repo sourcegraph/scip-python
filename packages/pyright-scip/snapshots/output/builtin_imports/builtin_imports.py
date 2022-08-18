@@ -3,7 +3,7 @@
 
 import re
 #      ^^ reference  python-stdlib 3.10 re/__init__:
-from typing import Callable, Match, Optional
+from typing import Callable, Optional
 #    ^^^^^^ reference  python-stdlib 3.10 typing/__init__:
 #    external documentation ```python
 #                > (module) typing
@@ -12,13 +12,12 @@ from typing import Callable, Match, Optional
 #                  external documentation ```python
 #                              > (class) Callable
 #                              > ```
-#                            ^^^^^ reference  python-stdlib 3.10 typing/Match#
-#                                   ^^^^^^^^ reference  python-stdlib 3.10 typing/Optional.
-#                                   external documentation ```python
-#                                               > (class) Optional
-#                                               > ```
+#                            ^^^^^^^^ reference  python-stdlib 3.10 typing/Optional.
+#                            external documentation ```python
+#                                        > (class) Optional
+#                                        > ```
 
-print(re, Callable, Match, Optional)
+print(re, Callable, Optional)
 #^^^^ reference  python-stdlib 3.10 builtins/__init__:print().
 #external documentation ```python
 #            > (function)
@@ -28,6 +27,5 @@ print(re, Callable, Match, Optional)
 #            > ```
 #     ^^ reference  python-stdlib 3.10 re/__init__:
 #         ^^^^^^^^ reference  python-stdlib 3.10 typing/Callable.
-#                   ^^^^^ reference  python-stdlib 3.10 typing/Match#
-#                          ^^^^^^^^ reference  python-stdlib 3.10 typing/Optional.
+#                   ^^^^^^^^ reference  python-stdlib 3.10 typing/Optional.
 

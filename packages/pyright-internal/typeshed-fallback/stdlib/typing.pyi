@@ -1,15 +1,22 @@
 import collections  # Needed by aliases like DefaultDict, see mypy issue 2986
 import sys
-from _typeshed import IdentityFunction, ReadableBuffer, Self as TypeshedSelf, SupportsKeysAndGetItem
+from _typeshed import IdentityFunction, Incomplete, Self as TypeshedSelf, SupportsKeysAndGetItem
 from abc import ABCMeta, abstractmethod
-from types import BuiltinFunctionType, CodeType, FrameType, FunctionType, MethodType, ModuleType, TracebackType
-from typing_extensions import Literal as _Literal, ParamSpec as _ParamSpec, final as _final
-
-if sys.version_info >= (3, 7):
-    from types import MethodDescriptorType, MethodWrapperType, WrapperDescriptorType
-
-if sys.version_info >= (3, 9):
-    from types import GenericAlias
+from contextlib import AbstractAsyncContextManager, AbstractContextManager
+from re import Match as Match, Pattern as Pattern
+from types import (
+    BuiltinFunctionType,
+    CodeType,
+    FrameType,
+    FunctionType,
+    MethodDescriptorType,
+    MethodType,
+    MethodWrapperType,
+    ModuleType,
+    TracebackType,
+    WrapperDescriptorType,
+)
+from typing_extensions import ParamSpec as _ParamSpec, final as _final
 
 __all__ = [
     "AbstractSet",
@@ -71,13 +78,10 @@ __all__ = [
     "no_type_check",
     "no_type_check_decorator",
     "overload",
+    "ForwardRef",
+    "NoReturn",
+    "OrderedDict",
 ]
-
-if sys.version_info < (3, 7):
-    __all__ += ["GenericMeta"]
-
-if sys.version_info >= (3, 7):
-    __all__ += ["ForwardRef", "NoReturn", "OrderedDict"]
 
 if sys.version_info >= (3, 8):
     __all__ += [
@@ -115,6 +119,9 @@ if sys.version_info >= (3, 11):
         "reveal_type",
     ]
 
+ContextManager = AbstractContextManager
+AsyncContextManager = AbstractAsyncContextManager
+
 # This itself is only available during type checking
 def type_check_only(func_or_cls: _F) -> _F: ...
 
@@ -133,6 +140,8 @@ class TypeVar:
     if sys.version_info >= (3, 10):
         def __or__(self, right: Any) -> _SpecialForm: ...
         def __ror__(self, left: Any) -> _SpecialForm: ...
+    if sys.version_info >= (3, 11):
+        def __typing_subst__(self, arg: Incomplete) -> Incomplete: ...
 
 # Used for an undocumented mypy feature. Does not exist at runtime.
 _promote = object()
@@ -187,9 +196,8 @@ if sys.version_info >= (3, 11):
         __name__: str
         def __init__(self, name: str) -> None: ...
         def __iter__(self) -> Any: ...
-
-if sys.version_info < (3, 7):
-    class GenericMeta(type): ...
+        def __typing_subst__(self, arg: Never) -> Never: ...
+        def __typing_prepare_subst__(self, alias: Incomplete, args: Incomplete) -> Incomplete: ...
 
 if sys.version_info >= (3, 10):
     class ParamSpecArgs:
@@ -210,6 +218,10 @@ if sys.version_info >= (3, 10):
         def args(self) -> ParamSpecArgs: ...
         @property
         def kwargs(self) -> ParamSpecKwargs: ...
+        if sys.version_info >= (3, 11):
+            def __typing_subst__(self, arg: Incomplete) -> Incomplete: ...
+            def __typing_prepare_subst__(self, alias: Incomplete, args: Incomplete) -> Incomplete: ...
+
         def __or__(self, right: Any) -> _SpecialForm: ...
         def __ror__(self, left: Any) -> _SpecialForm: ...
     Concatenate: _SpecialForm
@@ -255,8 +267,7 @@ Counter = _Alias()
 Deque = _Alias()
 ChainMap = _Alias()
 
-if sys.version_info >= (3, 7):
-    OrderedDict = _Alias()
+OrderedDict = _Alias()
 
 if sys.version_info >= (3, 9):
     Annotated: _SpecialForm
@@ -559,22 +570,6 @@ class ValuesView(MappingView, Iterable[_VT_co], Generic[_VT_co]):
     if sys.version_info >= (3, 8):
         def __reversed__(self) -> Iterator[_VT_co]: ...
 
-@runtime_checkable
-class ContextManager(Protocol[_T_co]):
-    def __enter__(self) -> _T_co: ...
-    @abstractmethod
-    def __exit__(
-        self, __exc_type: Type[BaseException] | None, __exc_value: BaseException | None, __traceback: TracebackType | None
-    ) -> bool | None: ...
-
-@runtime_checkable
-class AsyncContextManager(Protocol[_T_co]):
-    async def __aenter__(self) -> _T_co: ...
-    @abstractmethod
-    async def __aexit__(
-        self, __exc_type: Type[BaseException] | None, __exc_value: BaseException | None, __traceback: TracebackType | None
-    ) -> bool | None: ...
-
 class Mapping(Collection[_KT], Generic[_KT, _VT_co]):
     # TODO: We wish the key type could also be covariant, but that doesn't work,
     # see discussion in https://github.com/python/typing/pull/273.
@@ -709,137 +704,19 @@ class TextIO(IO[str]):
 
 class ByteString(Sequence[int], metaclass=ABCMeta): ...
 
-@_final
-class Match(Generic[AnyStr]):
-    @property
-    def pos(self) -> int: ...
-    @property
-    def endpos(self) -> int: ...
-    @property
-    def lastindex(self) -> int | None: ...
-    @property
-    def lastgroup(self) -> str | None: ...
-    @property
-    def string(self) -> AnyStr: ...
-
-    # The regular expression object whose match() or search() method produced
-    # this match instance.
-    @property
-    def re(self) -> Pattern[AnyStr]: ...
-    @overload
-    def expand(self: Match[str], template: str) -> str: ...
-    @overload
-    def expand(self: Match[bytes], template: ReadableBuffer) -> bytes: ...
-    # group() returns "AnyStr" or "AnyStr | None", depending on the pattern.
-    @overload
-    def group(self, __group: _Literal[0] = ...) -> AnyStr: ...
-    @overload
-    def group(self, __group: str | int) -> AnyStr | Any: ...
-    @overload
-    def group(self, __group1: str | int, __group2: str | int, *groups: str | int) -> tuple[AnyStr | Any, ...]: ...
-    # Each item of groups()'s return tuple is either "AnyStr" or
-    # "AnyStr | None", depending on the pattern.
-    @overload
-    def groups(self) -> tuple[AnyStr | Any, ...]: ...
-    @overload
-    def groups(self, default: _T) -> tuple[AnyStr | _T, ...]: ...
-    # Each value in groupdict()'s return dict is either "AnyStr" or
-    # "AnyStr | None", depending on the pattern.
-    @overload
-    def groupdict(self) -> dict[str, AnyStr | Any]: ...
-    @overload
-    def groupdict(self, default: _T) -> dict[str, AnyStr | _T]: ...
-    def start(self, __group: int | str = ...) -> int: ...
-    def end(self, __group: int | str = ...) -> int: ...
-    def span(self, __group: int | str = ...) -> tuple[int, int]: ...
-    @property
-    def regs(self) -> tuple[tuple[int, int], ...]: ...  # undocumented
-    # __getitem__() returns "AnyStr" or "AnyStr | None", depending on the pattern.
-    @overload
-    def __getitem__(self, __key: _Literal[0]) -> AnyStr: ...
-    @overload
-    def __getitem__(self, __key: int | str) -> AnyStr | Any: ...
-    def __copy__(self) -> Match[AnyStr]: ...
-    def __deepcopy__(self, __memo: Any) -> Match[AnyStr]: ...
-    if sys.version_info >= (3, 9):
-        def __class_getitem__(cls, item: Any) -> GenericAlias: ...
-
-@_final
-class Pattern(Generic[AnyStr]):
-    @property
-    def flags(self) -> int: ...
-    @property
-    def groupindex(self) -> Mapping[str, int]: ...
-    @property
-    def groups(self) -> int: ...
-    @property
-    def pattern(self) -> AnyStr: ...
-    @overload
-    def search(self: Pattern[str], string: str, pos: int = ..., endpos: int = ...) -> Match[str] | None: ...
-    @overload
-    def search(self: Pattern[bytes], string: ReadableBuffer, pos: int = ..., endpos: int = ...) -> Match[bytes] | None: ...
-    @overload
-    def match(self: Pattern[str], string: str, pos: int = ..., endpos: int = ...) -> Match[str] | None: ...
-    @overload
-    def match(self: Pattern[bytes], string: ReadableBuffer, pos: int = ..., endpos: int = ...) -> Match[bytes] | None: ...
-    @overload
-    def fullmatch(self: Pattern[str], string: str, pos: int = ..., endpos: int = ...) -> Match[str] | None: ...
-    @overload
-    def fullmatch(self: Pattern[bytes], string: ReadableBuffer, pos: int = ..., endpos: int = ...) -> Match[bytes] | None: ...
-    @overload
-    def split(self: Pattern[str], string: str, maxsplit: int = ...) -> list[str | Any]: ...
-    @overload
-    def split(self: Pattern[bytes], string: ReadableBuffer, maxsplit: int = ...) -> list[bytes | Any]: ...
-    # return type depends on the number of groups in the pattern
-    @overload
-    def findall(self: Pattern[str], string: str, pos: int = ..., endpos: int = ...) -> list[Any]: ...
-    @overload
-    def findall(self: Pattern[bytes], string: ReadableBuffer, pos: int = ..., endpos: int = ...) -> list[Any]: ...
-    @overload
-    def finditer(self: Pattern[str], string: str, pos: int = ..., endpos: int = ...) -> Iterator[Match[str]]: ...
-    @overload
-    def finditer(self: Pattern[bytes], string: ReadableBuffer, pos: int = ..., endpos: int = ...) -> Iterator[Match[bytes]]: ...
-    @overload
-    def sub(self: Pattern[str], repl: str | Callable[[Match[str]], str], string: str, count: int = ...) -> str: ...
-    @overload
-    def sub(
-        self: Pattern[bytes],
-        repl: ReadableBuffer | Callable[[Match[bytes]], ReadableBuffer],
-        string: ReadableBuffer,
-        count: int = ...,
-    ) -> bytes: ...
-    @overload
-    def subn(self: Pattern[str], repl: str | Callable[[Match[str]], str], string: str, count: int = ...) -> tuple[str, int]: ...
-    @overload
-    def subn(
-        self: Pattern[bytes],
-        repl: ReadableBuffer | Callable[[Match[bytes]], ReadableBuffer],
-        string: ReadableBuffer,
-        count: int = ...,
-    ) -> tuple[bytes, int]: ...
-    def __copy__(self) -> Pattern[AnyStr]: ...
-    def __deepcopy__(self, __memo: Any) -> Pattern[AnyStr]: ...
-    if sys.version_info >= (3, 9):
-        def __class_getitem__(cls, item: Any) -> GenericAlias: ...
-
 # Functions
 
-if sys.version_info >= (3, 7):
-    _get_type_hints_obj_allowed_types = (  # noqa: Y026  # TODO: Use TypeAlias once mypy bugs are fixed
-        object
-        | Callable[..., Any]
-        | FunctionType
-        | BuiltinFunctionType
-        | MethodType
-        | ModuleType
-        | WrapperDescriptorType
-        | MethodWrapperType
-        | MethodDescriptorType
-    )
-else:
-    _get_type_hints_obj_allowed_types = (  # noqa: Y026  # TODO: Use TypeAlias once mypy bugs are fixed
-        object | Callable[..., Any] | FunctionType | BuiltinFunctionType | MethodType | ModuleType
-    )
+_get_type_hints_obj_allowed_types = (  # noqa: Y026  # TODO: Use TypeAlias once mypy bugs are fixed
+    object
+    | Callable[..., Any]
+    | FunctionType
+    | BuiltinFunctionType
+    | MethodType
+    | ModuleType
+    | WrapperDescriptorType
+    | MethodWrapperType
+    | MethodDescriptorType
+)
 
 if sys.version_info >= (3, 9):
     def get_type_hints(
@@ -910,7 +787,7 @@ class _TypedDict(Mapping[str, object], metaclass=ABCMeta):
     # can go through.
     def setdefault(self, k: NoReturn, default: object) -> object: ...
     # Mypy plugin hook for 'pop' expects that 'default' has a type variable type.
-    def pop(self, k: NoReturn, default: _T = ...) -> object: ...  # type: ignore
+    def pop(self, k: NoReturn, default: _T = ...) -> object: ...  # pyright: ignore[reportInvalidTypeVarUse]
     def update(self: _T, __m: _T) -> None: ...
     def __delitem__(self, k: NoReturn) -> None: ...
     def items(self) -> ItemsView[str, object]: ...
@@ -919,28 +796,26 @@ class _TypedDict(Mapping[str, object], metaclass=ABCMeta):
     def __or__(self: TypeshedSelf, __value: TypeshedSelf) -> TypeshedSelf: ...
     def __ior__(self: TypeshedSelf, __value: TypeshedSelf) -> TypeshedSelf: ...
 
-if sys.version_info >= (3, 7):
-    @_final
-    class ForwardRef:
-        __forward_arg__: str
-        __forward_code__: CodeType
-        __forward_evaluated__: bool
-        __forward_value__: Any | None
-        __forward_is_argument__: bool
-        __forward_is_class__: bool
-        __forward_module__: Any | None
-        if sys.version_info >= (3, 9):
-            # The module and is_class arguments were added in later Python 3.9 versions.
-            def __init__(self, arg: str, is_argument: bool = ..., module: Any | None = ..., *, is_class: bool = ...) -> None: ...
-        else:
-            def __init__(self, arg: str, is_argument: bool = ...) -> None: ...
+@_final
+class ForwardRef:
+    __forward_arg__: str
+    __forward_code__: CodeType
+    __forward_evaluated__: bool
+    __forward_value__: Any | None
+    __forward_is_argument__: bool
+    __forward_is_class__: bool
+    __forward_module__: Any | None
+    if sys.version_info >= (3, 9):
+        # The module and is_class arguments were added in later Python 3.9 versions.
+        def __init__(self, arg: str, is_argument: bool = ..., module: Any | None = ..., *, is_class: bool = ...) -> None: ...
+    else:
+        def __init__(self, arg: str, is_argument: bool = ...) -> None: ...
 
-        def _evaluate(self, globalns: dict[str, Any] | None, localns: dict[str, Any] | None) -> Any | None: ...
-        def __eq__(self, other: object) -> bool: ...
-        def __hash__(self) -> int: ...
-        if sys.version_info >= (3, 11):
-            def __or__(self, other: Any) -> _SpecialForm: ...
-            def __ror__(self, other: Any) -> _SpecialForm: ...
+    def _evaluate(self, globalns: dict[str, Any] | None, localns: dict[str, Any] | None) -> Any | None: ...
+    def __eq__(self, other: object) -> bool: ...
+    if sys.version_info >= (3, 11):
+        def __or__(self, other: Any) -> _SpecialForm: ...
+        def __ror__(self, other: Any) -> _SpecialForm: ...
 
 if sys.version_info >= (3, 10):
     def is_typeddict(tp: object) -> bool: ...

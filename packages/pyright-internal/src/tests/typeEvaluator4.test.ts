@@ -299,6 +299,11 @@ test('Overload10', () => {
     TestUtils.validateResults(analysisResults, 1);
 });
 
+test('Overload11', () => {
+    const analysisResults = TestUtils.typeAnalyzeSampleFiles(['overload11.py']);
+    TestUtils.validateResults(analysisResults, 1);
+});
+
 test('Final1', () => {
     const analysisResults = TestUtils.typeAnalyzeSampleFiles(['final1.py']);
     TestUtils.validateResults(analysisResults, 1);
@@ -458,6 +463,11 @@ test('MemberAccess18', () => {
     TestUtils.validateResults(analysisResults, 0);
 });
 
+test('MemberAccess19', () => {
+    const analysisResults = TestUtils.typeAnalyzeSampleFiles(['memberAccess19.py']);
+    TestUtils.validateResults(analysisResults, 5);
+});
+
 test('DataClass1', () => {
     const analysisResults = TestUtils.typeAnalyzeSampleFiles(['dataclass1.py']);
 
@@ -588,6 +598,18 @@ test('DataClass21', () => {
     TestUtils.validateResults(analysisResults, 1);
 });
 
+test('DataClass22', () => {
+    const analysisResults = TestUtils.typeAnalyzeSampleFiles(['dataclass22.py']);
+
+    TestUtils.validateResults(analysisResults, 0);
+});
+
+test('DataClass23', () => {
+    const analysisResults = TestUtils.typeAnalyzeSampleFiles(['dataclass23.py']);
+
+    TestUtils.validateResults(analysisResults, 0);
+});
+
 test('DataClassPostInit1', () => {
     const analysisResults = TestUtils.typeAnalyzeSampleFiles(['dataclassPostInit1.py']);
 
@@ -695,6 +717,12 @@ test('Unions5', () => {
     const analysisResults = TestUtils.typeAnalyzeSampleFiles(['unions5.py']);
 
     TestUtils.validateResults(analysisResults, 6);
+});
+
+test('Unions6', () => {
+    const analysisResults = TestUtils.typeAnalyzeSampleFiles(['unions6.py']);
+
+    TestUtils.validateResults(analysisResults, 0);
 });
 
 test('ParamSpec1', () => {
@@ -1100,7 +1128,7 @@ test('Annotated1', () => {
 
     configOptions.defaultPythonVersion = PythonVersion.V3_8;
     const analysisResults38 = TestUtils.typeAnalyzeSampleFiles(['annotated1.py'], configOptions);
-    TestUtils.validateResults(analysisResults38, 3);
+    TestUtils.validateResults(analysisResults38, 4);
 
     configOptions.defaultPythonVersion = PythonVersion.V3_9;
     const analysisResults39 = TestUtils.typeAnalyzeSampleFiles(['annotated1.py'], configOptions);
@@ -1183,4 +1211,9 @@ test('TryExcept9', () => {
 test('TryExcept10', () => {
     const analysisResults = TestUtils.typeAnalyzeSampleFiles(['tryExcept10.py']);
     TestUtils.validateResults(analysisResults, 1);
+});
+
+test('Del1', () => {
+    const analysisResults = TestUtils.typeAnalyzeSampleFiles(['del1.py']);
+    TestUtils.validateResults(analysisResults, 6);
 });

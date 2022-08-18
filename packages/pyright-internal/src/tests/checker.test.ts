@@ -122,7 +122,7 @@ test('Constants1', () => {
 test('NoReturn1', () => {
     const analysisResults = TestUtils.typeAnalyzeSampleFiles(['noreturn1.py']);
 
-    TestUtils.validateResults(analysisResults, 4);
+    TestUtils.validateResults(analysisResults, 5);
 });
 
 test('NoReturn2', () => {
@@ -250,6 +250,18 @@ test('UnnecessaryCast1', () => {
     configOptions.diagnosticRuleSet.reportUnnecessaryCast = 'error';
     analysisResults = TestUtils.typeAnalyzeSampleFiles(['unnecessaryCast1.py'], configOptions);
     TestUtils.validateResults(analysisResults, 1);
+});
+
+test('UnnecessaryContains1', () => {
+    const configOptions = new ConfigOptions('.');
+
+    let analysisResults = TestUtils.typeAnalyzeSampleFiles(['unnecessaryContains1.py'], configOptions);
+    TestUtils.validateResults(analysisResults, 0);
+
+    // Turn on errors.
+    configOptions.diagnosticRuleSet.reportUnnecessaryContains = 'error';
+    analysisResults = TestUtils.typeAnalyzeSampleFiles(['unnecessaryContains1.py'], configOptions);
+    TestUtils.validateResults(analysisResults, 5);
 });
 
 test('TypeIgnore1', () => {

@@ -8,7 +8,7 @@
  */
 
 import * as AnalyzerNodeInfo from '../analyzer/analyzerNodeInfo';
-import { assertNever, fail } from '../common/debug';
+import { assert, assertNever, fail } from '../common/debug';
 import { convertPositionToOffset, convertTextRangeToRange } from '../common/positionUtils';
 import { Position, Range } from '../common/textRange';
 import { TextRange } from '../common/textRange';
@@ -933,11 +933,69 @@ export function isNodeContainedWithin(node: ParseNode, potentialContainer: Parse
 
 export function getParentNodeOfType(node: ParseNode, containerType: ParseNodeType): ParseNode | undefined {
     let curNode: ParseNode | undefined = node;
+
     while (curNode) {
         if (curNode.nodeType === containerType) {
             return curNode;
         }
 
+        curNode = curNode.parent;
+    }
+
+    return undefined;
+}
+
+// If the specified node is contained within an expression that is intended to be
+// interpreted as a type annotation, this function returns the annotation node.
+export function getParentAnnotationNode(node: ExpressionNode): ExpressionNode | undefined {
+    let curNode: ParseNode | undefined = node;
+    let prevNode: ParseNode | undefined;
+
+    while (curNode) {
+        if (curNode.nodeType === ParseNodeType.Function) {
+            if (prevNode === curNode.returnTypeAnnotation) {
+                return prevNode;
+            }
+            return undefined;
+        }
+
+        if (curNode.nodeType === ParseNodeType.Parameter) {
+            if (prevNode === curNode.typeAnnotation || prevNode === curNode.typeAnnotationComment) {
+                return prevNode;
+            }
+            return undefined;
+        }
+
+        if (curNode.nodeType === ParseNodeType.Assignment) {
+            if (prevNode === curNode.typeAnnotationComment) {
+                return prevNode;
+            }
+            return undefined;
+        }
+
+        if (curNode.nodeType === ParseNodeType.TypeAnnotation) {
+            if (prevNode === curNode.typeAnnotation) {
+                return prevNode;
+            }
+            return undefined;
+        }
+
+        if (curNode.nodeType === ParseNodeType.FunctionAnnotation) {
+            if (prevNode === curNode.returnTypeAnnotation || curNode.paramTypeAnnotations.some((p) => p === prevNode)) {
+                assert(!prevNode || isExpressionNode(prevNode));
+                return prevNode;
+            }
+            return undefined;
+        }
+
+        if (curNode.nodeType === ParseNodeType.StringList) {
+            if (prevNode === curNode.typeAnnotation) {
+                return prevNode;
+            }
+            return undefined;
+        }
+
+        prevNode = curNode;
         curNode = curNode.parent;
     }
 
@@ -1538,13 +1596,63 @@ export function getCallNodeAndActiveParameterIndex(
     }
 }
 
-export function getTokenAt(tokens: TextRangeCollection<Token>, position: number) {
+export function getTokenIndexAtLeft(
+    tokens: TextRangeCollection<Token>,
+    position: number,
+    includeWhitespace = false,
+    includeZeroLengthToken = false
+) {
     const index = tokens.getItemAtPosition(position);
+    if (index < 0) {
+        return -1;
+    }
+
+    for (let i = index; i >= 0; i--) {
+        const token = tokens.getItemAt(i);
+        if (!includeZeroLengthToken && token.length === 0) {
+            continue;
+        }
+
+        if (!includeWhitespace && isWhitespace(token)) {
+            continue;
+        }
+
+        if (TextRange.getEnd(token) <= position) {
+            return i;
+        }
+    }
+
+    return -1;
+}
+
+export function getTokenAtLeft(
+    tokens: TextRangeCollection<Token>,
+    position: number,
+    includeWhitespace = false,
+    includeZeroLengthToken = false
+) {
+    const index = getTokenIndexAtLeft(tokens, position, includeWhitespace, includeZeroLengthToken);
     if (index < 0) {
         return undefined;
     }
 
     return tokens.getItemAt(index);
+}
+
+function isWhitespace(token: Token) {
+    return token.type === TokenType.NewLine || token.type === TokenType.Indent || token.type === TokenType.Dedent;
+}
+
+export function getTokenAtIndex(tokens: TextRangeCollection<Token>, index: number) {
+    if (index < 0) {
+        return undefined;
+    }
+
+    return tokens.getItemAt(index);
+}
+
+export function getTokenAt(tokens: TextRangeCollection<Token>, position: number) {
+    return getTokenAtIndex(tokens, tokens.getItemAtPosition(position));
 }
 
 export function getTokenOverlapping(tokens: TextRangeCollection<Token>, position: number) {
@@ -2148,6 +2256,27 @@ export function isUnannotatedFunction(node: FunctionNode) {
     );
 }
 
+// "Chaining" is when binary operators can be chained together
+// as a shorthand. For example, "a < b < c" is shorthand for
+// "a < b and b < c".
+export function operatorSupportsChaining(op: OperatorType) {
+    switch (op) {
+        case OperatorType.Equals:
+        case OperatorType.NotEquals:
+        case OperatorType.LessThan:
+        case OperatorType.LessThanOrEqual:
+        case OperatorType.GreaterThan:
+        case OperatorType.GreaterThanOrEqual:
+        case OperatorType.Is:
+        case OperatorType.IsNot:
+        case OperatorType.In:
+        case OperatorType.NotIn:
+            return true;
+    }
+
+    return false;
+}
+
 function _getEndPositionIfMultipleStatementsAreOnSameLine(
     range: Range,
     tokenPosition: number,
@@ -2167,9 +2296,15 @@ function _getEndPositionIfMultipleStatementsAreOnSameLine(
         }
     }
 
+    let foundStatementEnd = false;
     for (let index = tokenIndex; index < currentIndex; index++) {
         const token = tokenizerOutput.tokens.getItemAt(index);
         if (token.type === TokenType.Semicolon || token.type === TokenType.NewLine) {
+            foundStatementEnd = true;
+            continue;
+        }
+
+        if (!foundStatementEnd) {
             continue;
         }
 

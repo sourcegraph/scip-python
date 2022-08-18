@@ -217,6 +217,7 @@ export class Parser {
     private _isInFinally = false;
     private _isParsingTypeAnnotation = false;
     private _isParsingIndexTrailer = false;
+    private _isParsingQuotedText = false;
     private _futureImportMap = new Map<string, boolean>();
     private _importedModules: ModuleImport[] = [];
     private _containsWildcardImport = false;
@@ -288,8 +289,10 @@ export class Parser {
 
         let parseTree: ExpressionNode | FunctionAnnotationNode | undefined;
         if (parseTextMode === ParseTextMode.VariableAnnotation) {
+            this._isParsingQuotedText = true;
             parseTree = this._parseTypeAnnotation();
         } else if (parseTextMode === ParseTextMode.FunctionAnnotation) {
+            this._isParsingQuotedText = true;
             parseTree = this._parseFunctionTypeAnnotation();
         } else {
             const exprListResult = this._parseTestOrStarExpressionList(
@@ -1077,9 +1080,11 @@ export class Parser {
             secondToken.type === TokenType.Operator &&
             (secondToken as OperatorToken).operatorType === OperatorType.Assign
         ) {
-            this._getNextToken();
-            keywordName = NameNode.create(firstToken as IdentifierToken);
-            this._getNextToken();
+            const classNameToken = this._getTokenIfIdentifier();
+            if (classNameToken !== undefined) {
+                keywordName = NameNode.create(classNameToken);
+                this._getNextToken();
+            }
         }
 
         const pattern = this._parsePatternAs();
@@ -3524,7 +3529,9 @@ export class Parser {
 
             if (argType !== ArgumentCategory.Simple) {
                 const unpackAllowed =
-                    this._parseOptions.isStubFile || this._getLanguageVersion() >= PythonVersion.V3_11;
+                    this._parseOptions.isStubFile ||
+                    this._isParsingQuotedText ||
+                    this._getLanguageVersion() >= PythonVersion.V3_11;
 
                 if (argType === ArgumentCategory.UnpackedDictionary || !unpackAllowed) {
                     this._addError(Localizer.Diagnostic.unpackedSubscriptIllegal(), argNode);
@@ -3816,12 +3823,21 @@ export class Parser {
         additionalStopTokens?: TokenType[]
     ): ErrorNode {
         this._addError(errorMsg, targetToken ?? this._peekToken());
-        const expr = ErrorNode.create(this._peekToken(), category, childNode);
+
         const stopTokens = [TokenType.NewLine];
         if (additionalStopTokens) {
             appendArray(stopTokens, additionalStopTokens);
         }
+
+        // Using token that is not consumed by error node will mess up spans in parse node.
+        // Sibling nodes in parse tree shouldn't overlap each other.
+        const nextToken = this._peekToken();
+        const initialRange: TextRange = stopTokens.some((k) => nextToken.type === k)
+            ? targetToken ?? childNode ?? TextRange.create(nextToken.start, /* length */ 0)
+            : nextToken;
+        const expr = ErrorNode.create(initialRange, category, childNode);
         this._consumeTokensUntilType(stopTokens);
+
         return expr;
     }
 
@@ -4348,7 +4364,11 @@ export class Parser {
         if (isUnpack) {
             if (!allowUnpack) {
                 this._addError(Localizer.Diagnostic.unpackInAnnotation(), startToken);
-            } else if (!this._parseOptions.isStubFile && this._getLanguageVersion() < PythonVersion.V3_11) {
+            } else if (
+                !this._parseOptions.isStubFile &&
+                !this._isParsingQuotedText &&
+                this._getLanguageVersion() < PythonVersion.V3_11
+            ) {
                 this._addError(Localizer.Diagnostic.unpackedSubscriptIllegal(), startToken);
             }
         }

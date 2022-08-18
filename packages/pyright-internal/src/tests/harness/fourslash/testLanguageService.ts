@@ -43,7 +43,7 @@ export class TestFeatures implements HostSpecificFeatures {
         range: Range,
         token: CancellationToken
     ): Promise<CodeAction[]> {
-        return CodeActionProvider.getCodeActionsForPosition(workspace, filePath, range, token);
+        return CodeActionProvider.getCodeActionsForPosition(workspace, filePath, range, undefined, token);
     }
     execute(ls: LanguageServerInterface, params: ExecuteCommandParams, token: CancellationToken): Promise<any> {
         const controller = new CommandController(ls);
@@ -62,8 +62,9 @@ export class TestLanguageService implements LanguageServerInterface {
         this._defaultWorkspace = {
             workspaceName: '',
             rootPath: '',
-            rootUri: '',
-            kind: WellKnownWorkspaceKinds.Test,
+            path: '',
+            uri: '',
+            kinds: [WellKnownWorkspaceKinds.Test],
             serviceInstance: new AnalyzerService('test service', this.fs, {
                 console: this.console,
                 hostFactory: () => new TestAccessHost(),
@@ -75,6 +76,7 @@ export class TestLanguageService implements LanguageServerInterface {
             disableWorkspaceSymbol: false,
             isInitialized: createDeferred<boolean>(),
             searchPathsToWatch: [],
+            owns: (f) => true,
         };
     }
     decodeTextDocumentUri(uriString: string): string {
