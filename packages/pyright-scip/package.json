@@ -1,6 +1,6 @@
 {
   "name": "@sourcegraph/scip-python",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "description": "SCIP indexer for Python",
   "main": "index.js",
   "scripts": {
