@@ -3,8 +3,10 @@
  * Copyright (c) Microsoft Corporation.
  * Licensed under the MIT license.
  *
- * Logic that maps a (.pyi) stub to its (.py) implementation source file.
+ * Logic that maps a ".pyi" stub to its ".py" source file.
  */
+
+import { CancellationToken } from 'vscode-jsonrpc';
 
 import * as AnalyzerNodeInfo from '../analyzer/analyzerNodeInfo';
 import * as ParseTreeUtils from '../analyzer/parseTreeUtils';
@@ -12,7 +14,7 @@ import { appendArray } from '../common/collectionUtils';
 import { ExecutionEnvironment } from '../common/configOptions';
 import { isDefined } from '../common/core';
 import { assertNever } from '../common/debug';
-import { combinePaths, getAnyExtensionFromPath } from '../common/pathUtils';
+import { combinePaths, getAnyExtensionFromPath, stripFileExtension } from '../common/pathUtils';
 import { ClassNode, ImportFromNode, ModuleNode, ParseNode, ParseNodeType } from '../parser/parseNodes';
 import {
     AliasDeclaration,
@@ -30,7 +32,10 @@ import {
     VariableDeclaration,
 } from './declaration';
 import { ImportResolver } from './importResolver';
+import { SourceFileInfo } from './program';
 import { SourceFile } from './sourceFile';
+import { isUserCode } from './sourceFileInfoUtils';
+import { buildImportTree } from './sourceMapperUtils';
 import { TypeEvaluator } from './typeEvaluatorTypes';
 import { ClassType, isFunction, isInstantiableClass, isOverloadedFunction } from './types';
 import { lookUpClassMember } from './typeUtils';
@@ -39,7 +44,7 @@ type ClassOrFunctionOrVariableDeclaration = ClassDeclaration | FunctionDeclarati
 
 // Creates and binds a shadowed file within the program.
 export type ShadowFileBinder = (stubFilePath: string, implFilePath: string) => SourceFile | undefined;
-export type BoundSourceGetter = (filePath: string) => SourceFile | undefined;
+export type BoundSourceGetter = (filePath: string) => SourceFileInfo | undefined;
 
 export class SourceMapper {
     constructor(
@@ -49,12 +54,24 @@ export class SourceMapper {
         private _fileBinder: ShadowFileBinder,
         private _boundSourceGetter: BoundSourceGetter,
         private _mapCompiled: boolean,
-        private _preferStubs: boolean
+        private _preferStubs: boolean,
+        private _fromFile: SourceFileInfo | undefined,
+        private _cancelToken: CancellationToken
     ) {}
 
     findModules(stubFilePath: string): ModuleNode[] {
-        const sourceFiles = this._getBoundSourceFilesFromStubFile(stubFilePath);
-        return sourceFiles.map((sf) => sf.getParseResults()?.parseTree).filter(isDefined);
+        const sourceFiles = this._isStubThatShouldBeMappedToImplementation(stubFilePath)
+            ? this._getBoundSourceFilesFromStubFile(stubFilePath)
+            : [this._boundSourceGetter(stubFilePath)?.sourceFile];
+
+        return sourceFiles
+            .filter(isDefined)
+            .map((sf) => sf.getParseResults()?.parseTree)
+            .filter(isDefined);
+    }
+
+    getModuleNode(filePath: string): ModuleNode | undefined {
+        return this._boundSourceGetter(filePath)?.sourceFile.getParseResults()?.parseTree;
     }
 
     findDeclarations(stubDecl: Declaration): Declaration[] {
@@ -73,12 +90,6 @@ export class SourceMapper {
         return [];
     }
 
-    findClassDeclarations(stubDecl: ClassDeclaration): ClassDeclaration[] {
-        return this._findClassOrTypeAliasDeclarations(stubDecl)
-            .filter((d) => isClassDeclaration(d))
-            .map((d) => d as ClassDeclaration);
-    }
-
     findClassDeclarationsByType(originatedPath: string, type: ClassType): ClassDeclaration[] {
         const result: ClassOrFunctionOrVariableDeclaration[] = [];
         this._addClassTypeDeclarations(originatedPath, type, result, new Set<string>());
@@ -89,6 +100,21 @@ export class SourceMapper {
         return this._findFunctionOrTypeAliasDeclarations(stubDecl)
             .filter((d) => isFunctionDeclaration(d))
             .map((d) => d as FunctionDeclaration);
+    }
+
+    isUserCode(path: string): boolean {
+        return isUserCode(this._boundSourceGetter(path));
+    }
+
+    getNextFileName(path: string) {
+        const withoutExtension = stripFileExtension(path);
+        let suffix = 1;
+        let result = `${withoutExtension}_${suffix}.py`;
+        while (this.isUserCode(result) && suffix < 1000) {
+            suffix += 1;
+            result = `${withoutExtension}_${suffix}.py`;
+        }
+        return result;
     }
 
     private _findSpecialBuiltInClassDeclarations(
@@ -563,7 +589,7 @@ export class SourceMapper {
         recursiveDeclCache: Set<string>
     ) {
         const filePath = type.details.filePath;
-        const sourceFiles = this._getSourceFiles(filePath);
+        const sourceFiles = this._getSourceFiles(filePath, /*stubToShadow*/ undefined, originated);
 
         const fullClassName = type.details.fullName.substring(
             type.details.moduleName.length + 1 /* +1 for trailing dot */
@@ -574,15 +600,15 @@ export class SourceMapper {
         }
     }
 
-    private _getSourceFiles(filePath: string, stubToShadow?: string) {
+    private _getSourceFiles(filePath: string, stubToShadow?: string, originated?: string) {
         const sourceFiles: SourceFile[] = [];
 
         if (this._isStubThatShouldBeMappedToImplementation(filePath)) {
-            appendArray(sourceFiles, this._getBoundSourceFilesFromStubFile(filePath, stubToShadow));
+            appendArray(sourceFiles, this._getBoundSourceFilesFromStubFile(filePath, stubToShadow, originated));
         } else {
-            const sourceFile = this._boundSourceGetter(filePath);
-            if (sourceFile) {
-                sourceFiles.push(sourceFile);
+            const sourceFileInfo = this._boundSourceGetter(filePath);
+            if (sourceFileInfo) {
+                sourceFiles.push(sourceFileInfo.sourceFile);
             }
         }
 
@@ -690,9 +716,62 @@ export class SourceMapper {
         return fullName.reverse().join('.');
     }
 
-    private _getBoundSourceFilesFromStubFile(stubFilePath: string, stubToShadow?: string): SourceFile[] {
-        const paths = this._importResolver.getSourceFilesFromStub(stubFilePath, this._execEnv, this._mapCompiled);
+    private _getBoundSourceFilesFromStubFile(
+        stubFilePath: string,
+        stubToShadow?: string,
+        originated?: string
+    ): SourceFile[] {
+        const paths = this._getSourcePathsFromStub(
+            stubFilePath,
+            originated ?? this._fromFile?.sourceFile.getFilePath()
+        );
         return paths.map((fp) => this._fileBinder(stubToShadow ?? stubFilePath, fp)).filter(isDefined);
+    }
+
+    private _getSourcePathsFromStub(stubFilePath: string, fromFile: string | undefined): string[] {
+        // Attempt our stubFilePath to see if we can resolve it as a source file path
+        let results = this._importResolver.getSourceFilesFromStub(stubFilePath, this._execEnv, this._mapCompiled);
+        if (results.length > 0) {
+            return results;
+        }
+
+        // If that didn't work, try looking through the graph up to our fromFile.
+        // One of them should be able to resolve to an actual file.
+        const stubFileImportTree = this._getStubFileImportTree(stubFilePath, fromFile);
+
+        // Go through the items in this tree until we find at least one path.
+        for (let i = 0; i < stubFileImportTree.length; i++) {
+            results = this._importResolver.getSourceFilesFromStub(
+                stubFileImportTree[i],
+                this._execEnv,
+                this._mapCompiled
+            );
+            if (results.length > 0) {
+                return results;
+            }
+        }
+
+        return [];
+    }
+
+    private _getStubFileImportTree(stubFilePath: string, fromFile: string | undefined): string[] {
+        if (!fromFile || !this._isStubThatShouldBeMappedToImplementation(stubFilePath)) {
+            // No path to search, just return the starting point.
+            return [stubFilePath];
+        } else {
+            // Otherwise recurse through the importedBy list up to our 'fromFile'.
+            return buildImportTree(
+                fromFile,
+                stubFilePath,
+                (p) => {
+                    const boundSourceInfo = this._boundSourceGetter(p);
+                    return boundSourceInfo
+                        ? boundSourceInfo.importedBy.map((info) => info.sourceFile.getFilePath())
+                        : [];
+                },
+                this._cancelToken
+            ).filter((p) => this._isStubThatShouldBeMappedToImplementation(p));
+        }
     }
 
     private _isStubThatShouldBeMappedToImplementation(filePath: string): boolean {

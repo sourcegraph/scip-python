@@ -23,6 +23,8 @@ def model_field(
     field_specifiers=(ModelField, model_field),
 )
 class ModelMeta(type):
+    not_a_field: str
+
     def __init_subclass__(
         cls,
         *,
@@ -43,6 +45,8 @@ class Customer1(ModelBase, frozen=True):
     name2: str = model_field(alias="other_name", default="None")
 
 
+# This should generate an error because a non-frozen class cannot
+# derive from a frozen one.
 class Customer1Subclass(Customer1, frozen=False):
     salary: float = model_field()
 
@@ -76,3 +80,22 @@ v2 = c2_1 < c2_2
 # This should generate an error because Customer2 supports
 # keyword-only parameters for its constructor.
 c2_3 = Customer2(0, "John")
+
+
+
+@dataclass_transform(frozen_default=True)
+class ModelMetaFrozen(type):
+    pass
+
+class ModelBaseFrozen(metaclass=ModelMetaFrozen):
+    ...
+
+class Customer3(ModelBaseFrozen):
+    id: int
+    name: str
+
+
+c3_1 = Customer3(id=2, name="hi")
+
+# This should generate an error because Customer3 is frozen.
+c3_1.id = 4

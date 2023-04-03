@@ -36,12 +36,36 @@ export interface FileSpec {
     // Regular expression that can be used to match against this
     // file spec.
     regExp: RegExp;
+
+    // Indicates whether the file spec has a directory wildcard (**).
+    // When present, the search cannot terminate without exploring to
+    // an arbitrary depth.
+    hasDirectoryWildcard: boolean;
 }
+
+const _includeFileRegex = /\.pyi?$/;
 
 export namespace FileSpec {
     export function is(value: any): value is FileSpec {
         const candidate: FileSpec = value as FileSpec;
         return candidate && !!candidate.wildcardRoot && !!candidate.regExp;
+    }
+    export function isInPath(path: string, paths: FileSpec[]) {
+        return !!paths.find((p) => p.regExp.test(path));
+    }
+
+    export function matchesIncludeFileRegex(filePath: string, isFile = true) {
+        return isFile ? _includeFileRegex.test(filePath) : true;
+    }
+
+    export function matchIncludeFileSpec(includeRegExp: RegExp, exclude: FileSpec[], filePath: string, isFile = true) {
+        if (includeRegExp.test(filePath)) {
+            if (!FileSpec.isInPath(filePath, exclude) && FileSpec.matchesIncludeFileRegex(filePath, isFile)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 }
 
@@ -534,6 +558,15 @@ export function getFileName(pathString: string) {
     return path.basename(pathString);
 }
 
+export function getShortenedFileName(pathString: string, maxDirLength = 15) {
+    const fileName = getFileName(pathString);
+    const dirName = getDirectoryPath(pathString);
+    if (dirName.length > maxDirLength) {
+        return `...${dirName.slice(dirName.length - maxDirLength)}${path.sep}${fileName}`;
+    }
+    return pathString;
+}
+
 export function stripFileExtension(fileName: string, multiDotExtension = false) {
     const ext = getFileExtension(fileName, multiDotExtension);
     return fileName.substr(0, fileName.length - ext.length);
@@ -562,10 +595,13 @@ export function isFile(fs: FileSystem, path: string, treatZipDirectoryAsFile = f
 
 export function tryStat(fs: FileSystem, path: string): Stats | undefined {
     try {
-        return fs.statSync(path);
+        if (fs.existsSync(path)) {
+            return fs.statSync(path);
+        }
     } catch (e: any) {
         return undefined;
     }
+    return undefined;
 }
 
 export function tryRealpath(fs: FileSystem, path: string): string | undefined {
@@ -637,7 +673,7 @@ export function getWildcardRegexPattern(rootPath: string, fileSpec: string): str
     const pathComponents = getPathComponents(absolutePath);
 
     const escapedSeparator = getRegexEscapedSeparator();
-    const doubleAsteriskRegexFragment = `(${escapedSeparator}[^${escapedSeparator}.][^${escapedSeparator}]*)*?`;
+    const doubleAsteriskRegexFragment = `(${escapedSeparator}[^${escapedSeparator}][^${escapedSeparator}]*)*?`;
     const reservedCharacterPattern = new RegExp(`[^\\w\\s${escapedSeparator}]`, 'g');
 
     // Strip the directory separator from the root component.
@@ -672,6 +708,20 @@ export function getWildcardRegexPattern(rootPath: string, fileSpec: string): str
     }
 
     return regExPattern;
+}
+
+// Determines whether the file spec contains a directory wildcard pattern ("**").
+export function isDirectoryWildcardPatternPresent(fileSpec: string): boolean {
+    const path = normalizePath(fileSpec);
+    const pathComponents = getPathComponents(path);
+
+    for (const component of pathComponents) {
+        if (component === '**') {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 // Returns the topmost path that contains no wildcard characters.
@@ -726,10 +776,12 @@ export function getFileSpec(fs: FileSystem, rootPath: string, fileSpec: string):
 
     const regExp = new RegExp(regExPattern, isFileSystemCaseSensitive(fs) ? undefined : 'i');
     const wildcardRoot = getWildcardRoot(rootPath, fileSpec);
+    const hasDirectoryWildcard = isDirectoryWildcardPatternPresent(fileSpec);
 
     return {
         wildcardRoot,
         regExp,
+        hasDirectoryWildcard,
     };
 }
 
@@ -895,7 +947,9 @@ export function convertUriToPath(fs: FileSystem, uriString: string): string {
 
 export function extractPathFromUri(uriString: string) {
     const uri = URI.parse(uriString);
-    let convertedPath = normalizePath(uri.path);
+
+    // When schema is "file", we use fsPath so that we can handle things like UNC paths.
+    let convertedPath = normalizePath(uri.scheme === 'file' ? uri.fsPath : uri.path);
 
     // If this is a DOS-style path with a drive letter, remove
     // the leading slash.

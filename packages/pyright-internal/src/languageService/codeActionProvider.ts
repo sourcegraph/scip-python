@@ -10,15 +10,22 @@ import { CancellationToken, CodeAction, CodeActionKind, Command } from 'vscode-l
 
 import { Commands } from '../commands/commands';
 import { throwIfCancellationRequested } from '../common/cancellationUtils';
-import { AddMissingOptionalToParamAction, CreateTypeStubFileAction } from '../common/diagnostic';
-import { convertPathToUri } from '../common/pathUtils';
+import {
+    ActionKind,
+    AddMissingOptionalToParamAction,
+    CreateTypeStubFileAction,
+    RenameShadowedFileAction,
+} from '../common/diagnostic';
+import { FileEditActions } from '../common/editAction';
+import { convertPathToUri, getShortenedFileName } from '../common/pathUtils';
 import { Range } from '../common/textRange';
-import { WorkspaceServiceInstance } from '../languageServerBase';
+import { convertToWorkspaceEdit } from '../common/workspaceEditUtils';
 import { Localizer } from '../localization/localize';
+import { Workspace } from '../workspaceFactory';
 
 export class CodeActionProvider {
     static async getCodeActionsForPosition(
-        workspace: WorkspaceServiceInstance,
+        workspace: Workspace,
         filePath: string,
         range: Range,
         kinds: CodeActionKind[] | undefined,
@@ -29,7 +36,7 @@ export class CodeActionProvider {
         const codeActions: CodeAction[] = [];
 
         if (!workspace.disableLanguageServices) {
-            const diags = await workspace.serviceInstance.getDiagnosticsForRange(filePath, range, token);
+            const diags = await workspace.service.getDiagnosticsForRange(filePath, range, token);
             const typeStubDiag = diags.find((d) => {
                 const actions = d.getActions();
                 return actions && actions.find((a) => a.action === Commands.createTypeStub);
@@ -45,7 +52,7 @@ export class CodeActionProvider {
                         Command.create(
                             Localizer.CodeAction.createTypeStub(),
                             Commands.createTypeStub,
-                            workspace.path,
+                            workspace.rootPath,
                             action.moduleName,
                             filePath
                         ),
@@ -65,7 +72,7 @@ export class CodeActionProvider {
                     .getActions()!
                     .find((a) => a.action === Commands.addMissingOptionalToParam) as AddMissingOptionalToParamAction;
                 if (action) {
-                    const fs = workspace.serviceInstance.getImportResolver().fileSystem;
+                    const fs = workspace.service.getImportResolver().fileSystem;
                     const addMissingOptionalAction = CodeAction.create(
                         Localizer.CodeAction.addOptionalToAnnotation(),
                         Command.create(
@@ -77,6 +84,35 @@ export class CodeActionProvider {
                         CodeActionKind.QuickFix
                     );
                     codeActions.push(addMissingOptionalAction);
+                }
+            }
+            const renameShadowed = diags.find((d) => {
+                const actions = d.getActions();
+                return actions && actions.find((a) => a.action === ActionKind.RenameShadowedFileAction);
+            });
+            if (renameShadowed) {
+                const action = renameShadowed
+                    .getActions()!
+                    .find((a) => a.action === ActionKind.RenameShadowedFileAction) as RenameShadowedFileAction;
+                if (action) {
+                    const title = Localizer.CodeAction.renameShadowedFile().format({
+                        oldFile: getShortenedFileName(action.oldFile),
+                        newFile: getShortenedFileName(action.newFile),
+                    });
+                    const fs = workspace.service.getImportResolver().fileSystem;
+                    const editActions: FileEditActions = {
+                        edits: [],
+                        fileOperations: [
+                            {
+                                kind: 'rename',
+                                oldFilePath: action.oldFile,
+                                newFilePath: action.newFile,
+                            },
+                        ],
+                    };
+                    const workspaceEdit = convertToWorkspaceEdit(fs, editActions);
+                    const renameAction = CodeAction.create(title, workspaceEdit, CodeActionKind.QuickFix);
+                    codeActions.push(renameAction);
                 }
             }
         }

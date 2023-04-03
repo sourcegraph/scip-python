@@ -21,18 +21,18 @@ import {
     LogData,
     run,
 } from './backgroundThreadBase';
-import { throwIfCancellationRequested } from './common/cancellationUtils';
+import {
+    getCancellationTokenId,
+    OperationCanceledException,
+    throwIfCancellationRequested,
+} from './common/cancellationUtils';
 import { ConfigOptions } from './common/configOptions';
 import { ConsoleInterface, log, LogLevel } from './common/console';
 import * as debug from './common/debug';
 import { Diagnostic } from './common/diagnostic';
 import { FileDiagnostics } from './common/diagnosticSink';
-import { LanguageServiceExtension } from './common/extensibility';
-import {
-    disposeCancellationToken,
-    getCancellationTokenFromId,
-    getCancellationTokenId,
-} from './common/fileBasedCancellationUtils';
+import { Extensions } from './common/extensibility';
+import { disposeCancellationToken, getCancellationTokenFromId } from './common/fileBasedCancellationUtils';
 import { FileSystem } from './common/fileSystem';
 import { Host, HostKind } from './common/host';
 import { LogTracker } from './common/logTracker';
@@ -123,8 +123,12 @@ export class BackgroundAnalysisBase {
         });
     }
 
-    setFileClosed(filePath: string) {
-        this.enqueueRequest({ requestType: 'setFileClosed', data: filePath });
+    setFileClosed(filePath: string, isTracked?: boolean) {
+        this.enqueueRequest({ requestType: 'setFileClosed', data: { filePath, isTracked } });
+    }
+
+    addInterimFile(filePath: string) {
+        this.enqueueRequest({ requestType: 'addInterimFile', data: { filePath } });
     }
 
     markAllFilesDirty(evenIfContentsAreSame: boolean, indexingNeeded: boolean) {
@@ -193,17 +197,21 @@ export class BackgroundAnalysisBase {
         indexOptions: IndexOptions,
         configOptions: ConfigOptions,
         importResolver: ImportResolver,
-        kind: HostKind,
-        indices: Indices
+        kind: HostKind
     ) {
         /* noop */
     }
 
-    refreshIndexing(configOptions: ConfigOptions, importResolver: ImportResolver, kind: HostKind, indices?: Indices) {
+    refreshIndexing(
+        configOptions: ConfigOptions,
+        importResolver: ImportResolver,
+        kind: HostKind,
+        refreshOptions?: RefreshOptions
+    ) {
         /* noop */
     }
 
-    cancelIndexing(configOptions: ConfigOptions) {
+    cancelIndexing() {
         /* noop */
     }
 
@@ -280,14 +288,13 @@ export abstract class BackgroundAnalysisRunnerBase extends BackgroundThreadBase 
     protected _importResolver: ImportResolver;
     private _program: Program;
 
-    protected _host: Host;
     protected _logTracker: LogTracker;
 
     get program(): Program {
         return this._program;
     }
 
-    protected constructor(private _extension?: LanguageServiceExtension) {
+    protected constructor() {
         super(workerData as InitializationData);
 
         // Stash the base directory into a global variable.
@@ -295,27 +302,24 @@ export abstract class BackgroundAnalysisRunnerBase extends BackgroundThreadBase 
         this.log(LogLevel.Info, `Background analysis(${threadId}) root directory: ${data.rootDirectory}`);
 
         this._configOptions = new ConfigOptions(data.rootDirectory);
-        this._host = this.createHost();
-        this._importResolver = this.createImportResolver(this.fs, this._configOptions, this._host);
+        this._importResolver = this.createImportResolver(this.fs, this._configOptions, this.createHost());
 
         const console = this.getConsole();
         this._logTracker = new LogTracker(console, `BG(${threadId})`);
 
-        this._program = new Program(
-            this._importResolver,
-            this._configOptions,
-            console,
-            this._extension,
-            this._logTracker
-        );
+        this._program = new Program(this._importResolver, this._configOptions, console, this._logTracker);
+
+        // Create the extensions bound to the program for this background thread
+        Extensions.createProgramExtensions(this._program, {
+            addInterimFile: (filePath: string) => this._program.addInterimFile(filePath),
+        });
     }
 
     start() {
         this.log(LogLevel.Info, `Background analysis(${threadId}) started`);
 
         // Get requests from main thread.
-        parentPort?.on('message', (msg: AnalysisRequest) => this.onMessage(msg));
-
+        parentPort?.on('message', this._onMessageWrapper.bind(this));
         parentPort?.on('error', (msg) => debug.fail(`failed ${msg}`));
         parentPort?.on('exit', (c) => {
             if (c !== 0) {
@@ -396,7 +400,11 @@ export abstract class BackgroundAnalysisRunnerBase extends BackgroundThreadBase 
             case 'setConfigOptions': {
                 this._configOptions = createConfigOptionsFrom(msg.data);
 
-                this._importResolver = this.createImportResolver(this.fs, this._configOptions, this._host);
+                this._importResolver = this.createImportResolver(
+                    this.fs,
+                    this._configOptions,
+                    this._importResolver.host
+                );
                 this.program.setConfigOptions(this._configOptions);
                 this.program.setImportResolver(this._importResolver);
                 break;
@@ -435,8 +443,15 @@ export abstract class BackgroundAnalysisRunnerBase extends BackgroundThreadBase 
             }
 
             case 'setFileClosed': {
-                const diagnostics = this.program.setFileClosed(msg.data);
+                const { filePath, isTracked } = msg.data;
+                const diagnostics = this.program.setFileClosed(filePath, isTracked);
                 this._reportDiagnostics(diagnostics, this.program.getFilesToAnalyzeCount(), 0);
+                break;
+            }
+
+            case 'addInterimFile': {
+                const { filePath } = msg.data;
+                this.program.addInterimFile(filePath);
                 break;
             }
 
@@ -464,19 +479,42 @@ export abstract class BackgroundAnalysisRunnerBase extends BackgroundThreadBase 
 
             case 'restart': {
                 // recycle import resolver
-                this._importResolver = this.createImportResolver(this.fs, this._configOptions, this._host);
+                this._importResolver = this.createImportResolver(
+                    this.fs,
+                    this._configOptions,
+                    this._importResolver.host
+                );
                 this.program.setImportResolver(this._importResolver);
                 break;
             }
 
             case 'shutdown': {
-                parentPort?.close();
+                this.shutdown();
                 break;
             }
 
             default: {
                 debug.fail(`${msg.requestType} is not expected`);
             }
+        }
+    }
+
+    private _onMessageWrapper(msg: AnalysisRequest) {
+        try {
+            return this.onMessage(msg);
+        } catch (e: any) {
+            // Don't crash the worker, just send an exception or cancel message
+            this.log(LogLevel.Log, `Background analysis exception leak: ${e}`);
+
+            if (OperationCanceledException.is(e)) {
+                parentPort?.postMessage({ kind: 'cancelled', data: e.message });
+                return;
+            }
+
+            parentPort?.postMessage({
+                kind: 'failed',
+                data: `Exception: for msg ${msg.requestType}: ${e.message} in ${e.stack}`,
+            });
         }
     }
 
@@ -513,6 +551,12 @@ export abstract class BackgroundAnalysisRunnerBase extends BackgroundThreadBase 
 
     protected reportIndex(port: MessagePort, result: { path: string; indexResults: IndexResults }) {
         port.postMessage({ requestType: 'indexResult', data: result });
+    }
+
+    protected override shutdown() {
+        this._program.dispose();
+        Extensions.destroyProgramExtensions(this._program.id);
+        super.shutdown();
     }
 
     private _reportDiagnostics(diagnostics: FileDiagnostics[], filesLeftToAnalyze: number, elapsedTime: number) {
@@ -558,7 +602,7 @@ function convertDiagnostics(diagnostics: Diagnostic[]) {
     // Elements are typed as "any" since data crossing the process
     // boundary loses type info.
     return diagnostics.map<Diagnostic>((d: any) => {
-        const diag = new Diagnostic(d.category, d.message, d.range);
+        const diag = new Diagnostic(d.category, d.message, d.range, d.priority);
         if (d._actions) {
             for (const action of d._actions) {
                 diag.addAction(action);
@@ -600,7 +644,8 @@ export interface AnalysisRequest {
         | 'setExperimentOptions'
         | 'setImportResolver'
         | 'getInlayHints'
-        | 'shutdown';
+        | 'shutdown'
+        | 'addInterimFile';
 
     data: any;
     port?: MessagePort | undefined;
@@ -612,6 +657,11 @@ export interface AnalysisResponse {
 }
 
 export interface IndexOptions {
-    // forceIndexing means it will include symbols not shown in __all__ for py file.
-    packageDepths: [moduleName: string, maxDepth: number, forceIndexing: boolean][];
+    // includeAllSymbols means it will include symbols not shown in __all__ for py file.
+    packageDepths: [moduleName: string, maxDepth: number, includeAllSymbols: boolean][];
+}
+
+export interface RefreshOptions {
+    // No files/folders are added or removed. only changes.
+    changesOnly: boolean;
 }

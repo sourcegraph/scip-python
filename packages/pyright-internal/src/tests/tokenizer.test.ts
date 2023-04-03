@@ -330,16 +330,19 @@ test('IndentDedent', () => {
     assert.equal(results.tokens.getItemAt(1).type, TokenType.NewLine);
     assert.equal(results.tokens.getItemAt(2).type, TokenType.Indent);
     assert.equal((results.tokens.getItemAt(2) as IndentToken).indentAmount, 2);
+    assert.equal((results.tokens.getItemAt(2) as IndentToken).length, 2);
     assert.equal(results.tokens.getItemAt(3).type, TokenType.Identifier);
     assert.equal(results.tokens.getItemAt(4).type, TokenType.NewLine);
     assert.equal(results.tokens.getItemAt(5).type, TokenType.Identifier);
     assert.equal(results.tokens.getItemAt(6).type, TokenType.NewLine);
     assert.equal(results.tokens.getItemAt(7).type, TokenType.Indent);
     assert.equal((results.tokens.getItemAt(7) as IndentToken).indentAmount, 8);
+    assert.equal((results.tokens.getItemAt(7) as IndentToken).length, 3);
     assert.equal(results.tokens.getItemAt(8).type, TokenType.Identifier);
     assert.equal(results.tokens.getItemAt(9).type, TokenType.NewLine);
     assert.equal(results.tokens.getItemAt(10).type, TokenType.Indent);
     assert.equal((results.tokens.getItemAt(10) as IndentToken).isIndentAmbiguous, true);
+    assert.equal((results.tokens.getItemAt(10) as IndentToken).length, 1);
     assert.equal(results.tokens.getItemAt(11).type, TokenType.Identifier);
     assert.equal(results.tokens.getItemAt(12).type, TokenType.NewLine);
     assert.equal(results.tokens.getItemAt(13).type, TokenType.Dedent);
@@ -1123,8 +1126,8 @@ test('Decimal number operator', () => {
 
 test('Floating point number', () => {
     const t = new Tokenizer();
-    const results = t.tokenize('3.0 .2 ++.3e+12 --.4e1 1e-4 0.01');
-    assert.equal(results.tokens.count, 10 + _implicitTokenCount);
+    const results = t.tokenize('3.0 .2 ++.3e+12 --.4e1 1e-4 0.01 01.0');
+    assert.equal(results.tokens.count, 11 + _implicitTokenCount);
 
     assert.equal(results.tokens.getItemAt(0).type, TokenType.Number);
     assert.equal((results.tokens.getItemAt(0) as NumberToken).value, 3);
@@ -1167,6 +1170,11 @@ test('Floating point number', () => {
     assert.equal((results.tokens.getItemAt(9) as NumberToken).value, 0.01);
     assert.equal((results.tokens.getItemAt(9) as NumberToken).isInteger, false);
     assert.equal(results.tokens.getItemAt(9).length, 4);
+
+    assert.equal(results.tokens.getItemAt(10).type, TokenType.Number);
+    assert.equal((results.tokens.getItemAt(10) as NumberToken).value, 1.0);
+    assert.equal((results.tokens.getItemAt(10) as NumberToken).isInteger, false);
+    assert.equal(results.tokens.getItemAt(10).length, 4);
 });
 
 test('Floating point numbers with parens', () => {

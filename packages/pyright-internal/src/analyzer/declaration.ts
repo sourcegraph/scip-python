@@ -31,6 +31,8 @@ import {
     YieldNode,
 } from '../parser/parseNodes';
 
+export const UnresolvedModuleMarker = '*** unresolved ***';
+
 export const enum DeclarationType {
     Intrinsic,
     Variable,
@@ -50,11 +52,13 @@ export interface DeclarationBase {
     // Used by hover provider to display helpful text.
     type: DeclarationType;
 
-    // Parse node associated with the declaration.
+    // Parse node associated with the declaration. Does not necessarily match
+    // the path and range.
     node: ParseNode;
 
     // The file and range within that file that
-    // contains the declaration.
+    // contains the declaration. Unless this is an alias, then path refers to the
+    // file the alias is referring to.
     path: string;
     range: Range;
 
@@ -100,6 +104,17 @@ export interface FunctionDeclaration extends DeclarationBase {
 export interface ParameterDeclaration extends DeclarationBase {
     type: DeclarationType.Parameter;
     node: ParameterNode;
+
+    // Documentation specified in the function's docstring (if any) can be
+    // associated with the parameter
+    docString?: string;
+
+    // Inferred parameters can be inferred from pieces of an actual NameNode, so this
+    // value represents the actual 'name' as the user thinks of it.
+    inferredName?: string;
+
+    // Nodes that potentially makeup the type of an inferred parameter.
+    inferredTypeNodes?: ExpressionNode[];
 }
 
 export interface TypeParameterDeclaration extends DeclarationBase {
@@ -130,15 +145,6 @@ export interface VariableDeclaration extends DeclarationBase {
     // constant in that reassignment is not permitted)?
     isFinal?: boolean;
 
-    // Is the declaration a "ClassVar"?
-    isClassVar?: boolean;
-
-    // Is the declaration annotated with "Required"?
-    isRequired?: boolean;
-
-    // Is the declaration annotated with "NotRequired"?
-    isNotRequired?: boolean;
-
     // Is the declaration an entry in __slots__?
     isDefinedBySlots?: boolean;
 
@@ -152,9 +158,6 @@ export interface VariableDeclaration extends DeclarationBase {
     // and other complex (more dynamic) class definitions with typed variables.
     isRuntimeTypeExpression?: boolean;
 
-    // Points to the "TypeAlias" annotation described in PEP 613.
-    typeAliasAnnotation?: ExpressionNode | undefined;
-
     // If the declaration is a type alias, points to the alias name.
     typeAliasName?: NameNode | undefined;
 
@@ -165,6 +168,9 @@ export interface VariableDeclaration extends DeclarationBase {
 
     // If an "attribute docstring" (as defined in PEP 258) is present...
     docString?: string | undefined;
+
+    // If set, indicates an alternative node to use to determine the type of the variable.
+    alternativeTypeNode?: ExpressionNode;
 }
 
 // Alias declarations are used for imports. They are resolved
@@ -273,4 +279,8 @@ export function isSpecialBuiltInClassDeclaration(decl: Declaration): decl is Spe
 
 export function isIntrinsicDeclaration(decl: Declaration): decl is IntrinsicDeclaration {
     return decl.type === DeclarationType.Intrinsic;
+}
+
+export function isUnresolvedAliasDeclaration(decl: Declaration): boolean {
+    return isAliasDeclaration(decl) && decl.path === UnresolvedModuleMarker;
 }

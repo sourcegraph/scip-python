@@ -11,15 +11,18 @@ def func1(os: OS, val: Literal[1, "linux"]):
     if os == "Linux":
         return True
 
-    # This should generate an error because there is no overlap in types.
+    # This should generate an error because this expression will always
+    # evaluate to False.
     if os == "darwin":
         return False
 
-    # This should generate an error because there is no overlap in types.
+    # This should generate an error because this expression will always
+    # evaluate to True.
     if os != val:
         return False
 
-    # This should generate an error because there is no overlap in types.
+    # This should generate an error because this expression will always
+    # evaluate to False.
     if val == 2:
         return False
 

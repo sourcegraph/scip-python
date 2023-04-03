@@ -25,7 +25,7 @@ import { ClassType, isClassInstance, isFunction, isInstantiableClass } from '../
 import {
     ClassMemberLookupFlags,
     doForEachSubtype,
-    isProperty,
+    isMaybeDescriptorInstance,
     lookUpClassMember,
     lookUpObjectMember,
 } from '../analyzer/typeUtils';
@@ -33,6 +33,7 @@ import { throwIfCancellationRequested } from '../common/cancellationUtils';
 import { getFileName } from '../common/pathUtils';
 import { convertOffsetsToRange } from '../common/positionUtils';
 import { rangesAreEqual } from '../common/textRange';
+import { ReferencesResult } from '../languageService/referencesProvider';
 import { CallNode, MemberAccessNode, NameNode, ParseNode, ParseNodeType } from '../parser/parseNodes';
 import { ParseResults } from '../parser/parser';
 
@@ -41,15 +42,30 @@ export class CallHierarchyProvider {
         symbolName: string,
         declaration: Declaration,
         evaluator: TypeEvaluator,
-        token: CancellationToken
+        token: CancellationToken,
+        callItemUri: string
     ): CallHierarchyItem | undefined {
         throwIfCancellationRequested(token);
 
-        if (declaration.type === DeclarationType.Function || declaration.type === DeclarationType.Class) {
+        if (
+            declaration.type === DeclarationType.Function ||
+            declaration.type === DeclarationType.Class ||
+            declaration.type === DeclarationType.Alias
+        ) {
+            // make sure the alias is resolved to class or function
+            if (declaration.type === DeclarationType.Alias) {
+                const resolvedDecl = evaluator.resolveAliasDeclaration(declaration, true);
+                if (!resolvedDecl) {
+                    return undefined;
+                }
+                if (resolvedDecl.type !== DeclarationType.Function && resolvedDecl.type !== DeclarationType.Class) {
+                    return undefined;
+                }
+            }
             const callItem: CallHierarchyItem = {
                 name: symbolName,
                 kind: getSymbolKind(declaration, evaluator),
-                uri: declaration.path,
+                uri: callItemUri,
                 range: declaration.range,
                 selectionRange: declaration.range,
             };
@@ -97,7 +113,7 @@ export class CallHierarchyProvider {
             parseRoot = declaration.node;
         } else if (declaration.type === DeclarationType.Class) {
             // Look up the __init__ method for this class.
-            const classType = evaluator.getTypeForDeclaration(declaration);
+            const classType = evaluator.getTypeForDeclaration(declaration)?.type;
             if (classType && isInstantiableClass(classType)) {
                 // Don't perform a recursive search of parent classes in this
                 // case because we don't want to find an inherited __init__
@@ -135,10 +151,15 @@ export class CallHierarchyProvider {
         return outgoingCalls.length > 0 ? outgoingCalls : undefined;
     }
 
-    static getTargetDeclaration(declarations: Declaration[], node: ParseNode): Declaration {
+    static getTargetDeclaration(
+        referencesResult: ReferencesResult,
+        filePath: string
+    ): { targetDecl: Declaration; callItemUri: string; symbolName: string } {
         // If there's more than one declaration, pick the target one.
         // We'll always prefer one with a declared type, and we'll always
         // prefer later declarations.
+        const declarations = referencesResult.declarations;
+        const node = referencesResult.nodeAtOffset;
         let targetDecl = declarations[0];
         for (const decl of declarations) {
             if (DeclarationUtils.hasTypeForDeclaration(decl) || !DeclarationUtils.hasTypeForDeclaration(targetDecl)) {
@@ -153,8 +174,16 @@ export class CallHierarchyProvider {
                 }
             }
         }
-
-        return targetDecl;
+        let symbolName;
+        let callItemUri;
+        if (targetDecl.type === DeclarationType.Alias) {
+            symbolName = (referencesResult.nodeAtOffset as NameNode).value;
+            callItemUri = filePath;
+        } else {
+            symbolName = DeclarationUtils.getNameFromDeclaration(targetDecl) || referencesResult.symbolNames[0];
+            callItemUri = targetDecl.path;
+        }
+        return { targetDecl, callItemUri, symbolName };
     }
 }
 
@@ -324,7 +353,20 @@ class FindIncomingCallTreeWalker extends ParseTreeWalker {
                         return this._evaluator.resolveAliasDeclaration(decl, /* resolveLocalNames */ true);
                     })
                     .filter((decl) => decl !== undefined);
-                if (resolvedDecls.some((decl) => DeclarationUtils.areDeclarationsSame(decl!, this._declaration))) {
+                if (this._declaration.type === DeclarationType.Alias) {
+                    const resolvedCurDecls = this._evaluator.resolveAliasDeclaration(
+                        this._declaration,
+                        /* resolveLocalNames */ true
+                    );
+                    if (
+                        resolvedCurDecls &&
+                        resolvedDecls.some((decl) => DeclarationUtils.areDeclarationsSame(decl!, resolvedCurDecls))
+                    ) {
+                        this._addIncomingCallForDeclaration(nameNode!);
+                    }
+                } else if (
+                    resolvedDecls.some((decl) => DeclarationUtils.areDeclarationsSame(decl!, this._declaration))
+                ) {
                     this._addIncomingCallForDeclaration(nameNode!);
                 }
             }
@@ -456,8 +498,8 @@ function getSymbolKind(declaration: Declaration, evaluator: TypeEvaluator): Symb
 
         case DeclarationType.Function:
             if (declaration.isMethod) {
-                const declType = evaluator.getTypeForDeclaration(declaration);
-                if (declType && isProperty(declType)) {
+                const declType = evaluator.getTypeForDeclaration(declaration)?.type;
+                if (declType && isMaybeDescriptorInstance(declType, /* requireSetter */ false)) {
                     symbolKind = SymbolKind.Property;
                 } else {
                     symbolKind = SymbolKind.Method;

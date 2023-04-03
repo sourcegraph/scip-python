@@ -10,39 +10,38 @@
 import { CancellationToken } from 'vscode-languageserver';
 import { TextDocumentContentChangeEvent } from 'vscode-languageserver-textdocument';
 
-import { BackgroundAnalysisBase, IndexOptions } from '../backgroundAnalysisBase';
+import { BackgroundAnalysisBase, IndexOptions, RefreshOptions } from '../backgroundAnalysisBase';
 import { ConfigOptions, ExecutionEnvironment } from '../common/configOptions';
 import { ConsoleInterface } from '../common/console';
 import { Diagnostic } from '../common/diagnostic';
 import { FileDiagnostics } from '../common/diagnosticSink';
-import { LanguageServiceExtension } from '../common/extensibility';
 import { Range } from '../common/textRange';
-import { IndexResults } from '../languageService/documentSymbolProvider';
 import { AnalysisCompleteCallback, analyzeProgram } from './analysis';
+import { CacheManager } from './cacheManager';
 import { ImportResolver } from './importResolver';
 import { Indices, MaxAnalysisTime, OpenFileOptions, Program } from './program';
 
 export class BackgroundAnalysisProgram {
     private _program: Program;
+    private _disposed = false;
     private _onAnalysisCompletion: AnalysisCompleteCallback | undefined;
-    private _indices: Indices | undefined;
 
     constructor(
         private _console: ConsoleInterface,
         private _configOptions: ConfigOptions,
         private _importResolver: ImportResolver,
-        extension?: LanguageServiceExtension,
-        private _backgroundAnalysis?: BackgroundAnalysisBase,
+        protected _backgroundAnalysis?: BackgroundAnalysisBase,
         private _maxAnalysisTime?: MaxAnalysisTime,
-        private _disableChecker?: boolean
+        private _disableChecker?: boolean,
+        cacheManager?: CacheManager
     ) {
         this._program = new Program(
             this._importResolver,
             this._configOptions,
             this._console,
-            extension,
             undefined,
-            this._disableChecker
+            this._disableChecker,
+            cacheManager
         );
     }
 
@@ -64,6 +63,10 @@ export class BackgroundAnalysisProgram {
 
     get backgroundAnalysis() {
         return this._backgroundAnalysis;
+    }
+
+    hasSourceFile(filePath: string): boolean {
+        return !!this._program.getSourceFile(filePath);
     }
 
     setConfigOptions(configOptions: ConfigOptions) {
@@ -116,10 +119,15 @@ export class BackgroundAnalysisProgram {
         this.markFilesDirty([path], /* evenIfContentsAreSame */ true);
     }
 
-    setFileClosed(filePath: string) {
-        this._backgroundAnalysis?.setFileClosed(filePath);
-        const diagnostics = this._program.setFileClosed(filePath);
+    setFileClosed(filePath: string, isTracked?: boolean) {
+        this._backgroundAnalysis?.setFileClosed(filePath, isTracked);
+        const diagnostics = this._program.setFileClosed(filePath, isTracked);
         this._reportDiagnosticsForRemovedFiles(diagnostics);
+    }
+
+    addInterimFile(filePath: string) {
+        this._backgroundAnalysis?.addInterimFile(filePath);
+        this._program.addInterimFile(filePath);
     }
 
     markAllFilesDirty(evenIfContentsAreSame: boolean, indexingNeeded = true) {
@@ -139,7 +147,7 @@ export class BackgroundAnalysisProgram {
 
     startAnalysis(token: CancellationToken): boolean {
         if (this._backgroundAnalysis) {
-            this._backgroundAnalysis.startAnalysis(this._indices, token);
+            this._backgroundAnalysis.startAnalysis(this._getIndices(), token);
             return false;
         }
 
@@ -153,47 +161,29 @@ export class BackgroundAnalysisProgram {
         );
     }
 
-    test_setIndexing(
-        workspaceIndices: Map<string, IndexResults>,
-        libraryIndices: Map<string | undefined, Map<string, IndexResults>>
-    ) {
-        const indices = this._getIndices();
-        for (const [filePath, indexResults] of workspaceIndices) {
-            indices.setWorkspaceIndex(filePath, indexResults);
-        }
-
-        for (const [execEnvRoot, map] of libraryIndices) {
-            for (const [libraryPath, indexResults] of map) {
-                indices.setIndex(execEnvRoot, libraryPath, indexResults);
-            }
-        }
+    analyzeFile(filePath: string, token: CancellationToken): boolean {
+        return this._program.analyzeFile(filePath, token);
     }
 
     startIndexing(indexOptions: IndexOptions) {
-        this._backgroundAnalysis?.startIndexing(
-            indexOptions,
-            this._configOptions,
-            this.importResolver,
-            this.host.kind,
-            this._getIndices()
-        );
+        this._backgroundAnalysis?.startIndexing(indexOptions, this._configOptions, this.importResolver, this.host.kind);
     }
 
-    refreshIndexing() {
+    refreshIndexing(refreshOptions?: RefreshOptions) {
         this._backgroundAnalysis?.refreshIndexing(
             this._configOptions,
             this.importResolver,
             this.host.kind,
-            this._indices
+            refreshOptions
         );
     }
 
     cancelIndexing() {
-        this._backgroundAnalysis?.cancelIndexing(this._configOptions);
+        this._backgroundAnalysis?.cancelIndexing();
     }
 
     getIndexing(filePath: string) {
-        return this._indices?.getIndex(this._configOptions.findExecEnvironment(filePath).root);
+        return this._getIndices()?.getIndex(this._configOptions.findExecEnvironment(filePath).root);
     }
 
     async getDiagnosticsForRange(filePath: string, range: Range, token: CancellationToken): Promise<Diagnostic[]> {
@@ -225,9 +215,13 @@ export class BackgroundAnalysisProgram {
         return this._program.writeTypeStub(targetImportPath, targetIsSingleFile, stubPath, token);
     }
 
-    invalidateAndForceReanalysis(rebuildUserFileIndexing: boolean, rebuildLibraryIndexing: boolean) {
+    invalidateAndForceReanalysis(
+        rebuildUserFileIndexing: boolean,
+        rebuildLibraryIndexing: boolean,
+        refreshOptions?: RefreshOptions
+    ) {
         if (rebuildLibraryIndexing) {
-            this.refreshIndexing();
+            this.refreshIndexing(refreshOptions);
         }
 
         this._backgroundAnalysis?.invalidateAndForceReanalysis(rebuildUserFileIndexing);
@@ -244,45 +238,15 @@ export class BackgroundAnalysisProgram {
         this._backgroundAnalysis?.restart();
     }
 
+    dispose() {
+        this._disposed = true;
+        this._program.dispose();
+        this._backgroundAnalysis?.shutdown();
+    }
+
     private _ensurePartialStubPackages(execEnv: ExecutionEnvironment) {
         this._backgroundAnalysis?.ensurePartialStubPackages(execEnv.root);
         return this._importResolver.ensurePartialStubPackages(execEnv);
-    }
-
-    private _getIndices(): Indices {
-        if (!this._indices) {
-            const program = this._program;
-
-            // The map holds onto index results of library files per execution root.
-            // The map will be refreshed together when library files are re-scanned.
-            // It can't be cached by sourceFile since some of library files won't have
-            // corresponding sourceFile created.
-            const map = new Map<string | undefined, Map<string, IndexResults>>();
-            this._indices = {
-                setWorkspaceIndex(path: string, indexResults: IndexResults): void {
-                    // Index result of workspace file will be cached by each sourceFile
-                    // and it will go away when the source file goes away.
-                    program.getSourceFile(path)?.cacheIndexResults(indexResults);
-                },
-                getIndex(execEnv: string | undefined): Map<string, IndexResults> | undefined {
-                    return map.get(execEnv);
-                },
-                setIndex(execEnv: string | undefined, path: string, indexResults: IndexResults): void {
-                    let indicesMap = map.get(execEnv);
-                    if (!indicesMap) {
-                        indicesMap = new Map<string, IndexResults>();
-                        map.set(execEnv, indicesMap);
-                    }
-
-                    indicesMap.set(path, indexResults);
-                },
-                reset(): void {
-                    map.clear();
-                },
-            };
-        }
-
-        return this._indices!;
     }
 
     private _reportDiagnosticsForRemovedFiles(fileDiags: FileDiagnostics[]) {
@@ -303,13 +267,18 @@ export class BackgroundAnalysisProgram {
             }
         }
     }
+
+    protected _getIndices(): Indices | undefined {
+        return undefined;
+    }
 }
 
 export type BackgroundAnalysisProgramFactory = (
+    serviceId: string,
     console: ConsoleInterface,
     configOptions: ConfigOptions,
     importResolver: ImportResolver,
-    extension?: LanguageServiceExtension,
     backgroundAnalysis?: BackgroundAnalysisBase,
-    maxAnalysisTime?: MaxAnalysisTime
+    maxAnalysisTime?: MaxAnalysisTime,
+    cacheManager?: CacheManager
 ) => BackgroundAnalysisProgram;

@@ -130,6 +130,12 @@
       "title": "Infer strict types for dictionary expressions",
       "default": false
     },
+    "analyzeUnannotatedFunctions": {
+      "$id": "#/properties/analyzeUnannotatedFunctions",
+      "type": "boolean",
+      "title": "Analyze and report diagnostics for functions that have no annotations",
+      "default": true
+    },
     "strictParameterNoneValue": {
       "$id": "#/properties/strictParameterNoneValue",
       "type": "boolean",
@@ -308,6 +314,12 @@
       "$id": "#/properties/reportConstantRedefinition",
       "$ref": "#/definitions/diagnostic",
       "title": "Controls reporting of attempts to redefine variables that are in all-caps",
+      "default": "none"
+    },
+    "reportDeprecated": {
+      "$id": "#/properties/reportDeprecated",
+      "$ref": "#/definitions/diagnostic",
+      "title": "Controls reporting of use of deprecated class or function",
       "default": "none"
     },
     "reportIncompatibleMethodOverride": {
@@ -506,6 +518,18 @@
       "$id": "#/properties/reportMatchNotExhaustive",
       "$ref": "#/definitions/diagnostic",
       "title": "Controls reporting of 'match' statements that do not exhaustively match all possible values",
+      "default": "none"
+    },
+    "reportShadowedImports": {
+      "$id": "#/properties/reportShadowedImports",
+      "$ref": "#/definitions/diagnostic",
+      "title": "Controls reporting of shadowed imports of stdlib modules",
+      "default": "none"
+    },
+    "reportImplicitOverride": {
+      "$id": "#/properties/reportImplicitOverride",
+      "$ref": "#/definitions/diagnostic",
+      "title": "Controls reporting overridden methods that are missing an `@override` decorator",
       "default": "none"
     },
     "extraPaths": {

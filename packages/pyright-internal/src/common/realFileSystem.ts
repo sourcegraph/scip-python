@@ -1,7 +1,7 @@
 /*
  * realFileSystem.ts
  *
- * Collection of helper functions that require real fs access.
+ * Helper functions that require real filesystem access.
  */
 
 import { FakeFS, NativePath, PortablePath, PosixFS, ppath, VirtualFS, ZipFS, ZipOpenFS } from '@yarnpkg/fslib';
@@ -205,7 +205,7 @@ class YarnFS extends PosixFS {
 const yarnFS = new YarnFS();
 
 class RealFileSystem implements FileSystem {
-    private _tmpdir?: string;
+    private _tmpdir?: tmp.DirResult;
 
     constructor(private _fileWatcherProvider: FileWatcherProvider, private _console: ConsoleInterface) {}
 
@@ -331,10 +331,10 @@ class RealFileSystem implements FileSystem {
 
     tmpdir() {
         if (!this._tmpdir) {
-            const dir = tmp.dirSync({ prefix: 'pyright' });
-            this._tmpdir = dir.name;
+            this._tmpdir = tmp.dirSync({ prefix: 'pyright' });
         }
-        return this._tmpdir;
+
+        return this._tmpdir.name;
     }
 
     tmpfile(options?: TmpfileOptions): string {
@@ -364,7 +364,7 @@ class RealFileSystem implements FileSystem {
             return realPath.substr(0, rootLength).toLowerCase() + realPath.substr(rootLength);
         } catch (e: any) {
             // Return as it is, if anything failed.
-            this._console.error(`Failed to get real file system casing for ${path}: ${e}`);
+            this._console.log(`Failed to get real file system casing for ${path}: ${e}`);
 
             return path;
         }
@@ -388,6 +388,15 @@ class RealFileSystem implements FileSystem {
 
     isInZipOrEgg(path: string): boolean {
         return /[^\\/]\.(?:egg|zip)[\\/]/.test(path) && yarnFS.isZip(path);
+    }
+
+    dispose(): void {
+        try {
+            this._tmpdir?.removeCallback();
+            this._tmpdir = undefined;
+        } catch {
+            // ignore
+        }
     }
 }
 

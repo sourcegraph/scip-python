@@ -7,25 +7,26 @@
  * Runs the analyzer service of a given workspace service instance
  * with a specified set of options.
  */
+
 import { isPythonBinary } from '../analyzer/pythonPathUtils';
-import { AnalyzerService } from '../analyzer/service';
-import type { BackgroundAnalysis } from '../backgroundAnalysis';
+import { AnalyzerService, getNextServiceId } from '../analyzer/service';
 import { CommandLineOptions } from '../common/commandLineOptions';
 import { LogLevel } from '../common/console';
-import { createDeferred } from '../common/deferred';
 import { FileSystem } from '../common/fileSystem';
 import { combinePaths } from '../common/pathUtils';
-import {
-    LanguageServerInterface,
-    ServerSettings,
-    WellKnownWorkspaceKinds,
-    WorkspaceServiceInstance,
-} from '../languageServerBase';
+import { LanguageServerInterface, ServerSettings } from '../languageServerBase';
+import { createInitStatus, WellKnownWorkspaceKinds, Workspace } from '../workspaceFactory';
+
+export interface CloneOptions {
+    useBackgroundAnalysis?: boolean;
+    typeStubTargetImportName?: string;
+    fileSystem?: FileSystem;
+}
 
 export class AnalyzerServiceExecutor {
     static runWithOptions(
         languageServiceRootPath: string,
-        workspace: WorkspaceServiceInstance,
+        workspace: Workspace,
         serverSettings: ServerSettings,
         typeStubTargetImportName?: string,
         trackFiles = true
@@ -39,30 +40,39 @@ export class AnalyzerServiceExecutor {
         );
 
         // Setting options causes the analyzer service to re-analyze everything.
-        workspace.serviceInstance.setOptions(commandLineOptions);
+        workspace.service.setOptions(commandLineOptions);
     }
 
     static async cloneService(
         ls: LanguageServerInterface,
-        workspace: WorkspaceServiceInstance,
-        typeStubTargetImportName?: string,
-        backgroundAnalysis?: BackgroundAnalysis,
-        fileSystem?: FileSystem
+        workspace: Workspace,
+        options?: CloneOptions
     ): Promise<AnalyzerService> {
         // Allocate a temporary pseudo-workspace to perform this job.
-        const tempWorkspace: WorkspaceServiceInstance = {
+        const instanceName = 'cloned service';
+        const serviceId = getNextServiceId(instanceName);
+
+        options = options ?? {};
+
+        const tempWorkspace: Workspace = {
+            ...workspace,
             workspaceName: `temp workspace for cloned service`,
             rootPath: workspace.rootPath,
-            path: workspace.path,
             uri: workspace.uri,
+            pythonPath: workspace.pythonPath,
+            pythonPathKind: workspace.pythonPathKind,
             kinds: [...workspace.kinds, WellKnownWorkspaceKinds.Cloned],
-            serviceInstance: workspace.serviceInstance.clone('cloned service', backgroundAnalysis, fileSystem),
+            service: workspace.service.clone(
+                instanceName,
+                serviceId,
+                options.useBackgroundAnalysis ? ls.createBackgroundAnalysis(serviceId) : undefined,
+                options.fileSystem
+            ),
             disableLanguageServices: true,
             disableOrganizeImports: true,
             disableWorkspaceSymbol: true,
-            isInitialized: createDeferred<boolean>(),
+            isInitialized: createInitStatus(),
             searchPathsToWatch: [],
-            owns: workspace.owns,
         };
 
         const serverSettings = await ls.getSettings(workspace);
@@ -70,11 +80,11 @@ export class AnalyzerServiceExecutor {
             ls.rootPath,
             tempWorkspace,
             serverSettings,
-            typeStubTargetImportName,
+            options.typeStubTargetImportName,
             /* trackFiles */ false
         );
 
-        return tempWorkspace.serviceInstance;
+        return tempWorkspace.service;
     }
 }
 
@@ -91,6 +101,7 @@ function getEffectiveCommandLineOptions(
     commandLineOptions.typeCheckingMode = serverSettings.typeCheckingMode;
     commandLineOptions.autoImportCompletions = serverSettings.autoImportCompletions;
     commandLineOptions.indexing = serverSettings.indexing;
+    commandLineOptions.taskListTokens = serverSettings.taskListTokens;
     commandLineOptions.logTypeEvaluationTime = serverSettings.logTypeEvaluationTime ?? false;
     commandLineOptions.typeEvaluationTimeThreshold = serverSettings.typeEvaluationTimeThreshold ?? 50;
     commandLineOptions.enableAmbientAnalysis = trackFiles;
@@ -148,6 +159,10 @@ function getEffectiveCommandLineOptions(
     commandLineOptions.autoSearchPaths = serverSettings.autoSearchPaths;
     commandLineOptions.extraPaths = serverSettings.extraPaths;
     commandLineOptions.diagnosticSeverityOverrides = serverSettings.diagnosticSeverityOverrides;
+
+    commandLineOptions.fileSpecs = serverSettings.fileSpecs ?? [];
+    commandLineOptions.excludeFileSpecs = serverSettings.excludeFileSpecs ?? [];
+    commandLineOptions.ignoreFileSpecs = serverSettings.ignoreFileSpecs ?? [];
 
     return commandLineOptions;
 }

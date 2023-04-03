@@ -18,14 +18,13 @@ import {
 } from 'vscode-languageserver';
 import { URI } from 'vscode-uri';
 
-import { resolveAliasDeclaration } from '../analyzer/aliasDeclarationUtils';
 import { AnalyzerFileInfo, ImportLookup } from '../analyzer/analyzerFileInfo';
 import * as AnalyzerNodeInfo from '../analyzer/analyzerNodeInfo';
 import { AliasDeclaration, Declaration, DeclarationType } from '../analyzer/declaration';
-import { getNameFromDeclaration } from '../analyzer/declarationUtils';
-import { getLastTypedDeclaredForSymbol } from '../analyzer/symbolUtils';
+import { getNameFromDeclaration, resolveAliasDeclaration } from '../analyzer/declarationUtils';
+import { getLastTypedDeclaredForSymbol, isVisibleExternally } from '../analyzer/symbolUtils';
 import { TypeEvaluator } from '../analyzer/typeEvaluatorTypes';
-import { isProperty } from '../analyzer/typeUtils';
+import { isMaybeDescriptorInstance } from '../analyzer/typeUtils';
 import { throwIfCancellationRequested } from '../common/cancellationUtils';
 import { convertOffsetsToRange } from '../common/positionUtils';
 import * as StringUtils from '../common/stringUtils';
@@ -58,7 +57,7 @@ export interface IndexResults {
 
 export interface IndexOptions {
     indexingForAutoImportMode: boolean;
-    forceIndexing?: boolean;
+    includeAllSymbols?: boolean;
 }
 
 export type WorkspaceSymbolCallback = (symbols: SymbolInformation[]) => void;
@@ -179,8 +178,8 @@ function getSymbolKind(name: string, declaration: Declaration, evaluator?: TypeE
 
         case DeclarationType.Function:
             if (declaration.isMethod) {
-                const declType = evaluator?.getTypeForDeclaration(declaration);
-                if (declType && isProperty(declType)) {
+                const declType = evaluator?.getTypeForDeclaration(declaration)?.type;
+                if (declType && isMaybeDescriptorInstance(declType, /* requireSetter */ false)) {
                     symbolKind = SymbolKind.Property;
                 } else {
                     symbolKind = SymbolKind.Method;
@@ -293,6 +292,13 @@ function appendDocumentSymbolsRecursive(
             continue;
         }
 
+        // It's possible for a name to be '' under certain error
+        // conditions (such as a decorator with no associated function
+        // or class).
+        if (!symbolData.name) {
+            continue;
+        }
+
         const children: DocumentSymbol[] = [];
         appendDocumentSymbolsRecursive(symbolData.children, children, token);
 
@@ -332,7 +338,7 @@ function collectSymbolIndexData(
         // If we are not py.typed package, symbol must exist in __all__ for auto import mode.
         if (
             options.indexingForAutoImportMode &&
-            !options.forceIndexing &&
+            !options.includeAllSymbols &&
             !fileInfo.isStubFile &&
             !fileInfo.isInPyTypedPackage &&
             !symbol.isInDunderAll()
@@ -374,7 +380,7 @@ function collectSymbolIndexData(
             parseResults,
             declaration,
             options,
-            !symbol.isExternallyHidden(),
+            isVisibleExternally(symbol),
             name,
             indexSymbolData,
             token

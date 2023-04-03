@@ -66,3 +66,38 @@ def bad5(a: int) -> TypeGuard[int]:
     # This should generate an error because only
     # bool values can be returned.
     return 3
+
+
+# This should generate an error because a type guard function must
+# accept at least one parameter.
+def bad6() -> TypeGuard[int]:
+    return True
+
+
+class ClassA:
+    # This should generate an error because a type guard function must
+    # accept at least one parameter.
+    def method1(self) -> TypeGuard[int]:
+        return True
+
+
+class IsInt:
+    def __call__(self, value: Any) -> TypeGuard[int]:
+        return isinstance(value, int)
+
+
+def func3(x: Any):
+    i = IsInt()
+    if i(x):
+        reveal_type(x, expected_text="int")
+
+
+def is_int(obj: type) -> TypeGuard[type[int]]:
+    ...
+
+
+def func4(typ: type[_T]) -> _T:
+    if not is_int(typ):
+        raise Exception("Unsupported type")
+
+    return typ()

@@ -6,7 +6,7 @@
  * base class for background worker thread.
  */
 
-import { MessagePort, parentPort } from 'worker_threads';
+import { MessagePort, parentPort, TransferListItem } from 'worker_threads';
 
 import { OperationCanceledException, setCancellationFolderName } from './common/cancellationUtils';
 import { ConfigOptions } from './common/configOptions';
@@ -52,12 +52,21 @@ export class BackgroundThreadBase {
             level: LogLevel.Log,
         };
     }
+
+    protected shutdown() {
+        this.fs.dispose();
+        parentPort?.close();
+    }
 }
 
 export function createConfigOptionsFrom(jsonObject: any): ConfigOptions {
     const configOptions = new ConfigOptions(jsonObject.projectRoot);
     const getFileSpec = (fileSpec: any): FileSpec => {
-        return { wildcardRoot: fileSpec.wildcardRoot, regExp: new RegExp(fileSpec.regExp.source) };
+        return {
+            wildcardRoot: fileSpec.wildcardRoot,
+            regExp: new RegExp(fileSpec.regExp.source),
+            hasDirectoryWildcard: fileSpec.hasDirectoryWildcard,
+        };
     };
 
     configOptions.pythonPath = jsonObject.pythonPath;
@@ -79,17 +88,23 @@ export function createConfigOptionsFrom(jsonObject: any): ConfigOptions {
     configOptions.executionEnvironments = jsonObject.executionEnvironments;
     configOptions.autoImportCompletions = jsonObject.autoImportCompletions;
     configOptions.indexing = jsonObject.indexing;
+    configOptions.taskListTokens = jsonObject.taskListTokens;
     configOptions.logTypeEvaluationTime = jsonObject.logTypeEvaluationTime;
     configOptions.typeEvaluationTimeThreshold = jsonObject.typeEvaluationTimeThreshold;
     configOptions.include = jsonObject.include.map((f: any) => getFileSpec(f));
     configOptions.exclude = jsonObject.exclude.map((f: any) => getFileSpec(f));
     configOptions.ignore = jsonObject.ignore.map((f: any) => getFileSpec(f));
     configOptions.strict = jsonObject.strict.map((f: any) => getFileSpec(f));
+    configOptions.functionSignatureDisplay = jsonObject.functionSignatureDisplay;
 
     return configOptions;
 }
 
-export function run(code: () => any, port: MessagePort) {
+export interface MessagePoster {
+    postMessage(value: any, transferList?: ReadonlyArray<TransferListItem>): void;
+}
+
+export function run<T = any>(code: () => T, port: MessagePoster) {
     try {
         const result = code();
         port.postMessage({ kind: 'ok', data: result });

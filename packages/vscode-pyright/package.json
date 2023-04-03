@@ -2,7 +2,7 @@
     "name": "vscode-pyright",
     "displayName": "Pyright",
     "description": "VS Code static type checking for Python",
-    "version": "1.1.267",
+    "version": "1.1.301",
     "private": true,
     "license": "MIT",
     "author": {
@@ -51,6 +51,36 @@
                 "command": "pyright.restartserver",
                 "title": "Restart Server",
                 "category": "Pyright"
+            },
+            {
+                "command": "pyright.dumpTokens",
+                "title": "Dump token streams ...",
+                "category": "Pyright",
+                "enablement": "editorLangId == python && pyright.development"
+            },
+            {
+                "command": "pyright.dumpNodes",
+                "title": "Dump parse tree ...",
+                "category": "Pyright",
+                "enablement": "editorLangId == python && pyright.development"
+            },
+            {
+                "command": "pyright.dumpTypes",
+                "title": "Dump type info ...",
+                "category": "Pyright",
+                "enablement": "editorLangId == python && pyright.development"
+            },
+            {
+                "command": "pyright.dumpCachedTypes",
+                "title": "Dump cached type info ...",
+                "category": "Pyright",
+                "enablement": "editorLangId == python && pyright.development"
+            },
+            {
+                "command": "pyright.dumpCodeFlowGraph",
+                "title": "Dump code flow graph for node ...",
+                "category": "Pyright",
+                "enablement": "editorLangId == python && pyright.development"
             }
         ],
         "menus": {
@@ -60,6 +90,28 @@
                     "title": "Pyright: Organize Imports",
                     "group": "Pyright",
                     "when": "editorLangId == python"
+                }
+            ],
+            "commandPalette": [
+                {
+                    "command": "pyright.dumpTokens",
+                    "when": "editorLangId == python && pyright.development"
+                },
+                {
+                    "command": "pyright.dumpNodes",
+                    "when": "editorLangId == python && pyright.development"
+                },
+                {
+                    "command": "pyright.dumpTypes",
+                    "when": "editorLangId == python && pyright.development"
+                },
+                {
+                    "command": "pyright.dumpCachedTypes",
+                    "when": "editorLangId == python && pyright.development"
+                },
+                {
+                    "command": "pyright.dumpCodeFlowGraph",
+                    "when": "editorLangId == python && pyright.development"
                 }
             ]
         },
@@ -109,7 +161,6 @@
                 },
                 "python.analysis.diagnosticSeverityOverrides": {
                     "type": "object",
-                    "default": {},
                     "description": "Allows a user to override the severity levels for individual diagnostics.",
                     "scope": "resource",
                     "properties": {
@@ -421,6 +472,17 @@
                                 "error"
                             ]
                         },
+                        "reportDeprecated": {
+                            "type": "string",
+                            "description": "Diagnostics for use of deprecated classes or functions.",
+                            "default": "none",
+                            "enum": [
+                                "none",
+                                "information",
+                                "warning",
+                                "error"
+                            ]
+                        },
                         "reportIncompatibleMethodOverride": {
                             "type": "string",
                             "description": "Diagnostics for methods that override a method of the same name in a base class in an incompatible manner (wrong number of parameters, incompatible parameter types, or incompatible return type).",
@@ -698,7 +760,7 @@
                         },
                         "reportUndefinedVariable": {
                             "type": "string",
-                            "description": "Diagnostics for a missing or misnamed “self” parameter in instance methods and “cls” parameter in class methods. Instance methods in metaclasses (classes that derive from “type”) are allowed to use “cls” for instance methods.",
+                            "description": "Diagnostics for undefined variables.",
                             "default": "error",
                             "enum": [
                                 "none",
@@ -776,6 +838,28 @@
                         "reportMatchNotExhaustive": {
                             "type": "string",
                             "description": "Diagnostics for 'match' statements that do not exhaustively match all possible values.",
+                            "default": "none",
+                            "enum": [
+                                "none",
+                                "information",
+                                "warning",
+                                "error"
+                            ]
+                        },
+                        "reportShadowedImports": {
+                            "type": "string",
+                            "description": "Diagnostics for files that are overriding a module in the stdlib.",
+                            "default": "none",
+                            "enum": [
+                                "none",
+                                "information",
+                                "warning",
+                                "error"
+                            ]
+                        },
+                        "reportImplicitOverride": {
+                            "type": "string",
+                            "description": "Diagnostics for overridden methods that do not include an `@override` decorator.",
                             "default": "none",
                             "enum": [
                                 "none",
@@ -866,10 +950,10 @@
         "webpack-dev": "npm run clean && webpack --mode development --watch --progress"
     },
     "dependencies": {
-        "vscode-jsonrpc": "8.0.2-next.1",
-        "vscode-languageclient": "8.0.2-next.4",
-        "vscode-languageserver": "8.0.2-next.4",
-        "vscode-languageserver-protocol": "3.17.2-next.5"
+        "vscode-jsonrpc": "8.1.0",
+        "vscode-languageclient": "8.1.0",
+        "vscode-languageserver": "8.1.0",
+        "vscode-languageserver-protocol": "3.17.3"
     },
     "devDependencies": {
         "@types/copy-webpack-plugin": "^10.1.0",
@@ -878,10 +962,10 @@
         "copy-webpack-plugin": "^10.2.4",
         "detect-indent": "^6.1.0",
         "shx": "^0.3.4",
-        "ts-loader": "^9.3.1",
+        "ts-loader": "^9.4.2",
         "typescript": "~4.4.4",
         "vsce": "^2.7.0",
-        "webpack": "^5.74.0",
+        "webpack": "^5.76.0",
         "webpack-cli": "^4.10.0"
     }
 }

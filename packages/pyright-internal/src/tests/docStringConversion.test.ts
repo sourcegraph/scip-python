@@ -285,10 +285,10 @@ This text comes after.
     const markdown = `Take a look at this code:
 
 ${tripleTick}
-if foo:
-    print(foo)
-else:
-    print('not foo!')
+    if foo:
+        print(foo)
+    else:
+        print('not foo!')
 ${tripleTick}
 
 This text comes after.
@@ -308,10 +308,10 @@ test('RestLiteralBlockEmptyDoubleColonLine', () => {
 `;
 
     const markdown = `${tripleTick}
-if foo:
-    print(foo)
-else:
-    print('not foo!')
+    if foo:
+        print(foo)
+    else:
+        print('not foo!')
 ${tripleTick}
 `;
 
@@ -336,10 +336,10 @@ This text comes after.
     const markdown = `Take a look at this code:
 
 ${tripleTick}
-if foo:
-    print(foo)
-else:
-    print('not foo!')
+    if foo:
+        print(foo)
+    else:
+        print('not foo!')
 ${tripleTick}
 
 This text comes after.
@@ -665,6 +665,34 @@ Currently, the following file formats are supported:
     _testConvertToMarkdown(docstring, markdown);
 });
 
+test('Non EpyDocCv2Imread', () => {
+    const docstring = `imread(filename[, flags]) -> retval
+  .   @brief Loads an image from a file.
+  .   @anchor imread
+  .   
+  .   The function imread loads an image from the specified file and returns it. If the image cannot be
+  .   read (because of missing file, improper permissions, unsupported or invalid format), the function
+  .
+  .   Currently, the following file formats are supported:
+  .   
+  .   -   Windows bitmaps - \\*.bmp, \\*.dib (always supported)
+  .   -   JPEG files - \\*.jpeg, \\*.jpg, \\*.jpe (see the *Note* section)`;
+
+    const markdown = `imread(filename\\[, flags\\]) -&gt; retval
+.   @brief Loads an image from a file.
+.   @anchor imread
+.
+.   The function imread loads an image from the specified file and returns it. If the image cannot be
+.   read (because of missing file, improper permissions, unsupported or invalid format), the function
+.
+.   Currently, the following file formats are supported:
+.
+.   -   Windows bitmaps - \\*.bmp, \\*.dib (always supported)
+.   -   JPEG files - \\*.jpeg, \\*.jpg, \\*.jpe (see the \\*Note\\* section)`;
+
+    _testConvertToMarkdown(docstring, markdown);
+});
+
 test('EpyDocTest', () => {
     const docstring = `Return the x intercept of the line M{y=m*x+b}.  The X{x intercept}
 of a line is the point at which it crosses the x axis (M{y=0}).
@@ -715,6 +743,31 @@ test('EscapeHtmlTagsOutsideCodeBlocks', () => {
 
     const markdown = 'hello  &lt;noncode&gt;';
 
+    _testConvertToMarkdown(docstring, markdown);
+});
+
+test('IndentedCodeBlock', () => {
+    const docstring = `
+Expected:
+    ${tripleTick}python
+    def some_fn():
+        """
+        Backticks on a different indentation level don't close the code block.
+        ${tripleTick}
+        """
+    ${tripleTick}
+`;
+
+    const markdown = `
+Expected:
+${tripleTick}python
+    def some_fn():
+        """
+        Backticks on a different indentation level don't close the code block.
+        ${tripleTick}
+        """
+${tripleTick}
+`;
     _testConvertToMarkdown(docstring, markdown);
 });
 
@@ -821,3 +874,40 @@ function _testConvertToPlainText(docstring: string, expectedPlainText: string) {
 function _normalizeLineEndings(text: string): string {
     return text.split(/\r?\n/).join('\n');
 }
+
+test('RPYCLiteralBlockTransition', () => {
+    const docstring = `
+::
+
+         #####    #####             ####
+        ##   ##  ##   ##           ##             ####
+        ##  ##   ##  ##           ##                 #
+        #####    #####   ##   ##  ##               ##
+        ##  ##   ##       ## ##   ##                 #
+        ##   ##  ##        ###    ##              ###
+        ##   ##  ##        ##      #####
+     -------------------- ## ------------------------------------------
+                         ##
+
+Remote Python Call (RPyC)
+`;
+
+    const markdown = `
+
+${tripleTick}
+         #####    #####             ####
+        ##   ##  ##   ##           ##             ####
+        ##  ##   ##  ##           ##                 #
+        #####    #####   ##   ##  ##               ##
+        ##  ##   ##       ## ##   ##                 #
+        ##   ##  ##        ###    ##              ###
+        ##   ##  ##        ##      #####
+     -------------------- ## ------------------------------------------
+                         ##
+${tripleTick}
+
+Remote Python Call (RPyC)
+`;
+
+    _testConvertToMarkdown(docstring, markdown);
+});

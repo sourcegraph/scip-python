@@ -12,6 +12,7 @@
 
 import Char from 'typescript-char';
 
+import { isWhitespace } from '../analyzer/parseTreeUtils';
 import { IPythonMode } from '../analyzer/sourceFile';
 import { TextRange } from '../common/textRange';
 import { TextRangeCollection } from '../common/textRangeCollection';
@@ -276,7 +277,7 @@ export class Tokenizer {
         }
 
         // Insert any implied dedent tokens.
-        this._setIndent(0, 0, /* isSpacePresent */ false, /* isTabPresent */ false);
+        this._setIndent(this._cs.position, 0, 0, /* isSpacePresent */ false, /* isTabPresent */ false);
 
         // Add a final end-of-stream token to make parsing easier.
         this._tokens.push(Token.create(TokenType.EndOfStream, this._cs.position, 0, this._getComments()));
@@ -377,11 +378,23 @@ export class Tokenizer {
             return true;
         }
 
-        if (this._ipythonMode && this._isIPythonMagics()) {
-            this._handleIPythonMagics(
-                this._cs.currentChar === Char.Percent ? CommentType.IPythonMagic : CommentType.IPythonShellEscape
-            );
-            return true;
+        if (this._ipythonMode) {
+            const kind = this._getIPythonMagicsKind();
+            if (kind === 'line') {
+                this._handleIPythonMagics(
+                    this._cs.currentChar === Char.Percent ? CommentType.IPythonMagic : CommentType.IPythonShellEscape
+                );
+                return true;
+            }
+
+            if (kind === 'cell') {
+                this._handleIPythonMagics(
+                    this._cs.currentChar === Char.Percent
+                        ? CommentType.IPythonCellMagic
+                        : CommentType.IPythonCellShellEscape
+                );
+                return true;
+            }
         }
 
         switch (this._cs.currentChar) {
@@ -554,6 +567,8 @@ export class Tokenizer {
         let isTabPresent = false;
         let isSpacePresent = false;
 
+        const startOffset = this._cs.position;
+
         while (!this._cs.isEndOfStream()) {
             switch (this._cs.currentChar) {
                 case Char.Space:
@@ -582,7 +597,7 @@ export class Tokenizer {
 
                 default:
                     // Non-blank line. Set the current indent level.
-                    this._setIndent(tab1Spaces, tab8Spaces, isSpacePresent, isTabPresent);
+                    this._setIndent(startOffset, tab1Spaces, tab8Spaces, isSpacePresent, isTabPresent);
                     return;
 
                 case Char.Hash:
@@ -597,7 +612,13 @@ export class Tokenizer {
     // The caller must specify two space count values. The first assumes
     // that tabs are translated into one-space tab stops. The second assumes
     // that tabs are translated into eight-space tab stops.
-    private _setIndent(tab1Spaces: number, tab8Spaces: number, isSpacePresent: boolean, isTabPresent: boolean) {
+    private _setIndent(
+        startOffset: number,
+        tab1Spaces: number,
+        tab8Spaces: number,
+        isSpacePresent: boolean,
+        isTabPresent: boolean
+    ) {
         // Indentations are ignored within a parenthesized clause.
         if (this._parenDepth > 0) {
             return;
@@ -618,7 +639,7 @@ export class Tokenizer {
                     isSpacePresent,
                     isTabPresent,
                 });
-                this._tokens.push(IndentToken.create(this._cs.position, 0, tab8Spaces, false, this._getComments()));
+                this._tokens.push(IndentToken.create(startOffset, tab1Spaces, tab8Spaces, false, this._getComments()));
             }
         } else {
             const prevTabInfo = this._indentAmounts[this._indentAmounts.length - 1];
@@ -645,7 +666,7 @@ export class Tokenizer {
                 });
 
                 this._tokens.push(
-                    IndentToken.create(this._cs.position, 0, tab8Spaces, isIndentAmbiguous, this._getComments())
+                    IndentToken.create(startOffset, tab1Spaces, tab8Spaces, isIndentAmbiguous, this._getComments())
                 );
             } else if (prevTabInfo.tab8Spaces === tab8Spaces) {
                 // The Python spec says that if there is ambiguity about how tabs should
@@ -653,7 +674,9 @@ export class Tokenizer {
                 // spaces, it should be an error. We'll record this condition in the token
                 // so the parser can later report it.
                 if ((prevTabInfo.isSpacePresent && isTabPresent) || (prevTabInfo.isTabPresent && isSpacePresent)) {
-                    this._tokens.push(IndentToken.create(this._cs.position, 0, tab8Spaces, true, this._getComments()));
+                    this._tokens.push(
+                        IndentToken.create(startOffset, tab1Spaces, tab8Spaces, true, this._getComments())
+                    );
                 }
             } else {
                 // The Python spec says that if there is ambiguity about how tabs should
@@ -797,7 +820,11 @@ export class Tokenizer {
 
                 if (!isNaN(intValue)) {
                     const bigIntValue = BigInt(simpleIntText);
-                    if (!isFinite(intValue) || BigInt(intValue) !== bigIntValue) {
+                    if (
+                        !isFinite(intValue) ||
+                        intValue < Number.MIN_SAFE_INTEGER ||
+                        intValue > Number.MAX_SAFE_INTEGER
+                    ) {
                         intValue = bigIntValue;
                     }
 
@@ -835,7 +862,8 @@ export class Tokenizer {
             isDecimalInteger =
                 this._cs.currentChar !== Char.Period &&
                 this._cs.currentChar !== Char.e &&
-                this._cs.currentChar !== Char.E;
+                this._cs.currentChar !== Char.E &&
+                (this._cs.currentChar < Char._1 || this._cs.currentChar > Char._9);
         }
 
         if (isDecimalInteger) {
@@ -847,7 +875,11 @@ export class Tokenizer {
                 let isImaginary = false;
 
                 const bigIntValue = BigInt(simpleIntText);
-                if (!isFinite(intValue) || BigInt(intValue) !== bigIntValue) {
+                if (
+                    !isFinite(intValue) ||
+                    bigIntValue < Number.MIN_SAFE_INTEGER ||
+                    bigIntValue > Number.MAX_SAFE_INTEGER
+                ) {
                     intValue = bigIntValue;
                 }
 
@@ -1048,12 +1080,27 @@ export class Tokenizer {
         return prevComments;
     }
 
-    private _isIPythonMagics() {
+    private _getIPythonMagicsKind(): 'line' | 'cell' | undefined {
+        if (!isMagicChar(this._cs.currentChar)) {
+            return undefined;
+        }
+
         const prevToken = this._tokens.length > 0 ? this._tokens[this._tokens.length - 1] : undefined;
-        return (
-            (prevToken === undefined || prevToken.type === TokenType.NewLine || prevToken.type === TokenType.Indent) &&
-            (this._cs.currentChar === Char.Percent || this._cs.currentChar === Char.ExclamationMark)
-        );
+        if (prevToken !== undefined && !isWhitespace(prevToken)) {
+            return undefined;
+        }
+
+        if (this._cs.nextChar === this._cs.currentChar) {
+            // Eat up next magic char.
+            this._cs.moveNext();
+            return 'cell';
+        }
+
+        return 'line';
+
+        function isMagicChar(ch: number) {
+            return ch === Char.Percent || ch === Char.ExclamationMark;
+        }
     }
 
     private _handleIPythonMagics(type: CommentType): void {
@@ -1063,16 +1110,19 @@ export class Tokenizer {
         do {
             this._cs.skipToEol();
 
-            const length = this._cs.position - begin;
-            const value = this._cs.getText().substring(begin, begin + length);
+            if (type === CommentType.IPythonMagic || type === CommentType.IPythonShellEscape) {
+                const length = this._cs.position - begin;
+                const value = this._cs.getText().substring(begin, begin + length);
 
-            // is it multiline magics?
-            // %magic command \
-            //        next arguments
-            if (!value.match(/\\\s*$/)) {
-                break;
+                // is it multiline magics?
+                // %magic command \
+                //        next arguments
+                if (!value.match(/\\\s*$/)) {
+                    break;
+                }
             }
 
+            this._cs.moveNext();
             begin = this._cs.position + 1;
         } while (!this._cs.isEndOfStream());
 
@@ -1091,12 +1141,16 @@ export class Tokenizer {
         const value = this._cs.getText().substring(start, start + length);
         const comment = Comment.create(start, length, value);
 
-        const typeIgnoreRegexMatch = value.match(/^\s*type:\s*ignore(\s*\[([\s*\w-,]*)\]|\s|$)/);
+        const typeIgnoreRegexMatch = value.match(/((^|#)\s*)type:\s*ignore(\s*\[([\s*\w-,]*)\]|\s|$)/);
         if (typeIgnoreRegexMatch) {
-            const textRange: TextRange = { start, length: typeIgnoreRegexMatch[0].length };
+            const commentStart = start + (typeIgnoreRegexMatch.index ?? 0);
+            const textRange: TextRange = {
+                start: commentStart + typeIgnoreRegexMatch[1].length,
+                length: typeIgnoreRegexMatch[0].length - typeIgnoreRegexMatch[1].length,
+            };
             const ignoreComment: IgnoreComment = {
                 range: textRange,
-                rulesList: this._getIgnoreCommentRulesList(start, typeIgnoreRegexMatch),
+                rulesList: this._getIgnoreCommentRulesList(commentStart, typeIgnoreRegexMatch),
             };
 
             if (this._tokens.findIndex((t) => t.type !== TokenType.NewLine && t && t.type !== TokenType.Indent) < 0) {
@@ -1106,12 +1160,16 @@ export class Tokenizer {
             }
         }
 
-        const pyrightIgnoreRegexMatch = value.match(/^\s*pyright:\s*ignore(\s*\[([\s*\w-,]*)\]|\s|$)/);
+        const pyrightIgnoreRegexMatch = value.match(/((^|#)\s*)pyright:\s*ignore(\s*\[([\s*\w-,]*)\]|\s|$)/);
         if (pyrightIgnoreRegexMatch) {
-            const textRange: TextRange = { start, length: pyrightIgnoreRegexMatch[0].length };
+            const commentStart = start + (pyrightIgnoreRegexMatch.index ?? 0);
+            const textRange: TextRange = {
+                start: commentStart + pyrightIgnoreRegexMatch[1].length,
+                length: pyrightIgnoreRegexMatch[0].length - pyrightIgnoreRegexMatch[1].length,
+            };
             const ignoreComment: IgnoreComment = {
                 range: textRange,
-                rulesList: this._getIgnoreCommentRulesList(start, pyrightIgnoreRegexMatch),
+                rulesList: this._getIgnoreCommentRulesList(commentStart, pyrightIgnoreRegexMatch),
             };
             this._pyrightIgnoreLines.set(this._lineRanges.length, ignoreComment);
         }
@@ -1121,11 +1179,11 @@ export class Tokenizer {
 
     // Extracts the individual rules within a "type: ignore [x, y, z]" comment.
     private _getIgnoreCommentRulesList(start: number, match: RegExpMatchArray): IgnoreCommentRule[] | undefined {
-        if (match.length < 3 || match[2] === undefined) {
+        if (match.length < 5 || match[4] === undefined) {
             return undefined;
         }
 
-        const splitElements = match[2].split(',');
+        const splitElements = match[4].split(',');
         const commentRules: IgnoreCommentRule[] = [];
         let currentOffset = start + match[0].indexOf('[') + 1;
 

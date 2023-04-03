@@ -4,7 +4,7 @@
 
 # pyright: reportInvalidTypeVarUse=true
 
-from typing import AnyStr, Callable, Dict, Generic, List, TypeVar
+from typing import AnyStr, Callable, Dict, Generic, List, TypeVar, overload
 
 
 _T = TypeVar("_T")
@@ -115,4 +115,32 @@ class B(Generic[AnyStr]):
 
 class C(Generic[AnyStr]):
     def __init__(self, *, mode: AnyStr = "") -> None:
+        ...
+
+
+@overload
+def f16(default: int = ...) -> list[int]:
+    ...
+
+
+@overload
+def f16(default: _T) -> list[_T]:
+    ...
+
+
+def f16(default: _T = ...) -> list[int] | list[_T]:
+    ...
+
+
+class ClassA(Generic[_T]):
+    # This should generate an error because _T can go unsolved.
+    def __init__(self, x: _T = ...) -> None:
+        ...
+
+
+_T2 = TypeVar("_T2", default=int)
+
+
+class ClassB(Generic[_T2]):
+    def __init__(self, x: _T2 = ...) -> None:
         ...

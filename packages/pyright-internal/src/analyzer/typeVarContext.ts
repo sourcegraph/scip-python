@@ -13,8 +13,9 @@ import { assert } from '../common/debug';
 import {
     AnyType,
     ClassType,
+    FunctionType,
+    isFunction,
     maxTypeRecursionCount,
-    ParamSpecValue,
     TupleTypeArgument,
     Type,
     TypeCategory,
@@ -22,110 +23,51 @@ import {
     TypeVarType,
     WildcardTypeVarScopeId,
 } from './types';
-import { doForEachSubtype } from './typeUtils';
+import { applySolvedTypeVars, doForEachSubtype } from './typeUtils';
 
 export interface TypeVarMapEntry {
     typeVar: TypeVarType;
 
-    // The final type must "fit" between the narrow and
-    // wide type bound.
+    // The final type must "fit" between the narrow and wide type bound.
+    // If there are literal subtypes in the narrowBound, these are stripped,
+    // and the resulting widened type is placed in narrowBoundNoLiterals as
+    // long as they fit within the wideBound.
     narrowBound?: Type | undefined;
+    narrowBoundNoLiterals?: Type | undefined;
     wideBound?: Type | undefined;
 
-    retainLiteral?: boolean | undefined;
+    // For tuples, the variadic types can be individually specified
+    tupleTypes?: TupleTypeArgument[];
 }
 
-export interface ParamSpecMapEntry {
-    paramSpec: TypeVarType;
-    type: ParamSpecValue;
-}
-
-export interface VariadicTypeVarMapEntry {
-    typeVar: TypeVarType;
-    types: TupleTypeArgument[];
-}
-
-export class TypeVarContext {
-    private _solveForScopes: TypeVarScopeId[] | undefined;
+export class TypeVarSignatureContext {
     private _typeVarMap: Map<string, TypeVarMapEntry>;
-    private _variadicTypeVarMap: Map<string, VariadicTypeVarMapEntry> | undefined;
-    private _paramSpecMap: Map<string, ParamSpecMapEntry>;
-    private _isLocked = false;
+    private _sourceTypeVarScopeId: Set<string> | undefined;
 
-    constructor(solveForScopes?: TypeVarScopeId[] | TypeVarScopeId) {
-        if (Array.isArray(solveForScopes)) {
-            this._solveForScopes = solveForScopes;
-        } else if (solveForScopes !== undefined) {
-            this._solveForScopes = [solveForScopes];
-        } else {
-            this._solveForScopes = undefined;
-        }
-
+    constructor() {
         this._typeVarMap = new Map<string, TypeVarMapEntry>();
-        this._paramSpecMap = new Map<string, ParamSpecMapEntry>();
     }
 
     clone() {
-        const newTypeVarMap = new TypeVarContext();
-        if (this._solveForScopes) {
-            newTypeVarMap._solveForScopes = [...this._solveForScopes];
-        }
+        const newContext = new TypeVarSignatureContext();
 
         this._typeVarMap.forEach((value) => {
-            newTypeVarMap.setTypeVarType(value.typeVar, value.narrowBound, value.wideBound, value.retainLiteral);
-        });
+            newContext.setTypeVarType(value.typeVar, value.narrowBound, value.narrowBoundNoLiterals, value.wideBound);
 
-        this._paramSpecMap.forEach((value) => {
-            newTypeVarMap.setParamSpec(value.paramSpec, value.type);
-        });
-
-        if (this._variadicTypeVarMap) {
-            this._variadicTypeVarMap.forEach((value) => {
-                newTypeVarMap.setVariadicTypeVar(value.typeVar, value.types);
-            });
-        }
-
-        newTypeVarMap._isLocked = this._isLocked;
-
-        return newTypeVarMap;
-    }
-
-    // Copies a cloned type var map back into this object.
-    copyFromClone(clone: TypeVarContext) {
-        this._typeVarMap = clone._typeVarMap;
-        this._paramSpecMap = clone._paramSpecMap;
-        this._variadicTypeVarMap = clone._variadicTypeVarMap;
-        this._isLocked = clone._isLocked;
-    }
-
-    // Returns the list of scopes this type var map is "solving".
-    getSolveForScopes() {
-        return this._solveForScopes;
-    }
-
-    hasSolveForScope(scopeId: TypeVarScopeId | undefined) {
-        return (
-            scopeId !== undefined &&
-            this._solveForScopes !== undefined &&
-            this._solveForScopes.some((s) => s === scopeId || s === WildcardTypeVarScopeId)
-        );
-    }
-
-    setSolveForScopes(scopeIds: TypeVarScopeId[]) {
-        this._solveForScopes = scopeIds;
-    }
-
-    addSolveForScope(scopeId?: TypeVarScopeId) {
-        if (scopeId !== undefined && !this.hasSolveForScope(scopeId)) {
-            if (!this._solveForScopes) {
-                this._solveForScopes = [];
+            if (value.tupleTypes) {
+                newContext.setTupleTypeVar(value.typeVar, value.tupleTypes);
             }
-            this._solveForScopes.push(scopeId);
+        });
+
+        if (this._sourceTypeVarScopeId) {
+            this._sourceTypeVarScopeId.forEach((scopeId) => newContext.addSourceTypeVarScopeId(scopeId));
         }
+
+        return newContext;
     }
 
     isEmpty() {
-        return this._typeVarMap.size === 0 && this._paramSpecMap.size === 0;
+        return this._typeVarMap.size === 0;
     }
 
     // Provides a "score" - a value that values completeness (number
@@ -145,52 +87,62 @@ export class TypeVarContext {
             score += 1.0 - this._getComplexityScoreForType(typeVarType);
         });
 
-        score += this._paramSpecMap.size;
-
         return score;
     }
 
-    hasTypeVar(reference: TypeVarType): boolean {
-        return this._typeVarMap.has(this._getKey(reference));
-    }
-
     getTypeVarType(reference: TypeVarType, useNarrowBoundOnly = false): Type | undefined {
-        const entry = this._typeVarMap.get(this._getKey(reference));
+        const entry = this.getTypeVar(reference);
         if (!entry) {
             return undefined;
         }
-        if (entry.narrowBound) {
+
+        if (useNarrowBoundOnly) {
             return entry.narrowBound;
         }
-        if (!useNarrowBoundOnly) {
-            return entry.wideBound;
+
+        // Prefer the narrow version with no literals. It will be undefined
+        // if the literal type couldn't be widened due to constraints imposed
+        // by the wide bound.
+        return entry.narrowBoundNoLiterals ?? entry.narrowBound ?? entry.wideBound;
+    }
+
+    getParamSpecType(reference: TypeVarType): FunctionType | undefined {
+        const entry = this.getTypeVar(reference);
+        if (!entry?.narrowBound) {
+            return undefined;
         }
+
+        if (isFunction(entry.narrowBound)) {
+            return entry.narrowBound;
+        }
+
         return undefined;
     }
 
-    setTypeVarType(reference: TypeVarType, narrowBound: Type | undefined, wideBound?: Type, retainLiteral?: boolean) {
-        assert(!this._isLocked);
-        const key = this._getKey(reference);
-        this._typeVarMap.set(key, { typeVar: reference, narrowBound, wideBound, retainLiteral });
+    setTypeVarType(
+        reference: TypeVarType,
+        narrowBound: Type | undefined,
+        narrowBoundNoLiterals?: Type,
+        wideBound?: Type
+    ) {
+        const key = TypeVarType.getNameWithScope(reference);
+        this._typeVarMap.set(key, { typeVar: reference, narrowBound, narrowBoundNoLiterals, wideBound });
     }
 
-    getVariadicTypeVar(reference: TypeVarType): TupleTypeArgument[] | undefined {
-        return this._variadicTypeVarMap?.get(this._getKey(reference))?.types;
+    getTupleTypeVar(reference: TypeVarType): TupleTypeArgument[] | undefined {
+        return this.getTypeVar(reference)?.tupleTypes;
     }
 
-    setVariadicTypeVar(reference: TypeVarType, types: TupleTypeArgument[]) {
-        assert(!this._isLocked);
-        const key = this._getKey(reference);
+    setTupleTypeVar(reference: TypeVarType, types: TupleTypeArgument[]) {
+        // Caller should have already assigned a value to this type variable.
+        const entry = this.getTypeVar(reference);
+        assert(entry);
 
-        // Allocate variadic map on demand since most classes don't use it.
-        if (!this._variadicTypeVarMap) {
-            this._variadicTypeVarMap = new Map<string, VariadicTypeVarMapEntry>();
-        }
-        this._variadicTypeVarMap.set(key, { typeVar: reference, types });
+        entry.tupleTypes = types;
     }
 
     getTypeVar(reference: TypeVarType): TypeVarMapEntry | undefined {
-        const key = this._getKey(reference);
+        const key = TypeVarType.getNameWithScope(reference);
         return this._typeVarMap.get(key);
     }
 
@@ -204,25 +156,36 @@ export class TypeVarContext {
         return entries;
     }
 
-    hasParamSpec(reference: TypeVarType): boolean {
-        return this._paramSpecMap.has(this._getKey(reference));
+    // Applies solved TypeVars from one context to this context.
+    applySourceContextTypeVars(srcContext: TypeVarContext) {
+        this._typeVarMap.forEach((entry) => {
+            const newNarrowTypeBound = entry.narrowBound
+                ? applySolvedTypeVars(entry.narrowBound, srcContext)
+                : undefined;
+            const newNarrowTypeBoundNoLiterals = entry.narrowBoundNoLiterals
+                ? applySolvedTypeVars(entry.narrowBoundNoLiterals, srcContext)
+                : undefined;
+            const newWideTypeBound = entry.wideBound ? applySolvedTypeVars(entry.wideBound, srcContext) : undefined;
+
+            this.setTypeVarType(entry.typeVar, newNarrowTypeBound, newNarrowTypeBoundNoLiterals, newWideTypeBound);
+
+            if (entry.tupleTypes) {
+                this.setTupleTypeVar(
+                    entry.typeVar,
+                    entry.tupleTypes.map((arg) => {
+                        return { isUnbounded: arg.isUnbounded, type: applySolvedTypeVars(arg.type, srcContext) };
+                    })
+                );
+            }
+        });
     }
 
-    getParamSpec(reference: TypeVarType): ParamSpecValue | undefined {
-        return this._paramSpecMap.get(this._getKey(reference))?.type;
-    }
-
-    setParamSpec(reference: TypeVarType, type: ParamSpecValue) {
-        assert(!this._isLocked);
-        this._paramSpecMap.set(this._getKey(reference), { paramSpec: reference, type });
-    }
-
-    typeVarCount() {
+    getTypeVarCount() {
         return this._typeVarMap.size;
     }
 
     getWideTypeBound(reference: TypeVarType): Type | undefined {
-        const entry = this._typeVarMap.get(this._getKey(reference));
+        const entry = this.getTypeVar(reference);
         if (entry) {
             return entry.wideBound;
         }
@@ -230,28 +193,20 @@ export class TypeVarContext {
         return undefined;
     }
 
-    getRetainLiterals(reference: TypeVarType): boolean {
-        const entry = this._typeVarMap.get(this._getKey(reference));
-        return !!entry?.retainLiteral;
+    addSourceTypeVarScopeId(scopeId: string) {
+        if (!this._sourceTypeVarScopeId) {
+            this._sourceTypeVarScopeId = new Set<string>();
+        }
+
+        this._sourceTypeVarScopeId.add(scopeId);
     }
 
-    lock() {
-        // Locks the type var map, preventing any further changes.
-        assert(!this._isLocked);
-        this._isLocked = true;
-    }
+    hasSourceTypeVarScopeId(scopeId: string) {
+        if (!this._sourceTypeVarScopeId) {
+            return false;
+        }
 
-    unlock() {
-        // Unlocks the type var map, allowing further changes.
-        this._isLocked = false;
-    }
-
-    isLocked(): boolean {
-        return this._isLocked;
-    }
-
-    private _getKey(reference: TypeVarType) {
-        return TypeVarType.getNameWithScope(reference);
+        return this._sourceTypeVarScopeId.has(scopeId);
     }
 
     // Returns a "score" for a type that captures the relative complexity
@@ -268,10 +223,15 @@ export class TypeVarContext {
             case TypeCategory.Unknown:
             case TypeCategory.Any:
             case TypeCategory.None:
-            case TypeCategory.Function:
-            case TypeCategory.OverloadedFunction:
             case TypeCategory.TypeVar: {
                 return 0.5;
+            }
+
+            case TypeCategory.Function:
+            case TypeCategory.OverloadedFunction: {
+                // Classes and unions should be preferred over functions,
+                // so make this relatively high (more than 0.75).
+                return 0.8;
             }
 
             case TypeCategory.Unbound:
@@ -288,10 +248,11 @@ export class TypeVarContext {
                         const subtypeScore = this._getComplexityScoreForType(subtype, recursionCount);
                         maxScore = Math.max(maxScore, subtypeScore);
                     });
+                } else {
+                    maxScore = 0.5;
                 }
 
-                // Assume that a union is more complex than a non-union.
-                return 0.75 + maxScore / 4;
+                return maxScore;
             }
 
             case TypeCategory.Class: {
@@ -326,5 +287,180 @@ export class TypeVarContext {
 
         const averageTypeArgComplexity = typeArgCount > 0 ? typeArgScoreSum / typeArgCount : 0;
         return 0.5 + averageTypeArgComplexity * 0.25;
+    }
+}
+
+export class TypeVarContext {
+    private _solveForScopes: TypeVarScopeId[] | undefined;
+    private _isLocked = false;
+    private _signatureContexts: TypeVarSignatureContext[];
+
+    constructor(solveForScopes?: TypeVarScopeId[] | TypeVarScopeId) {
+        if (Array.isArray(solveForScopes)) {
+            this._solveForScopes = solveForScopes;
+        } else if (solveForScopes !== undefined) {
+            this._solveForScopes = [solveForScopes];
+        } else {
+            this._solveForScopes = undefined;
+        }
+
+        this._signatureContexts = [new TypeVarSignatureContext()];
+    }
+
+    clone() {
+        const newTypeVarMap = new TypeVarContext();
+        if (this._solveForScopes) {
+            newTypeVarMap._solveForScopes = [...this._solveForScopes];
+        }
+
+        newTypeVarMap._signatureContexts = this._signatureContexts.map((context) => context.clone());
+        newTypeVarMap._isLocked = this._isLocked;
+
+        return newTypeVarMap;
+    }
+
+    cloneWithSignatureSource(typeVarScopeId: string): TypeVarContext {
+        const clonedContext = this.clone();
+
+        if (typeVarScopeId) {
+            const filteredSignatures = this._signatureContexts.filter((context) =>
+                context.hasSourceTypeVarScopeId(typeVarScopeId)
+            );
+
+            if (filteredSignatures.length > 0) {
+                clonedContext._signatureContexts = filteredSignatures;
+            } else {
+                clonedContext._signatureContexts.forEach((context) => {
+                    context.addSourceTypeVarScopeId(typeVarScopeId);
+                });
+            }
+        }
+
+        return clonedContext;
+    }
+
+    // Copies a cloned type var context back into this object.
+    copyFromClone(clone: TypeVarContext) {
+        this._signatureContexts = clone._signatureContexts.map((context) => context.clone());
+        this._isLocked = clone._isLocked;
+    }
+
+    // Copy the specified signature contexts into this type var context.
+    copySignatureContexts(contexts: TypeVarSignatureContext[]) {
+        assert(contexts.length > 0);
+
+        this._signatureContexts = [...contexts];
+    }
+
+    // Returns the list of scopes this type var map is "solving".
+    getSolveForScopes() {
+        return this._solveForScopes;
+    }
+
+    hasSolveForScope(scopeId: TypeVarScopeId | undefined) {
+        return (
+            scopeId !== undefined &&
+            this._solveForScopes !== undefined &&
+            this._solveForScopes.some((s) => s === scopeId || s === WildcardTypeVarScopeId)
+        );
+    }
+
+    setSolveForScopes(scopeIds: TypeVarScopeId[]) {
+        this._solveForScopes = scopeIds;
+    }
+
+    addSolveForScope(scopeId?: TypeVarScopeId) {
+        if (scopeId !== undefined && !this.hasSolveForScope(scopeId)) {
+            if (!this._solveForScopes) {
+                this._solveForScopes = [];
+            }
+            this._solveForScopes.push(scopeId);
+        }
+    }
+
+    lock() {
+        // Locks the type var map, preventing any further changes.
+        assert(!this._isLocked);
+        this._isLocked = true;
+    }
+
+    unlock() {
+        // Unlocks the type var map, allowing further changes.
+        this._isLocked = false;
+    }
+
+    isLocked(): boolean {
+        return this._isLocked;
+    }
+
+    isEmpty() {
+        return this._signatureContexts.every((context) => context.isEmpty());
+    }
+
+    // Applies solved TypeVars from one context to this context.
+    applySourceContextTypeVars(srcContext: TypeVarContext) {
+        if (srcContext.isEmpty()) {
+            return;
+        }
+
+        const wasLocked = this.isLocked();
+        this.unlock();
+
+        this._signatureContexts.forEach((context) => context.applySourceContextTypeVars(srcContext));
+
+        if (wasLocked) {
+            this.lock();
+        }
+    }
+
+    setTypeVarType(
+        reference: TypeVarType,
+        narrowBound: Type | undefined,
+        narrowBoundNoLiterals?: Type,
+        wideBound?: Type
+    ) {
+        assert(!this._isLocked);
+
+        return this._signatureContexts.forEach((context) => {
+            context.setTypeVarType(reference, narrowBound, narrowBoundNoLiterals, wideBound);
+        });
+    }
+
+    setTupleTypeVar(reference: TypeVarType, tupleTypes: TupleTypeArgument[]) {
+        assert(!this._isLocked);
+
+        return this._signatureContexts.forEach((context) => {
+            context.setTupleTypeVar(reference, tupleTypes);
+        });
+    }
+
+    getScore() {
+        let total = 0;
+
+        this._signatureContexts.forEach((context) => {
+            total += context.getScore();
+        });
+
+        // Return the average score among all signature contexts.
+        return total / this._signatureContexts.length;
+    }
+
+    getPrimarySignature() {
+        return this._signatureContexts[0];
+    }
+
+    getSignatureContexts() {
+        return this._signatureContexts;
+    }
+
+    getSignatureContext(index: number) {
+        assert(index >= 0 && index < this._signatureContexts.length);
+        return this._signatureContexts[index];
+    }
+
+    doForEachSignature(callback: (context: TypeVarSignatureContext) => void) {
+        this._signatureContexts.forEach((context) => {
+            callback(context);
+        });
     }
 }

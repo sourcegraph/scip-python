@@ -10,11 +10,27 @@
 import { Commands } from '../commands/commands';
 import { appendArray } from './collectionUtils';
 import { DiagnosticLevel } from './configOptions';
-import { Range } from './textRange';
+import { Range, TextRange } from './textRange';
 
 const defaultMaxDepth = 5;
 const defaultMaxLineCount = 8;
 const maxRecursionCount = 64;
+
+// Corresponds to the CommentTaskPriority enum at https://devdiv.visualstudio.com/DefaultCollection/DevDiv/_git/VS?path=src/env/shell/PackageFramework/Framework/CommentTaskPriority.cs
+export enum TaskListPriority {
+    High = 'High',
+    Normal = 'Normal',
+    Low = 'Low',
+}
+
+export interface TaskListToken {
+    text: string;
+    priority: TaskListPriority;
+}
+
+export const enum ActionKind {
+    RenameShadowedFileAction = 'renameShadowedFile',
+}
 
 export const enum DiagnosticCategory {
     Error,
@@ -23,6 +39,7 @@ export const enum DiagnosticCategory {
     UnusedCode,
     UnreachableCode,
     Deprecated,
+    TaskItem,
 }
 
 export function convertLevelToCategory(level: DiagnosticLevel) {
@@ -60,10 +77,17 @@ export interface AddMissingOptionalToParamAction extends DiagnosticAction {
     offsetOfTypeNode: number;
 }
 
+export interface RenameShadowedFileAction extends DiagnosticAction {
+    action: ActionKind.RenameShadowedFileAction;
+    oldFile: string;
+    newFile: string;
+}
+
 export interface DiagnosticRelatedInfo {
     message: string;
     filePath: string;
     range: Range;
+    priority: TaskListPriority;
 }
 
 // Represents a single error or warning.
@@ -72,7 +96,12 @@ export class Diagnostic {
     private _rule: string | undefined;
     private _relatedInfo: DiagnosticRelatedInfo[] = [];
 
-    constructor(readonly category: DiagnosticCategory, readonly message: string, readonly range: Range) {}
+    constructor(
+        readonly category: DiagnosticCategory,
+        readonly message: string,
+        readonly range: Range,
+        readonly priority: TaskListPriority = TaskListPriority.Normal
+    ) {}
 
     addAction(action: DiagnosticAction) {
         if (this._actions === undefined) {
@@ -94,8 +123,13 @@ export class Diagnostic {
         return this._rule;
     }
 
-    addRelatedInfo(message: string, filePath: string, range: Range) {
-        this._relatedInfo.push({ filePath, message, range });
+    addRelatedInfo(
+        message: string,
+        filePath: string,
+        range: Range,
+        priority: TaskListPriority = TaskListPriority.Normal
+    ) {
+        this._relatedInfo.push({ filePath, message, range, priority });
     }
 
     getRelatedInfo() {
@@ -109,8 +143,17 @@ export class DiagnosticAddendum {
     private _messages: string[] = [];
     private _childAddenda: DiagnosticAddendum[] = [];
 
+    // Addenda normally don't have their own ranges, but there are cases
+    // where we want to track ranges that can influence the range of the
+    // diagnostic.
+    private _range: TextRange | undefined;
+
     addMessage(message: string) {
         this._messages.push(message);
+    }
+
+    addTextRange(range: TextRange) {
+        this._range = range;
     }
 
     // Create a new (nested) addendum to which messages can be added.
@@ -150,6 +193,46 @@ export class DiagnosticAddendum {
 
     getMessages() {
         return this._messages;
+    }
+
+    // Returns undefined if no range is associated with this addendum
+    // or its children. Returns a non-empty range if there is a single range
+    // associated.
+    getEffectiveTextRange(): TextRange | undefined {
+        const range = this._getTextRangeRecursive();
+
+        // If we received an empty range, it means that there were multiple
+        // non-overlapping ranges associated with this addendum.
+        if (range?.length === 0) {
+            return undefined;
+        }
+
+        return range;
+    }
+
+    private _getTextRangeRecursive(recursionCount = 0): TextRange | undefined {
+        if (recursionCount > maxRecursionCount) {
+            return undefined;
+        }
+        recursionCount++;
+
+        const childRanges = this._childAddenda
+            .map((child) => child._getTextRangeRecursive(recursionCount))
+            .filter((r) => !!r);
+
+        if (childRanges.length > 1) {
+            return { start: 0, length: 0 };
+        }
+
+        if (childRanges.length === 1) {
+            return childRanges[0];
+        }
+
+        if (this._range) {
+            return this._range;
+        }
+
+        return undefined;
     }
 
     private _getMessageCount(recursionCount = 0) {

@@ -14,6 +14,7 @@ export enum DiagnosticRule {
     strictListInference = 'strictListInference',
     strictSetInference = 'strictSetInference',
     strictDictionaryInference = 'strictDictionaryInference',
+    analyzeUnannotatedFunctions = 'analyzeUnannotatedFunctions',
     strictParameterNoneValue = 'strictParameterNoneValue',
     enableTypeIgnoreComments = 'enableTypeIgnoreComments',
 
@@ -45,6 +46,7 @@ export enum DiagnosticRule {
     reportTypeCommentUsage = 'reportTypeCommentUsage',
     reportPrivateImportUsage = 'reportPrivateImportUsage',
     reportConstantRedefinition = 'reportConstantRedefinition',
+    reportDeprecated = 'reportDeprecated',
     reportIncompatibleMethodOverride = 'reportIncompatibleMethodOverride',
     reportIncompatibleVariableOverride = 'reportIncompatibleVariableOverride',
     reportInconsistentConstructor = 'reportInconsistentConstructor',
@@ -78,4 +80,6 @@ export enum DiagnosticRule {
     reportUnusedExpression = 'reportUnusedExpression',
     reportUnnecessaryTypeIgnoreComment = 'reportUnnecessaryTypeIgnoreComment',
     reportMatchNotExhaustive = 'reportMatchNotExhaustive',
+    reportShadowedImports = 'reportShadowedImports',
+    reportImplicitOverride = 'reportImplicitOverride',
 }
