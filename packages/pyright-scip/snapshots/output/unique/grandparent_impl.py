@@ -14,7 +14,7 @@ class A:
 #                   > ) -> bool:
 #                   > ```
 #                   ^^^^ definition  snapshot-util 0.1 grandparent_impl/A#grandparent().(self)
-#                            ^^^^ reference  python-stdlib 3.10 builtins/bool#
+#                            ^^^^ reference  python-stdlib 3.11 builtins/bool#
 #                            external documentation ```python
 #                                        > (class) bool
 #                                        > ```
@@ -45,6 +45,6 @@ class C(B):
 #                   > ```
 #       relationship implementation scip-python python snapshot-util 0.1 grandparent_impl/A#grandparent().
 #                   ^^^^ definition  snapshot-util 0.1 grandparent_impl/C#grandparent().(self)
-#                            ^^^^ reference  python-stdlib 3.10 builtins/bool#
+#                            ^^^^ reference  python-stdlib 3.11 builtins/bool#
         return False
 

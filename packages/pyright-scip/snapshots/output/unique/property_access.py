@@ -2,11 +2,31 @@
 #documentation (module) property_access
 
 from typing import Sequence
-#    ^^^^^^ reference  python-stdlib 3.10 typing/__init__:
+#    ^^^^^^ reference  python-stdlib 3.11 typing/__init__:
 #    external documentation ```python
 #                > (module) typing
 #                > ```
-#                  ^^^^^^^^ reference  python-stdlib 3.10 typing/Sequence#
+#    external documentation ---
+#                > 
+#    external documentation The typing module: Support for gradual t...
+#                > 
+#                > At large scale, the structure of the mod...
+#                >  * Imports and exports, all public names...
+#                >  * Internal helper functions: these shou...
+#                >  * \_SpecialForm and its instances (spec...
+#                > Any, NoReturn, ClassVar, Union, Optional...
+#                >  * Classes whose instances can be type a...
+#                > ForwardRef, TypeVar and ParamSpec
+#                >  * The core of internal generics API: \_...
+#                > currently only used by Tuple and Callabl...
+#                > etc., are instances of either of these c...
+#                >  * The public counterpart of the generic...
+#                >  * Public helper functions: get\_type\_h...
+#                > no\_type\_check\_decorator.
+#                >  * Generic aliases for collections.abc A...
+#                >  * Special types: NewType, NamedTuple, T...
+#                >  * Wrapper submodules for re and io rela...
+#                  ^^^^^^^^ reference  python-stdlib 3.11 typing/Sequence#
 
 class PropertyClass:
 #     ^^^^^^^^^^^^^ definition  snapshot-util 0.1 property_access/PropertyClass#
@@ -24,7 +44,7 @@ class PropertyClass:
         pass
 
     @property
-#    ^^^^^^^^ reference  python-stdlib 3.10 builtins/property#
+#    ^^^^^^^^ reference  python-stdlib 3.11 builtins/property#
 #    external documentation ```python
 #                > (class) property
 #                > ```
@@ -55,7 +75,7 @@ def usage(xs: Sequence[PropertyClass]):
 #               > ): # -> None:
 #               > ```
 #         ^^ definition  snapshot-util 0.1 property_access/usage().(xs)
-#             ^^^^^^^^ reference  python-stdlib 3.10 typing/Sequence#
+#             ^^^^^^^^ reference  python-stdlib 3.11 typing/Sequence#
 #                      ^^^^^^^^^^^^^ reference  snapshot-util 0.1 property_access/PropertyClass#
     def nested():
 #       ^^^^^^ definition  snapshot-util 0.1 property_access/usage().nested().
@@ -66,12 +86,15 @@ def usage(xs: Sequence[PropertyClass]):
 #           ^ definition local 0
 #                ^^ reference  snapshot-util 0.1 property_access/usage().(xs)
             print(x.prop_ref)
-#           ^^^^^ reference  python-stdlib 3.10 builtins/__init__:print().
+#           ^^^^^ reference  python-stdlib 3.11 builtins/__init__:print().
 #           external documentation ```python
-#                       > (function)
-#                       > print(*values: object, sep: str | None =...
-#                       > 
-#                       > print(*values: object, sep: str | None =...
+#                       > (function) def print(
+#                       >     *values: object,
+#                       >     sep: str | None = " ",
+#                       >     end: str | None = "\n",
+#                       >     file: SupportsWrite[str] | None = No...
+#                       >     flush: Literal[False] = False
+#                       > ) -> None
 #                       > ```
 #                 ^ reference local 0
 #                   ^^^^^^^^ reference  snapshot-util 0.1 property_access/PropertyClass#prop_ref().

@@ -14,7 +14,7 @@ class Left:
 #                   > ) -> int:
 #                   > ```
 #           ^^^^ definition  snapshot-util 0.1 multiinherits_test/Left#one().(self)
-#                    ^^^ reference  python-stdlib 3.10 builtins/int#
+#                    ^^^ reference  python-stdlib 3.11 builtins/int#
 #                    external documentation ```python
 #                                > (class) int
 #                                > ```
@@ -28,7 +28,7 @@ class Left:
 #                   > ) -> bool:
 #                   > ```
 #              ^^^^ definition  snapshot-util 0.1 multiinherits_test/Left#shared().(self)
-#                       ^^^^ reference  python-stdlib 3.10 builtins/bool#
+#                       ^^^^ reference  python-stdlib 3.11 builtins/bool#
 #                       external documentation ```python
 #                                   > (class) bool
 #                                   > ```
@@ -57,7 +57,7 @@ class Right:
 #                   > ) -> bool:
 #                   > ```
 #              ^^^^ definition  snapshot-util 0.1 multiinherits_test/Right#shared().(self)
-#                       ^^^^ reference  python-stdlib 3.10 builtins/bool#
+#                       ^^^^ reference  python-stdlib 3.11 builtins/bool#
         return False
 
 class Multi(Left, Right):
@@ -78,7 +78,7 @@ class Multi(Left, Right):
 #                   > ```
 #       relationship implementation scip-python python snapshot-util 0.1 multiinherits_test/Left#one().
 #           ^^^^ definition  snapshot-util 0.1 multiinherits_test/Multi#one().(self)
-#                    ^^^ reference  python-stdlib 3.10 builtins/int#
+#                    ^^^ reference  python-stdlib 3.11 builtins/int#
         return 1
 
     def two(self):
@@ -112,6 +112,6 @@ class Multi(Left, Right):
 #       relationship implementation scip-python python snapshot-util 0.1 multiinherits_test/Left#shared().
 #       relationship implementation scip-python python snapshot-util 0.1 multiinherits_test/Right#shared().
 #              ^^^^ definition  snapshot-util 0.1 multiinherits_test/Multi#shared().(self)
-#                       ^^^^ reference  python-stdlib 3.10 builtins/bool#
+#                       ^^^^ reference  python-stdlib 3.11 builtins/bool#
         return True
 

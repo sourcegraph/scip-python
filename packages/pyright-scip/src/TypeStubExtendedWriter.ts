@@ -87,7 +87,7 @@ export class TypeStubExtendedWriter extends TypeStubWriter {
         line += node.isAsync ? 'async ' : '';
         line += `def ${functionName}`;
 
-        const mappedParameters = node.parameters.map((param, index) => this._printParameter(param, node, index))
+        const mappedParameters = node.parameters.map((param, index) => this._printParameter(param, node, index));
         if (mappedParameters.length <= 0) {
             line += `(${mappedParameters.join(', ')})`;
         } else {
@@ -133,7 +133,7 @@ export class TypeStubExtendedWriter extends TypeStubWriter {
                 let returnType = this.evaluator.getFunctionInferredReturnType(functionType.functionType);
                 returnType = removeUnknownFromUnion(returnType);
                 if (!isNever(returnType) && !isUnknown(returnType)) {
-                    line += ` # -> ${this.evaluator.printType(returnType, /* expandTypeAlias */ false)}:`;
+                    line += ` # -> ${this.evaluator.printType(returnType, { expandTypeAlias: false })}:`;
                 }
             }
         }

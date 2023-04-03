@@ -3,17 +3,20 @@
 
 
 if __name__ == '__main__':
-#  ^^^^^^^^ reference  python-stdlib 3.10 builtins/__name__#
+#  ^^^^^^^^ reference  python-stdlib 3.11 builtins/__name__#
 #  external documentation ```python
 #              > __name__: str
 #              > ```
     print("main")
-#   ^^^^^ reference  python-stdlib 3.10 builtins/__init__:print().
+#   ^^^^^ reference  python-stdlib 3.11 builtins/__init__:print().
 #   external documentation ```python
-#               > (function)
-#               > print(*values: object, sep: str | None =...
-#               > 
-#               > print(*values: object, sep: str | None =...
+#               > (function) def print(
+#               >     *values: object,
+#               >     sep: str | None = " ",
+#               >     end: str | None = "\n",
+#               >     file: SupportsWrite[str] | None = No...
+#               >     flush: Literal[False] = False
+#               > ) -> None
 #               > ```
 
 

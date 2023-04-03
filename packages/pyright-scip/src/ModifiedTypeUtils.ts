@@ -252,8 +252,10 @@ export function isTypeImplementable(
             // The types do not have a particular order, so we need to
             // do the comparison in an order-independent manner.
             return (
-                findSubtype(type1, (subtype) => !UnionType.containsType(unionType2, subtype, recursionCount)) ===
-                undefined
+                findSubtype(
+                    type1,
+                    (subtype) => !UnionType.containsType(unionType2, subtype, undefined, recursionCount)
+                ) === undefined
             );
         }
 

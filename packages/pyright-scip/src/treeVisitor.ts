@@ -690,7 +690,7 @@ export class TreeVisitor extends ParseTreeWalker {
             return true;
         }
 
-        const type = this.evaluator.getTypeForDeclaration(decl);
+        const typeInfo = this.evaluator.getTypeForDeclaration(decl);
         if (isAliasDeclaration(decl)) {
             const resolved = this.evaluator.resolveAliasDeclaration(decl, true, true);
             const resolvedType = resolved ? this.evaluator.getTypeForDeclaration(resolved) : undefined;
@@ -699,12 +699,12 @@ export class TreeVisitor extends ParseTreeWalker {
                 log.info('Missing dependency for:', node);
             }
 
-            if (type) {
-                this.pushTypeReference(node, decl.node, type);
+            if (typeInfo.type) {
+                this.pushTypeReference(node, decl.node, typeInfo.type);
                 return true;
             }
 
-            if (resolved && resolvedType) {
+            if (resolved && resolvedType && resolvedType.type) {
                 const isDefinition = node.id === resolved?.node.id;
                 const resolvedInfo = getFileInfo(node);
                 const hoverResult = this.program.getHoverForPosition(
@@ -715,7 +715,7 @@ export class TreeVisitor extends ParseTreeWalker {
                 );
 
                 if (hoverResult) {
-                    const symbol = this.typeToSymbol(node, declNode, resolvedType);
+                    const symbol = this.typeToSymbol(node, declNode, resolvedType.type);
                     this.rawSetLsifSymbol(declNode, symbol, symbol.isLocal());
 
                     if (isDefinition) {
@@ -723,7 +723,7 @@ export class TreeVisitor extends ParseTreeWalker {
                     }
                 }
 
-                this.pushTypeReference(node, resolved.node, resolvedType);
+                this.pushTypeReference(node, resolved.node, resolvedType.type);
                 return true;
             }
 
@@ -746,6 +746,8 @@ export class TreeVisitor extends ParseTreeWalker {
                     if (doc) {
                         documentation.push(convertDocStringToMarkdown(doc));
                     }
+
+                    let type = typeInfo.type;
 
                     let relationships: scip.Relationship[] | undefined = undefined;
                     if (type && type.category === TypeCategory.Class) {

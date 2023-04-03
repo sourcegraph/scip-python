@@ -11,7 +11,7 @@ class ExampleClass:
 #   documentation ```python
 #               > (variable) a: int
 #               > ```
-#      ^^^ reference  python-stdlib 3.10 builtins/int#
+#      ^^^ reference  python-stdlib 3.11 builtins/int#
 #      external documentation ```python
 #                  > (class) int
 #                  > ```
@@ -20,13 +20,13 @@ class ExampleClass:
 #   documentation ```python
 #               > (variable) b: int
 #               > ```
-#      ^^^ reference  python-stdlib 3.10 builtins/int#
+#      ^^^ reference  python-stdlib 3.11 builtins/int#
     c: str
 #   ^ definition  snapshot-util 0.1 `src.single_class`/ExampleClass#c.
 #   documentation ```python
 #               > (variable) c: str
 #               > ```
-#      ^^^ reference  python-stdlib 3.10 builtins/str#
+#      ^^^ reference  python-stdlib 3.11 builtins/str#
 #      external documentation ```python
 #                  > (class) str
 #                  > ```
@@ -48,9 +48,9 @@ class ExampleClass:
 #                   > ```
 #                ^^^^ definition  snapshot-util 0.1 `src.single_class`/ExampleClass#__init__().(self)
 #                      ^ definition  snapshot-util 0.1 `src.single_class`/ExampleClass#__init__().(a)
-#                         ^^^ reference  python-stdlib 3.10 builtins/int#
+#                         ^^^ reference  python-stdlib 3.11 builtins/int#
 #                              ^ definition  snapshot-util 0.1 `src.single_class`/ExampleClass#__init__().(b)
-#                                 ^^^ reference  python-stdlib 3.10 builtins/int#
+#                                 ^^^ reference  python-stdlib 3.11 builtins/int#
         local_c = ", world!"
 #       ^^^^^^^ definition local 0
 #       documentation ```python
