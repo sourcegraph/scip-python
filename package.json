@@ -34,12 +34,12 @@
         "lerna": "^6.5.1",
         "npm-check-updates": "^16.7.10",
         "p-queue": "^6.6.2",
-    },
-    "dependencies": {
-        "ts-proto": "^1.100.1"
         "prettier": "2.8.4",
         "syncpack": "^9.8.4",
         "typescript": "~4.4.4",
         "yargs": "^16.2.0"
+    },
+    "dependencies": {
+        "ts-proto": "^1.100.1"
     }
 }
