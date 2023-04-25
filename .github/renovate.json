@@ -1,0 +1,14 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "ignorePaths": [
+      "packages/pyright/**",
+      "packages/pyright-internal/**",
+      "packages/vscode-pyright/**",
+      "package.json",
+      "packages/pyright-scip/snapshots-env/**",
+      ".tool-versions"
+  ],
+  "extends": [
+    "local>sourcegraph/renovate-config"
+  ]
+}
