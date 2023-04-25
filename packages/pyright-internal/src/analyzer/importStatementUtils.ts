@@ -5,7 +5,7 @@
  * Author: Eric Traut
  *
  * Utility routines for summarizing and manipulating
- * import statements in a python source file.
+ * import statements in a Python source file.
  */
 
 import { CancellationToken } from 'vscode-languageserver';
@@ -900,4 +900,19 @@ export function getResolvedFilePath(importResult: ImportResult | undefined) {
 
     // Regular case.
     return importResult.resolvedPaths[importResult.resolvedPaths.length - 1];
+}
+
+export function haveSameParentModule(module1: string[], module2: string[]) {
+    if (module1.length !== module2.length) {
+        return false;
+    }
+
+    let i = 0;
+    for (i = 0; i < module1.length - 1; i++) {
+        if (module1[i] !== module2[i]) {
+            break;
+        }
+    }
+
+    return i === module1.length - 1;
 }

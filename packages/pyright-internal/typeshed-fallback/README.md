@@ -1,8 +1,8 @@
 # typeshed
 
-[![Build status](https://github.com/python/typeshed/workflows/Check%20stubs/badge.svg)](https://github.com/python/typeshed/actions?query=workflow%3A%22Check+stubs%22)
+[![Tests](https://github.com/python/typeshed/actions/workflows/tests.yml/badge.svg)](https://github.com/python/typeshed/actions/workflows/tests.yml)
 [![Chat at https://gitter.im/python/typing](https://badges.gitter.im/python/typing.svg)](https://gitter.im/python/typing?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge)
-[![Pull Requests Welcome](https://img.shields.io/badge/pull%20requests-welcome-brightgreen.svg)](https://github.com/python/typeshed/blob/master/CONTRIBUTING.md)
+[![Pull Requests Welcome](https://img.shields.io/badge/pull%20requests-welcome-brightgreen.svg)](https://github.com/python/typeshed/blob/main/CONTRIBUTING.md)
 
 ## About
 
@@ -17,18 +17,25 @@ contributors can be found in [CONTRIBUTING.md](CONTRIBUTING.md).  **Please read
 it before submitting pull requests; do not report issues with annotations to
 the project the stubs are for, but instead report them here to typeshed.**
 
-Typeshed supports Python versions 2.7 and 3.6 and up.
+Further documentation on stub files, typeshed, and Python's typing system in
+general, can also be found at https://typing.readthedocs.io/en/latest/.
+
+Typeshed supports Python versions 3.7 and up.
 
 ## Using
 
-If you're just using mypy (or pytype or PyCharm), as opposed to
+If you're just using a type checker ([mypy](https://github.com/python/mypy/),
+[pyright](https://github.com/microsoft/pyright),
+[pytype](https://github.com/google/pytype/), PyCharm, ...), as opposed to
 developing it, you don't need to interact with the typeshed repo at
-all: a copy of standard library part of typeshed is bundled with mypy.
+all: a copy of standard library part of typeshed is bundled with type checkers.
 And type stubs for third party packages and modules you are using can
 be installed from PyPI. For example, if you are using `six` and `requests`,
 you can install the type stubs using
 
-    $ pip install types-six types-requests
+```bash
+$ pip install types-six types-requests
+```
 
 These PyPI packages follow [PEP 561](http://www.python.org/dev/peps/pep-0561/)
 and are automatically released (multiple times a day, when needed) by
@@ -42,7 +49,7 @@ details, see the documentation for your type checker.
 typeshed includes a package `_typeshed` as part of the standard library.
 This package and its submodules contains utility types, but is not
 available at runtime. For more information about how to use this package,
-[see the `stdlib/_typeshed` directory](https://github.com/python/typeshed/tree/master/stdlib/_typeshed).
+[see the `stdlib/_typeshed` directory](https://github.com/python/typeshed/tree/main/stdlib/_typeshed).
 
 ## Discussion
 

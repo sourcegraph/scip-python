@@ -3,8 +3,8 @@
 
 
 class Example1:
-    # This should not generate an error because "int"
-    # is not forward-declared.
+    # This should generate two errors because "str" refers to itself
+    # and it is a variable, so it's an illegal annotation.
     str: str = ""
 
     int = int

@@ -62,7 +62,7 @@ const SpaceDotDotRegExp = /^\s*\.\. /;
 const DirectiveLikeRegExp = /^\s*\.\.\s+(\w+)::\s*(.*)$/;
 const DoctestRegExp = / *>>> /;
 const DirectivesExtraNewlineRegExp = /^\s*:(param|arg|type|return|rtype|raise|except|var|ivar|cvar|copyright|license)/;
-const epyDocFieldTokensRegExp = /^[.\s\t]+(@\w+)/; // cv2 has leading '.' http://epydoc.sourceforge.net/manual-epytext.html
+const epyDocFieldTokensRegExp = /^\.[\s\t]+(@\w)/gm; // cv2 has leading '.' http://epydoc.sourceforge.net/manual-epytext.html
 const epyDocCv2FixRegExp = /^(\.\s{3})|^(\.)/;
 
 const PotentialHeaders: RegExpReplacement[] = [
@@ -79,6 +79,9 @@ const TildeRegExp = /~/g;
 const PlusRegExp = /\+/g;
 const UnescapedMarkdownCharsRegExp = /(?<!\\)([_*~[\]])/g;
 const linkRegExp = /(\[.*\]\(.*\))/g;
+
+const CodeBlockStartRegExp = /^\s*```(\w*)/;
+const CodeBlockEndRegExp = /^\s*```/;
 
 const HtmlEscapes: RegExpReplacement[] = [
     { exp: /</g, replacement: '&lt;' },
@@ -113,6 +116,7 @@ class DocStringConverter {
 
     private _state: State;
     private _stateStack: State[] = [];
+    private _input: string;
 
     private _lines: string[];
     private _lineNum = 0;
@@ -123,11 +127,12 @@ class DocStringConverter {
 
     constructor(input: string) {
         this._state = this._parseText;
+        this._input = input;
         this._lines = cleanAndSplitDocString(input);
     }
 
     convert(): string {
-        const isEpyDoc = this._lines.some((v) => epyDocFieldTokensRegExp.exec(v));
+        const isEpyDoc = epyDocFieldTokensRegExp.test(this._input);
         if (isEpyDoc) {
             // fixup cv2 leading '.'
             this._lines = this._lines.map((v) => v.replace(epyDocCv2FixRegExp, ''));
@@ -419,8 +424,13 @@ class DocStringConverter {
     }
 
     private _beginBacktickBlock(): boolean {
-        if (this._currentLine().startsWith('```')) {
-            this._appendLine(this._currentLine());
+        const match = this._currentLine().match(CodeBlockStartRegExp);
+        if (match !== null) {
+            this._blockIndent = this._currentIndent();
+
+            // Remove indentation and preserve language tag.
+            this._appendLine('```' + match[1]);
+
             this._pushAndSetState(this._parseBacktickBlock);
             this._eatLine();
             return true;
@@ -429,7 +439,8 @@ class DocStringConverter {
     }
 
     private _parseBacktickBlock(): void {
-        if (this._currentLine().startsWith('```')) {
+        // Only match closing ``` at same indent level of opening.
+        if (CodeBlockEndRegExp.test(this._currentLine()) && this._currentIndent() === this._blockIndent) {
             this._appendLine('```');
             this._appendLine();
             this._popState();
@@ -511,14 +522,15 @@ class DocStringConverter {
             return;
         }
 
-        if (this._currentLineIsOutsideBlock()) {
+        const prev = this._lineAt(this._lineNum - 1);
+        if (this._currentLineIsOutsideBlock() && _isUndefinedOrWhitespace(prev)) {
             this._trimOutputAndAppendLine('```');
             this._appendLine();
             this._popState();
             return;
         }
 
-        this._appendLine(this._currentLineWithinBlock());
+        this._appendLine(this._currentLine());
         this._eatLine();
     }
 
@@ -681,7 +693,7 @@ class DocStringConverter {
                 });
                 this._appendLine(formattedLine);
 
-                //Convert header end
+                // Convert header end
                 const endHeaderStr = line.trimStart().replace(/=/g, '-').replace(' ', '|');
                 this._appendLine(`|${endHeaderStr}|`);
                 this._eatLine();

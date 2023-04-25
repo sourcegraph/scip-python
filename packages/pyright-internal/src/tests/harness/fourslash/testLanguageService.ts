@@ -9,36 +9,60 @@
 import * as path from 'path';
 import { CancellationToken, CodeAction, ExecuteCommandParams } from 'vscode-languageserver';
 
-import { ImportResolverFactory } from '../../../analyzer/importResolver';
+import {
+    BackgroundAnalysisProgram,
+    BackgroundAnalysisProgramFactory,
+} from '../../../analyzer/backgroundAnalysisProgram';
+import { CacheManager } from '../../../analyzer/cacheManager';
+import { ImportResolver, ImportResolverFactory } from '../../../analyzer/importResolver';
+import { MaxAnalysisTime } from '../../../analyzer/program';
 import { AnalyzerService } from '../../../analyzer/service';
 import { BackgroundAnalysisBase } from '../../../backgroundAnalysisBase';
 import { CommandController } from '../../../commands/commandController';
 import { ConfigOptions } from '../../../common/configOptions';
 import { ConsoleInterface } from '../../../common/console';
 import * as debug from '../../../common/debug';
-import { createDeferred } from '../../../common/deferred';
 import { FileSystem } from '../../../common/fileSystem';
 import { Range } from '../../../common/textRange';
 import { UriParser } from '../../../common/uriParser';
-import {
-    LanguageServerInterface,
-    MessageAction,
-    ServerSettings,
-    WellKnownWorkspaceKinds,
-    WindowInterface,
-    WorkspaceServiceInstance,
-} from '../../../languageServerBase';
+import { LanguageServerInterface, MessageAction, ServerSettings, WindowInterface } from '../../../languageServerBase';
 import { CodeActionProvider } from '../../../languageService/codeActionProvider';
+import {
+    createInitStatus,
+    WellKnownWorkspaceKinds,
+    Workspace,
+    WorkspacePythonPathKind,
+} from '../../../workspaceFactory';
 import { TestAccessHost } from '../testAccessHost';
 import { HostSpecificFeatures } from './testState';
 
 export class TestFeatures implements HostSpecificFeatures {
     importResolverFactory: ImportResolverFactory = AnalyzerService.createImportResolver;
-    runIndexer(workspace: WorkspaceServiceInstance, noStdLib: boolean, options?: string): void {
+    backgroundAnalysisProgramFactory: BackgroundAnalysisProgramFactory = (
+        serviceId: string,
+        console: ConsoleInterface,
+        configOptions: ConfigOptions,
+        importResolver: ImportResolver,
+        backgroundAnalysis?: BackgroundAnalysisBase,
+        maxAnalysisTime?: MaxAnalysisTime,
+        cacheManager?: CacheManager
+    ) =>
+        new BackgroundAnalysisProgram(
+            console,
+            configOptions,
+            importResolver,
+            backgroundAnalysis,
+            maxAnalysisTime,
+            /* disableChecker */ undefined,
+            cacheManager
+        );
+
+    runIndexer(workspace: Workspace, noStdLib: boolean, options?: string): void {
         /* empty */
     }
+
     getCodeActionsForPosition(
-        workspace: WorkspaceServiceInstance,
+        workspace: Workspace,
         filePath: string,
         range: Range,
         token: CancellationToken
@@ -52,20 +76,21 @@ export class TestFeatures implements HostSpecificFeatures {
 }
 
 export class TestLanguageService implements LanguageServerInterface {
-    private readonly _workspace: WorkspaceServiceInstance;
-    private readonly _defaultWorkspace: WorkspaceServiceInstance;
+    private readonly _workspace: Workspace;
+    private readonly _defaultWorkspace: Workspace;
     private readonly _uriParser: UriParser;
 
-    constructor(workspace: WorkspaceServiceInstance, readonly console: ConsoleInterface, readonly fs: FileSystem) {
+    constructor(workspace: Workspace, readonly console: ConsoleInterface, readonly fs: FileSystem) {
         this._workspace = workspace;
         this._uriParser = new UriParser(this.fs);
         this._defaultWorkspace = {
             workspaceName: '',
             rootPath: '',
-            path: '',
             uri: '',
+            pythonPath: undefined,
+            pythonPathKind: WorkspacePythonPathKind.Mutable,
             kinds: [WellKnownWorkspaceKinds.Test],
-            serviceInstance: new AnalyzerService('test service', this.fs, {
+            service: new AnalyzerService('test service', this.fs, {
                 console: this.console,
                 hostFactory: () => new TestAccessHost(),
                 importResolverFactory: AnalyzerService.createImportResolver,
@@ -74,16 +99,15 @@ export class TestLanguageService implements LanguageServerInterface {
             disableLanguageServices: false,
             disableOrganizeImports: false,
             disableWorkspaceSymbol: false,
-            isInitialized: createDeferred<boolean>(),
+            isInitialized: createInitStatus(),
             searchPathsToWatch: [],
-            owns: (f) => true,
         };
     }
     decodeTextDocumentUri(uriString: string): string {
         return this._uriParser.decodeTextDocumentUri(uriString);
     }
 
-    getWorkspaceForFile(filePath: string): Promise<WorkspaceServiceInstance> {
+    getWorkspaceForFile(filePath: string): Promise<Workspace> {
         if (filePath.startsWith(this._workspace.rootPath)) {
             return Promise.resolve(this._workspace);
         }
@@ -91,21 +115,22 @@ export class TestLanguageService implements LanguageServerInterface {
         return Promise.resolve(this._defaultWorkspace);
     }
 
-    getSettings(workspace: WorkspaceServiceInstance): Promise<ServerSettings> {
+    getSettings(_workspace: Workspace): Promise<ServerSettings> {
         const settings: ServerSettings = {
-            venvPath: this._workspace.serviceInstance.getConfigOptions().venvPath,
-            pythonPath: this._workspace.serviceInstance.getConfigOptions().pythonPath,
-            typeshedPath: this._workspace.serviceInstance.getConfigOptions().typeshedPath,
-            openFilesOnly: this._workspace.serviceInstance.getConfigOptions().checkOnlyOpenFiles,
-            useLibraryCodeForTypes: this._workspace.serviceInstance.getConfigOptions().useLibraryCodeForTypes,
+            venvPath: this._workspace.service.getConfigOptions().venvPath,
+            pythonPath: this._workspace.service.getConfigOptions().pythonPath,
+            typeshedPath: this._workspace.service.getConfigOptions().typeshedPath,
+            openFilesOnly: this._workspace.service.getConfigOptions().checkOnlyOpenFiles,
+            useLibraryCodeForTypes: this._workspace.service.getConfigOptions().useLibraryCodeForTypes,
             disableLanguageServices: this._workspace.disableLanguageServices,
-            autoImportCompletions: this._workspace.serviceInstance.getConfigOptions().autoImportCompletions,
+            autoImportCompletions: this._workspace.service.getConfigOptions().autoImportCompletions,
+            functionSignatureDisplay: this._workspace.service.getConfigOptions().functionSignatureDisplay,
         };
 
         return Promise.resolve(settings);
     }
 
-    createBackgroundAnalysis(): BackgroundAnalysisBase | undefined {
+    createBackgroundAnalysis(serviceId: string): BackgroundAnalysisBase | undefined {
         // worker thread doesn't work in Jest
         // by returning undefined, analysis will run inline
         return undefined;

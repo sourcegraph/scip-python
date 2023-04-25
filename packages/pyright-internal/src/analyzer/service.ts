@@ -4,7 +4,7 @@
  * Licensed under the MIT license.
  * Author: Eric Traut
  *
- * A persistent service that is able to analyze a collection of
+ * A service that is able to analyze a collection of
  * Python files.
  */
 
@@ -25,21 +25,23 @@ import {
     MarkupKind,
 } from 'vscode-languageserver-types';
 
-import { BackgroundAnalysisBase, IndexOptions } from '../backgroundAnalysisBase';
+import { BackgroundAnalysisBase, IndexOptions, RefreshOptions } from '../backgroundAnalysisBase';
 import { CancellationProvider, DefaultCancellationProvider } from '../common/cancellationUtils';
 import { CommandLineOptions } from '../common/commandLineOptions';
-import { ConfigOptions } from '../common/configOptions';
+import { ConfigOptions, matchFileSpecs } from '../common/configOptions';
 import { ConsoleInterface, log, LogLevel, StandardConsole } from '../common/console';
 import { Diagnostic } from '../common/diagnostic';
 import { FileEditActions, TextEditAction } from '../common/editAction';
-import { LanguageServiceExtension } from '../common/extensibility';
+import { Extensions } from '../common/extensibility';
 import { FileSystem, FileWatcher, FileWatcherEventType, ignoredWatchEventFunction } from '../common/fileSystem';
 import { Host, HostFactory, NoAccessHost } from '../common/host';
+import { defaultStubsDirectory } from '../common/pathConsts';
 import {
     combinePaths,
     FileSpec,
     forEachAncestorDirectory,
     getDirectoryPath,
+    getFileExtension,
     getFileName,
     getFileSpec,
     getFileSystemEntries,
@@ -55,16 +57,22 @@ import {
 } from '../common/pathUtils';
 import { DocumentRange, Position, Range } from '../common/textRange';
 import { timingStats } from '../common/timing';
-import { AutoImportOptions } from '../languageService/autoImporter';
+import { AutoImportOptions, ImportFormat } from '../languageService/autoImporter';
 import { AbbreviationMap, CompletionOptions, CompletionResultsList } from '../languageService/completionProvider';
 import { DefinitionFilter } from '../languageService/definitionProvider';
-import { IndexResults, WorkspaceSymbolCallback } from '../languageService/documentSymbolProvider';
+import { WorkspaceSymbolCallback } from '../languageService/documentSymbolProvider';
 import { HoverResults } from '../languageService/hoverProvider';
 import { ReferenceCallback } from '../languageService/referencesProvider';
 import { SignatureHelpResults } from '../languageService/signatureHelpProvider';
 import { AnalysisCompleteCallback } from './analysis';
 import { BackgroundAnalysisProgram, BackgroundAnalysisProgramFactory } from './backgroundAnalysisProgram';
-import { createImportedModuleDescriptor, ImportResolver, ImportResolverFactory } from './importResolver';
+import { CacheManager } from './cacheManager';
+import {
+    createImportedModuleDescriptor,
+    ImportResolver,
+    ImportResolverFactory,
+    supportedSourceFileExtensions,
+} from './importResolver';
 import { MaxAnalysisTime, Program } from './program';
 import { findPythonSearchPaths } from './pythonPathUtils';
 import { IPythonMode } from './sourceFile';
@@ -78,19 +86,27 @@ export const pyprojectTomlName = 'pyproject.toml';
 const _userActivityBackoffTimeInMs = 250;
 
 const _gitDirectory = normalizeSlashes('/.git/');
-const _includeFileRegex = /\.pyi?$/;
 
 export interface AnalyzerServiceOptions {
     console?: ConsoleInterface;
     hostFactory?: HostFactory;
     importResolverFactory?: ImportResolverFactory;
     configOptions?: ConfigOptions;
-    extension?: LanguageServiceExtension;
     backgroundAnalysis?: BackgroundAnalysisBase;
     maxAnalysisTime?: MaxAnalysisTime;
     backgroundAnalysisProgramFactory?: BackgroundAnalysisProgramFactory;
     cancellationProvider?: CancellationProvider;
     libraryReanalysisTimeProvider?: () => number;
+    cacheManager?: CacheManager;
+    serviceId?: string;
+    skipScanningUserFiles?: boolean;
+}
+
+// Hold uniqueId for this service. It can be used to distinguish each service later.
+let _nextServiceId = 1;
+
+export function getNextServiceId(name: string) {
+    return `${name}_${_nextServiceId++}`;
 }
 
 export class AnalyzerService {
@@ -115,12 +131,15 @@ export class AnalyzerService {
     private _backgroundAnalysisProgram: BackgroundAnalysisProgram;
     private _backgroundAnalysisCancellationSource: AbstractCancellationTokenSource | undefined;
     private _disposed = false;
+    private _pendingLibraryChanges: RefreshOptions = { changesOnly: true };
 
     constructor(instanceName: string, fs: FileSystem, options: AnalyzerServiceOptions) {
         this._instanceName = instanceName;
+
         this._executionRootPath = '';
         this._options = options;
 
+        this._options.serviceId = this._options.serviceId ?? getNextServiceId(instanceName);
         this._options.console = options.console || new StandardConsole();
         this._options.importResolverFactory = options.importResolverFactory ?? AnalyzerService.createImportResolver;
         this._options.cancellationProvider = options.cancellationProvider ?? new DefaultCancellationProvider();
@@ -136,25 +155,46 @@ export class AnalyzerService {
         this._backgroundAnalysisProgram =
             this._options.backgroundAnalysisProgramFactory !== undefined
                 ? this._options.backgroundAnalysisProgramFactory(
+                      this._options.serviceId,
                       this._options.console,
                       this._options.configOptions,
                       importResolver,
-                      this._options.extension,
                       this._options.backgroundAnalysis,
-                      this._options.maxAnalysisTime
+                      this._options.maxAnalysisTime,
+                      this._options.cacheManager
                   )
                 : new BackgroundAnalysisProgram(
                       this._options.console,
                       this._options.configOptions,
                       importResolver,
-                      this._options.extension,
                       this._options.backgroundAnalysis,
-                      this._options.maxAnalysisTime
+                      this._options.maxAnalysisTime,
+                      /* disableChecker */ undefined,
+                      this._options.cacheManager
                   );
+
+        // Create the extensions tied to this program. This is where the mutating 'addTrackedFile' will actually
+        // mutate the local program and the BG thread one.
+        Extensions.createProgramExtensions(this._program, { addInterimFile: this.addInterimFile.bind(this) });
     }
 
-    clone(instanceName: string, backgroundAnalysis?: BackgroundAnalysisBase, fs?: FileSystem): AnalyzerService {
-        const service = new AnalyzerService(instanceName, fs ?? this.fs, { ...this._options, backgroundAnalysis });
+    clone(
+        instanceName: string,
+        serviceId: string,
+        backgroundAnalysis?: BackgroundAnalysisBase,
+        fs?: FileSystem
+    ): AnalyzerService {
+        const service = new AnalyzerService(instanceName, fs ?? this.fs, {
+            ...this._options,
+            serviceId,
+            backgroundAnalysis,
+            skipScanningUserFiles: true,
+        });
+
+        // Cloned service will use whatever user files the service currently has.
+        const userFiles = this.getUserFiles();
+        service.backgroundAnalysisProgram.setTrackedFiles(userFiles);
+        service.backgroundAnalysisProgram.markAllFilesDirty(true);
 
         // Make sure we keep editor content (open file) which could be different than one in the file system.
         for (const fileInfo of this.backgroundAnalysisProgram.program.getOpened()) {
@@ -163,7 +203,10 @@ export class AnalyzerService {
                 service.setFileOpened(
                     fileInfo.sourceFile.getFilePath(),
                     version,
-                    fileInfo.sourceFile.getOpenFileContents()!
+                    fileInfo.sourceFile.getOpenFileContents()!,
+                    fileInfo.sourceFile.getIPythonMode(),
+                    fileInfo.chainedSourceFile?.sourceFile.getFilePath(),
+                    fileInfo.sourceFile.getRealFilePath()
                 );
             }
         }
@@ -172,6 +215,13 @@ export class AnalyzerService {
     }
 
     dispose() {
+        if (!this._disposed) {
+            // Make sure we dispose program, otherwise, entire program
+            // will leak.
+            this._backgroundAnalysisProgram.dispose();
+            Extensions.destroyProgramExtensions(this._program.id);
+        }
+
         this._disposed = true;
         this._removeSourceFileWatchers();
         this._removeConfigFileWatcher();
@@ -193,7 +243,7 @@ export class AnalyzerService {
         return this._options.importResolverFactory!;
     }
 
-    private get _cancellationProvider() {
+    get cancellationProvider() {
         return this._options.cancellationProvider!;
     }
 
@@ -235,14 +285,20 @@ export class AnalyzerService {
         this._applyConfigOptions(host);
     }
 
-    isTracked(filePath: string): boolean {
-        for (const includeSpec of this._configOptions.include) {
-            if (this._matchIncludeFileSpec(includeSpec.regExp, this._configOptions.exclude, filePath)) {
-                return true;
-            }
-        }
+    hasSourceFile(filePath: string): boolean {
+        return this.backgroundAnalysisProgram.hasSourceFile(filePath);
+    }
 
-        return false;
+    isTracked(filePath: string): boolean {
+        return this._program.owns(filePath);
+    }
+
+    getUserFiles() {
+        return this._program.getUserFiles().map((i) => i.sourceFile.getFilePath());
+    }
+
+    getOpenFiles() {
+        return this._program.getOpened().map((i) => i.sourceFile.getFilePath());
     }
 
     setFileOpened(
@@ -250,12 +306,17 @@ export class AnalyzerService {
         version: number | null,
         contents: string,
         ipythonMode = IPythonMode.None,
-        chainedFilePath?: string
+        chainedFilePath?: string,
+        realFilePath?: string
     ) {
+        // Open the file. Notebook cells are always tracked as they aren't 3rd party library files.
+        // This is how it's worked in the past since each notebook used to have its own
+        // workspace and the workspace include setting marked all cells as tracked.
         this._backgroundAnalysisProgram.setFileOpened(path, version, contents, {
-            isTracked: this.isTracked(path),
+            isTracked: this.isTracked(path) || ipythonMode !== IPythonMode.None,
             ipythonMode,
             chainedFilePath,
+            realFilePath,
         });
         this._scheduleReanalysis(/* requireTrackedFileUpdate */ false);
     }
@@ -274,34 +335,28 @@ export class AnalyzerService {
         version: number | null,
         contents: TextDocumentContentChangeEvent[],
         ipythonMode = IPythonMode.None,
-        chainedFilePath?: string
+        realFilePath?: string
     ) {
         this._backgroundAnalysisProgram.updateOpenFileContents(path, version, contents, {
             isTracked: this.isTracked(path),
             ipythonMode,
-            chainedFilePath,
+            chainedFilePath: undefined,
+            realFilePath,
         });
         this._scheduleReanalysis(/* requireTrackedFileUpdate */ false);
-    }
-
-    test_setIndexing(
-        workspaceIndices: Map<string, IndexResults>,
-        libraryIndices: Map<string | undefined, Map<string, IndexResults>>
-    ) {
-        this._backgroundAnalysisProgram.test_setIndexing(workspaceIndices, libraryIndices);
     }
 
     startIndexing(indexOptions: IndexOptions) {
         this._backgroundAnalysisProgram.startIndexing(indexOptions);
     }
 
-    setFileClosed(path: string) {
-        this._backgroundAnalysisProgram.setFileClosed(path);
+    setFileClosed(path: string, isTracked?: boolean) {
+        this._backgroundAnalysisProgram.setFileClosed(path, isTracked);
         this._scheduleReanalysis(/* requireTrackedFileUpdate */ false);
     }
 
-    isFileOpen(path: string) {
-        return this._program.isFileOpen(path);
+    addInterimFile(path: string) {
+        this._backgroundAnalysisProgram.addInterimFile(path);
     }
 
     getParseResult(path: string) {
@@ -434,6 +489,16 @@ export class AnalyzerService {
         return this._program.performQuickAction(filePath, command, args, token);
     }
 
+    moveSymbolAtPosition(
+        filePath: string,
+        newFilePath: string,
+        position: Position,
+        options: { importFormat: ImportFormat },
+        token: CancellationToken
+    ): FileEditActions | undefined {
+        return this._program.moveSymbolAtPosition(filePath, newFilePath, position, options, token);
+    }
+
     renameModule(filePath: string, newFilePath: string, token: CancellationToken): FileEditActions | undefined {
         return this._program.renameModule(filePath, newFilePath, token);
     }
@@ -496,7 +561,7 @@ export class AnalyzerService {
         this._console.info('');
         this._console.info('Analysis stats');
 
-        const boundFileCount = this._program.getFileCount();
+        const boundFileCount = this._program.getFileCount(/* userFileOnly */ false);
         this._console.info('Total files parsed and bound: ' + boundFileCount.toString());
 
         const checkedFileCount = this._program.getUserFileCount();
@@ -546,6 +611,10 @@ export class AnalyzerService {
         return this._getFileNamesFromFileSpecs();
     }
 
+    test_shouldHandleSourceFileWatchChanges(path: string, isFile: boolean) {
+        return this._shouldHandleSourceFileWatchChanges(path, isFile);
+    }
+
     // Calculates the effective options based on the command-line options,
     // an optional config file, and default values.
     private _getConfigOptions(host: Host, commandLineOptions: CommandLineOptions): ConfigOptions {
@@ -590,7 +659,7 @@ export class AnalyzerService {
             if (configFilePath) {
                 projectRoot = getDirectoryPath(configFilePath);
             } else {
-                this._console.info(`No configuration file found.`);
+                this._console.log(`No configuration file found.`);
                 configFilePath = undefined;
             }
         }
@@ -605,9 +674,9 @@ export class AnalyzerService {
 
             if (pyprojectFilePath) {
                 projectRoot = getDirectoryPath(pyprojectFilePath);
-                this._console.info(`pyproject.toml file found at ${projectRoot}.`);
+                this._console.log(`pyproject.toml file found at ${projectRoot}.`);
             } else {
-                this._console.info(`No pyproject.toml file found.`);
+                this._console.log(`No pyproject.toml file found.`);
             }
         }
 
@@ -635,13 +704,29 @@ export class AnalyzerService {
             commandLineOptions.fileSpecs.forEach((fileSpec) => {
                 configOptions.include.push(getFileSpec(this.fs, projectRoot, fileSpec));
             });
-        } else if (!configFilePath) {
-            // If no config file was found and there are no explicit include
-            // paths specified, assume the caller wants to include all source
-            // files under the execution root path.
-            if (commandLineOptions.executionRoot) {
-                configOptions.include.push(getFileSpec(this.fs, commandLineOptions.executionRoot, '.'));
+        }
 
+        if (commandLineOptions.excludeFileSpecs.length > 0) {
+            commandLineOptions.excludeFileSpecs.forEach((fileSpec) => {
+                configOptions.exclude.push(getFileSpec(this.fs, projectRoot, fileSpec));
+            });
+        }
+
+        if (commandLineOptions.ignoreFileSpecs.length > 0) {
+            commandLineOptions.ignoreFileSpecs.forEach((fileSpec) => {
+                configOptions.ignore.push(getFileSpec(this.fs, projectRoot, fileSpec));
+            });
+        }
+
+        if (!configFilePath && commandLineOptions.executionRoot) {
+            if (commandLineOptions.fileSpecs.length === 0) {
+                // If no config file was found and there are no explicit include
+                // paths specified, assume the caller wants to include all source
+                // files under the execution root path.
+                configOptions.include.push(getFileSpec(this.fs, commandLineOptions.executionRoot, '.'));
+            }
+
+            if (commandLineOptions.excludeFileSpecs.length === 0) {
                 // Add a few common excludes to avoid long scan times.
                 defaultExcludes.forEach((exclude) => {
                     configOptions.exclude.push(getFileSpec(this.fs, commandLineOptions.executionRoot, exclude));
@@ -697,7 +782,11 @@ export class AnalyzerService {
             configOptions.applyDiagnosticOverrides(commandLineOptions.diagnosticSeverityOverrides);
         }
 
-        configOptions.analyzeUnannotatedFunctions = commandLineOptions.analyzeUnannotatedFunctions ?? true;
+        // Override the analyzeUnannotatedFunctions setting based on the command-line setting.
+        if (commandLineOptions.analyzeUnannotatedFunctions !== undefined) {
+            configOptions.diagnosticRuleSet.analyzeUnannotatedFunctions =
+                commandLineOptions.analyzeUnannotatedFunctions;
+        }
 
         const reportDuplicateSetting = (settingName: string, configValue: number | string | boolean) => {
             const settingSource = commandLineOptions.fromVsCodeExtension
@@ -733,6 +822,7 @@ export class AnalyzerService {
         configOptions.checkOnlyOpenFiles = !!commandLineOptions.checkOnlyOpenFiles;
         configOptions.autoImportCompletions = !!commandLineOptions.autoImportCompletions;
         configOptions.indexing = !!commandLineOptions.indexing;
+        configOptions.taskListTokens = commandLineOptions.taskListTokens;
         configOptions.logTypeEvaluationTime = !!commandLineOptions.logTypeEvaluationTime;
         configOptions.typeEvaluationTimeThreshold = commandLineOptions.typeEvaluationTimeThreshold;
 
@@ -744,17 +834,22 @@ export class AnalyzerService {
             reportDuplicateSetting('useLibraryCodeForTypes', configOptions.useLibraryCodeForTypes);
         }
 
-        // If there was no stub path specified, use a default path.
         if (commandLineOptions.stubPath) {
             if (!configOptions.stubPath) {
                 configOptions.stubPath = commandLineOptions.stubPath;
             } else {
                 reportDuplicateSetting('stubPath', configOptions.stubPath);
             }
-        } else {
-            if (!configOptions.stubPath) {
-                configOptions.stubPath = normalizePath(combinePaths(configOptions.projectRoot, 'typings'));
+        }
+
+        if (configOptions.stubPath) {
+            // If there was a stub path specified, validate it.
+            if (!this.fs.existsSync(configOptions.stubPath) || !isDirectory(this.fs, configOptions.stubPath)) {
+                this._console.warn(`stubPath ${configOptions.stubPath} is not a valid directory.`);
             }
+        } else {
+            // If no stub path was specified, use a default path.
+            configOptions.stubPath = normalizePath(combinePaths(configOptions.projectRoot, defaultStubsDirectory));
         }
 
         // Do some sanity checks on the specified settings and report missing
@@ -806,12 +901,6 @@ export class AnalyzerService {
             }
         }
 
-        if (configOptions.stubPath) {
-            if (!this.fs.existsSync(configOptions.stubPath) || !isDirectory(this.fs, configOptions.stubPath)) {
-                this._console.warn(`stubPath ${configOptions.stubPath} is not a valid directory.`);
-            }
-        }
-
         return configOptions;
     }
 
@@ -837,20 +926,16 @@ export class AnalyzerService {
         );
     }
 
-    // This is called after a new type stub has been created. It allows
-    // us to invalidate caches and force reanalysis of files that potentially
-    // are affected by the appearance of a new type stub.
     invalidateAndForceReanalysis(
         rebuildUserFileIndexing = true,
         rebuildLibraryIndexing = true,
-        updateTrackedFileList = false
+        refreshOptions?: RefreshOptions
     ) {
-        if (updateTrackedFileList) {
-            this._updateTrackedFileList(/* markFilesDirtyUnconditionally */ false);
-        }
-
-        // Mark all files with one or more errors dirty.
-        this._backgroundAnalysisProgram.invalidateAndForceReanalysis(rebuildUserFileIndexing, rebuildLibraryIndexing);
+        this._backgroundAnalysisProgram.invalidateAndForceReanalysis(
+            rebuildUserFileIndexing,
+            rebuildLibraryIndexing,
+            refreshOptions
+        );
     }
 
     // Forces the service to stop all analysis, discard all its caches,
@@ -898,18 +983,13 @@ export class AnalyzerService {
     }
 
     private _getTypeStubFolder() {
-        const stubPath = this._configOptions.stubPath;
+        const stubPath =
+            this._configOptions.stubPath ??
+            normalizePath(combinePaths(this._configOptions.projectRoot, defaultStubsDirectory));
+
         if (!this._typeStubTargetPath || !this._typeStubTargetImportName) {
             const errMsg = `Import '${this._typeStubTargetImportName}'` + ` could not be resolved`;
             this._console.error(errMsg);
-            throw new Error(errMsg);
-        }
-
-        if (!stubPath) {
-            // We should never get here because we always generate a
-            // default typings path if none was specified.
-            const errMsg = 'No typings path was specified';
-            this._console.info(errMsg);
             throw new Error(errMsg);
         }
 
@@ -979,7 +1059,13 @@ export class AnalyzerService {
 
     private _parseJsonConfigFile(configPath: string): object | undefined {
         return this._attemptParseFile(configPath, (fileContents) => {
-            return JSONC.parse(fileContents);
+            const errors: JSONC.ParseError[] = [];
+            const result = JSONC.parse(fileContents, errors, { allowTrailingComma: true });
+            if (errors.length > 0) {
+                throw new Error('Errors parsing JSON file');
+            }
+
+            return result;
         });
     }
 
@@ -1046,6 +1132,7 @@ export class AnalyzerService {
         // Use a map to generate a list of unique files.
         const fileMap = new Map<string, string>();
 
+        // Scan all matching files from file system.
         timingStats.findFilesTime.timeOperation(() => {
             const matchedFiles = this._matchFiles(this._configOptions.include, this._configOptions.exclude);
 
@@ -1053,6 +1140,14 @@ export class AnalyzerService {
                 fileMap.set(file, file);
             }
         });
+
+        // And scan all matching open files. We need to do this since some of files are not backed by
+        // files in file system but only exist in memory (ex, virtual workspace)
+        this._backgroundAnalysisProgram.program
+            .getOpened()
+            .map((o) => o.sourceFile.getFilePath())
+            .filter((f) => matchFileSpecs(this._program.getConfigOptions(), f))
+            .forEach((f) => fileMap.set(f, f));
 
         return [...fileMap.values()];
     }
@@ -1118,7 +1213,10 @@ export class AnalyzerService {
 
                 // Add the implicit import paths.
                 importResult.filteredImplicitImports.forEach((implicitImport) => {
-                    filesToImport.push(implicitImport.path);
+                    const fileExtension = getFileExtension(implicitImport.path).toLowerCase();
+                    if (supportedSourceFileExtensions.some((ext) => fileExtension === ext)) {
+                        filesToImport.push(implicitImport.path);
+                    }
                 });
 
                 this._backgroundAnalysisProgram.setAllowedThirdPartyImports([this._typeStubTargetImportName]);
@@ -1126,11 +1224,13 @@ export class AnalyzerService {
             } else {
                 this._console.error(`Import '${this._typeStubTargetImportName}' not found`);
             }
-        } else {
+        } else if (!this._options.skipScanningUserFiles) {
             let fileList: string[] = [];
-            this._console.info(`Searching for source files`);
+            this._console.log(`Searching for source files`);
             fileList = this._getFileNamesFromFileSpecs();
 
+            // getFileNamesFromFileSpecs might have updated configOptions, resync options.
+            this._backgroundAnalysisProgram.setConfigOptions(this._configOptions);
             this._backgroundAnalysisProgram.setTrackedFiles(fileList);
             this._backgroundAnalysisProgram.markAllFilesDirty(markFilesDirtyUnconditionally);
 
@@ -1151,7 +1251,11 @@ export class AnalyzerService {
         const longOperationLimitInSec = 10;
         let loggedLongOperationError = false;
 
-        const visitDirectoryUnchecked = (absolutePath: string, includeRegExp: RegExp) => {
+        const visitDirectoryUnchecked = (
+            absolutePath: string,
+            includeRegExp: RegExp,
+            hasDirectoryWildcard: boolean
+        ) => {
             if (!loggedLongOperationError) {
                 const secondsSinceStart = (Date.now() - startTime) * 0.001;
 
@@ -1176,6 +1280,11 @@ export class AnalyzerService {
 
             if (this._configOptions.autoExcludeVenv) {
                 if (envMarkers.some((f) => this.fs.existsSync(combinePaths(absolutePath, ...f)))) {
+                    // Save auto exclude paths in the configOptions once we found them.
+                    if (!FileSpec.isInPath(absolutePath, exclude)) {
+                        exclude.push(getFileSpec(this.fs, this._configOptions.projectRoot, `${absolutePath}/**`));
+                    }
+
                     this._console.info(`Auto-excluding ${absolutePath}`);
                     return;
                 }
@@ -1186,23 +1295,23 @@ export class AnalyzerService {
             for (const file of files) {
                 const filePath = combinePaths(absolutePath, file);
 
-                if (this._matchIncludeFileSpec(includeRegExp, exclude, filePath)) {
+                if (FileSpec.matchIncludeFileSpec(includeRegExp, exclude, filePath)) {
                     results.push(filePath);
                 }
             }
 
             for (const directory of directories) {
                 const dirPath = combinePaths(absolutePath, directory);
-                if (includeRegExp.test(dirPath)) {
-                    if (!this._isInExcludePath(dirPath, exclude)) {
-                        visitDirectory(dirPath, includeRegExp);
+                if (includeRegExp.test(dirPath) || hasDirectoryWildcard) {
+                    if (!FileSpec.isInPath(dirPath, exclude)) {
+                        visitDirectory(dirPath, includeRegExp, hasDirectoryWildcard);
                     }
                 }
             }
         };
 
         const seenDirs = new Set<string>();
-        const visitDirectory = (absolutePath: string, includeRegExp: RegExp) => {
+        const visitDirectory = (absolutePath: string, includeRegExp: RegExp, hasDirectoryWildcard: boolean) => {
             const realDirPath = tryRealpath(this.fs, absolutePath);
             if (!realDirPath) {
                 this._console.warn(`Skipping broken link "${absolutePath}"`);
@@ -1216,27 +1325,27 @@ export class AnalyzerService {
             seenDirs.add(realDirPath);
 
             try {
-                visitDirectoryUnchecked(absolutePath, includeRegExp);
+                visitDirectoryUnchecked(absolutePath, includeRegExp, hasDirectoryWildcard);
             } finally {
                 seenDirs.delete(realDirPath);
             }
         };
 
         include.forEach((includeSpec) => {
-            if (!this._isInExcludePath(includeSpec.wildcardRoot, exclude)) {
+            if (!FileSpec.isInPath(includeSpec.wildcardRoot, exclude)) {
                 let foundFileSpec = false;
                 let isFileIncluded = true;
 
                 const stat = tryStat(this.fs, includeSpec.wildcardRoot);
                 if (stat?.isFile()) {
-                    if (this._shouldIncludeFile(includeSpec.wildcardRoot)) {
+                    if (FileSpec.matchesIncludeFileRegex(includeSpec.wildcardRoot)) {
                         results.push(includeSpec.wildcardRoot);
                     } else {
                         isFileIncluded = false;
                     }
                     foundFileSpec = true;
                 } else if (stat?.isDirectory()) {
-                    visitDirectory(includeSpec.wildcardRoot, includeSpec.regExp);
+                    visitDirectory(includeSpec.wildcardRoot, includeSpec.regExp, includeSpec.hasDirectoryWildcard);
                     foundFileSpec = true;
                 }
 
@@ -1300,54 +1409,36 @@ export class AnalyzerService {
                         return;
                     }
 
-                    // For file change, we only care python file change.
-                    if (
-                        eventInfo.isFile &&
-                        (!hasPythonExtension(path) || isTemporaryFile(path) || !this.isTracked(path))
-                    ) {
+                    if (!this._shouldHandleSourceFileWatchChanges(path, eventInfo.isFile)) {
                         return;
                     }
 
-                    if (eventInfo.isFile && (eventInfo.event === 'change' || eventInfo.event === 'unlink')) {
+                    // If the change is the content of 1 file, then it can't affect `import resolution` result. All we need to do is
+                    // reanalyzing related files (files that transitively depends on this file).
+                    if (eventInfo.isFile && eventInfo.event === 'change') {
                         this._backgroundAnalysisProgram.markFilesDirty([path], /* evenIfContentsAreSame */ false);
                         this._scheduleReanalysis(/* requireTrackedFileUpdate */ false);
-                    } else {
-                        // Added files or folder changes impact imports,
-                        // clear the import resolver cache and reanalyze everything.
-                        //
-                        // Here we don't need to rebuild any indexing since this kind of change can't affect
-                        // indices. For library, since the changes are on workspace files, it won't affect library
-                        // indices. For user file, since user file indices don't contains import alias symbols,
-                        // it won't affect those indices. we only need to rebuild user file indices when symbols
-                        // defined in the file are changed. ex) user modified the file.
-                        // Newly added file will be scanned since it doesn't have existing indices.
-                        this.invalidateAndForceReanalysis(
-                            /* rebuildUserFileIndexing */ false,
-                            /* rebuildLibraryIndexing */ false
-                        );
-                        this._scheduleReanalysis(/* requireTrackedFileUpdate */ true);
+                        return;
                     }
+
+                    // fs events happened can impact import resolution result.
+                    // clear the import resolver cache and reanalyze everything.
+                    //
+                    // Here we don't need to rebuild any indexing since this kind of change can't affect
+                    // indices. For library, since the changes are on workspace files, it won't affect library
+                    // indices. For user file, since user file indices don't contains import alias symbols,
+                    // it won't affect those indices. we only need to rebuild user file indices when symbols
+                    // defined in the file are changed. ex) user modified the file.
+                    // Newly added file will be scanned since it doesn't have existing indices.
+                    this.invalidateAndForceReanalysis(
+                        /* rebuildUserFileIndexing */ false,
+                        /* rebuildLibraryIndexing */ false
+                    );
+                    this._scheduleReanalysis(/* requireTrackedFileUpdate */ true);
                 });
             } catch {
                 this._console.error(`Exception caught when installing fs watcher for:\n ${fileList.join('\n')}`);
             }
-        }
-
-        function isTemporaryFile(path: string) {
-            // Determine if this is an add or delete event related to a temporary
-            // file. Some tools (like auto-formatters) create temporary files
-            // alongside the original file and name them "x.py.<temp-id>.py" where
-            // <temp-id> is a 32-character random string of hex digits. We don't
-            // want these events to trigger a full reanalysis.
-            const fileName = getFileName(path);
-            const fileNameSplit = fileName.split('.');
-            if (fileNameSplit.length === 4) {
-                if (fileNameSplit[3] === fileNameSplit[1] && fileNameSplit[2].length === 32) {
-                    return true;
-                }
-            }
-
-            return false;
         }
 
         function getEventInfo(
@@ -1391,6 +1482,60 @@ export class AnalyzerService {
             // We have unknown event.
             console.warn(`Received unknown file change event: '${event}' for '${path}'`);
             return undefined;
+        }
+    }
+
+    private _shouldHandleSourceFileWatchChanges(path: string, isFile: boolean) {
+        if (isFile) {
+            if (!hasPythonExtension(path) || isTemporaryFile(path)) {
+                return false;
+            }
+
+            // Check whether the file change can affect semantics. If the file changed is not a user file or already a part of
+            // the program (since we lazily load library files or extra path files when they are used), then the change can't
+            // affect semantics. so just bail out.
+            if (!this.isTracked(path) && !this._program.getSourceFileInfo(path)) {
+                return false;
+            }
+
+            return true;
+        }
+
+        // The fs change is on a folder.
+        if (!matchFileSpecs(this._program.getConfigOptions(), path, /* isFile */ false)) {
+            // First, make sure the folder is included. By default, we exclude any folder whose name starts with '.'
+            return false;
+        }
+
+        const parentPath = getDirectoryPath(path);
+        const hasInit =
+            parentPath.startsWith(this._configOptions.projectRoot) &&
+            (this.fs.existsSync(combinePaths(parentPath, '__init__.py')) ||
+                this.fs.existsSync(combinePaths(parentPath, '__init__.pyi')));
+
+        // We don't have any file under the given path and its parent folder doesn't have __init__ then this folder change
+        // doesn't have any meaning to us.
+        if (!hasInit && !this._program.containsSourceFileIn(path)) {
+            return false;
+        }
+
+        return true;
+
+        function isTemporaryFile(path: string) {
+            // Determine if this is an add or delete event related to a temporary
+            // file. Some tools (like auto-formatters) create temporary files
+            // alongside the original file and name them "x.py.<temp-id>.py" where
+            // <temp-id> is a 32-character random string of hex digits. We don't
+            // want these events to trigger a full reanalysis.
+            const fileName = getFileName(path);
+            const fileNameSplit = fileName.split('.');
+            if (fileNameSplit.length === 4) {
+                if (fileNameSplit[3] === fileNameSplit[1] && fileNameSplit[2].length === 32) {
+                    return true;
+                }
+            }
+
+            return false;
         }
     }
 
@@ -1440,7 +1585,9 @@ export class AnalyzerService {
                         return;
                     }
 
-                    this._scheduleLibraryAnalysis();
+                    // If file doesn't exist, it is delete.
+                    const isChange = event === 'change' && this.fs.existsSync(path);
+                    this._scheduleLibraryAnalysis(isChange);
                 });
             } catch {
                 this._console.error(`Exception caught when installing fs watcher for:\n ${watchList.join('\n')}`);
@@ -1456,7 +1603,7 @@ export class AnalyzerService {
         }
     }
 
-    private _scheduleLibraryAnalysis() {
+    private _scheduleLibraryAnalysis(isChange: boolean) {
         if (this._disposed) {
             // Already disposed.
             return;
@@ -1470,6 +1617,9 @@ export class AnalyzerService {
             return;
         }
 
+        // Add pending library files/folders changes.
+        this._pendingLibraryChanges.changesOnly = this._pendingLibraryChanges.changesOnly && isChange;
+
         // Wait for a little while, since library changes
         // tend to happen in big batches when packages
         // are installed or uninstalled.
@@ -1478,8 +1628,13 @@ export class AnalyzerService {
 
             // Invalidate import resolver, mark all files dirty unconditionally,
             // and reanalyze.
-            this.invalidateAndForceReanalysis(/* rebuildUserFileIndexing */ false);
+            this.invalidateAndForceReanalysis(/* rebuildUserFileIndexing */ false, /* rebuildLibraryIndexing */ true, {
+                changesOnly: this._pendingLibraryChanges.changesOnly,
+            });
             this._scheduleReanalysis(/* requireTrackedFileUpdate */ false);
+
+            // No more pending changes.
+            this._pendingLibraryChanges.changesOnly = true;
         }, backOffTimeInMS);
     }
 
@@ -1639,7 +1794,7 @@ export class AnalyzerService {
             }
 
             // This creates a cancellation source only if it actually gets used.
-            this._backgroundAnalysisCancellationSource = this._cancellationProvider.createCancellationTokenSource();
+            this._backgroundAnalysisCancellationSource = this.cancellationProvider.createCancellationTokenSource();
             const moreToAnalyze = this._backgroundAnalysisProgram.startAnalysis(
                 this._backgroundAnalysisCancellationSource.token
             );
@@ -1661,23 +1816,5 @@ export class AnalyzerService {
                 elapsedTime: 0,
             });
         }
-    }
-
-    private _shouldIncludeFile(filePath: string) {
-        return _includeFileRegex.test(filePath);
-    }
-
-    private _isInExcludePath(path: string, excludePaths: FileSpec[]) {
-        return !!excludePaths.find((excl) => excl.regExp.test(path));
-    }
-
-    private _matchIncludeFileSpec(includeRegExp: RegExp, exclude: FileSpec[], filePath: string) {
-        if (includeRegExp.test(filePath)) {
-            if (!this._isInExcludePath(filePath, exclude) && this._shouldIncludeFile(filePath)) {
-                return true;
-            }
-        }
-
-        return false;
     }
 }

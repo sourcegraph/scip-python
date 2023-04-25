@@ -6,50 +6,41 @@
  * TestState wraps currently test states and provides a way to query and manipulate
  * the test states.
  */
-
 import assert from 'assert';
-import * as JSONC from 'jsonc-parser';
+import * as path from 'path';
 import Char from 'typescript-char';
 import {
-    AnnotatedTextEdit,
     CancellationToken,
-    ChangeAnnotation,
     CodeAction,
     Command,
     CompletionItem,
-    CreateFile,
-    DeleteFile,
     Diagnostic,
     DocumentHighlight,
     DocumentHighlightKind,
     ExecuteCommandParams,
     MarkupContent,
     MarkupKind,
-    OptionalVersionedTextDocumentIdentifier,
-    RenameFile,
-    TextDocumentEdit,
     TextEdit,
     WorkspaceEdit,
 } from 'vscode-languageserver';
 
+import { BackgroundAnalysisProgramFactory } from '../../../analyzer/backgroundAnalysisProgram';
 import { ImportResolver, ImportResolverFactory } from '../../../analyzer/importResolver';
 import { findNodeByOffset } from '../../../analyzer/parseTreeUtils';
 import { Program } from '../../../analyzer/program';
-import { AnalyzerService, configFileNames } from '../../../analyzer/service';
+import { AnalyzerService } from '../../../analyzer/service';
 import { CommandResult } from '../../../commands/commandResult';
 import { appendArray } from '../../../common/collectionUtils';
-import { ConfigOptions } from '../../../common/configOptions';
+import { ConfigOptions, SignatureDisplayType } from '../../../common/configOptions';
 import { ConsoleInterface, NullConsole } from '../../../common/console';
 import { Comparison, isNumber, isString, toBoolean } from '../../../common/core';
 import * as debug from '../../../common/debug';
-import { createDeferred } from '../../../common/deferred';
 import { DiagnosticCategory } from '../../../common/diagnostic';
 import { FileEditAction } from '../../../common/editAction';
 import {
     combinePaths,
     comparePaths,
     convertPathToUri,
-    getBaseFileName,
     getDirectoryPath,
     getFileExtension,
     getFileSpec,
@@ -57,14 +48,9 @@ import {
     normalizeSlashes,
 } from '../../../common/pathUtils';
 import { convertOffsetToPosition, convertPositionToOffset } from '../../../common/positionUtils';
-import { getStringComparer } from '../../../common/stringUtils';
 import { DocumentRange, Position, Range as PositionRange, rangesAreEqual, TextRange } from '../../../common/textRange';
 import { TextRangeCollection } from '../../../common/textRangeCollection';
-import {
-    LanguageServerInterface,
-    WellKnownWorkspaceKinds,
-    WorkspaceServiceInstance,
-} from '../../../languageServerBase';
+import { LanguageServerInterface } from '../../../languageServerBase';
 import { AbbreviationInfo, ImportFormat } from '../../../languageService/autoImporter';
 import { CompletionOptions } from '../../../languageService/completionProvider';
 import { DefinitionFilter } from '../../../languageService/definitionProvider';
@@ -73,6 +59,12 @@ import { ParseNode } from '../../../parser/parseNodes';
 import { ParseResults } from '../../../parser/parser';
 import { Tokenizer } from '../../../parser/tokenizer';
 import { PyrightFileSystem } from '../../../pyrightFileSystem';
+import {
+    createInitStatus,
+    WellKnownWorkspaceKinds,
+    Workspace,
+    WorkspacePythonPathKind,
+} from '../../../workspaceFactory';
 import { TestAccessHost } from '../testAccessHost';
 import * as host from '../testHost';
 import { stringify } from '../utils';
@@ -90,6 +82,8 @@ import {
     TestCancellationToken,
 } from './fourSlashTypes';
 import { TestFeatures, TestLanguageService } from './testLanguageService';
+import { createVfsInfoFromFourSlashData, getMarkerByName, getMarkerName, getMarkerNames } from './testStateUtils';
+import { verifyWorkspaceEdit } from './workspaceEditTestUtils';
 
 export interface TextChange {
     span: TextRange;
@@ -98,10 +92,11 @@ export interface TextChange {
 
 export interface HostSpecificFeatures {
     importResolverFactory: ImportResolverFactory;
+    backgroundAnalysisProgramFactory: BackgroundAnalysisProgramFactory;
 
-    runIndexer(workspace: WorkspaceServiceInstance, noStdLib: boolean, options?: string): void;
+    runIndexer(workspace: Workspace, noStdLib: boolean, options?: string): void;
     getCodeActionsForPosition(
-        workspace: WorkspaceServiceInstance,
+        workspace: Workspace,
         filePath: string,
         range: PositionRange,
         token: CancellationToken
@@ -119,7 +114,7 @@ export class TestState {
 
     readonly testFS: vfs.TestFileSystem;
     readonly fs: PyrightFileSystem;
-    readonly workspace: WorkspaceServiceInstance;
+    readonly workspace: Workspace;
     readonly console: ConsoleInterface;
     readonly rawConfigJson: any | undefined;
 
@@ -137,26 +132,30 @@ export class TestState {
         projectRoot: string,
         public testData: FourSlashData,
         mountPaths?: Map<string, string>,
-        hostSpecificFeatures?: HostSpecificFeatures
+        hostSpecificFeatures?: HostSpecificFeatures,
+        testFS?: vfs.TestFileSystem
     ) {
         const vfsInfo = createVfsInfoFromFourSlashData(projectRoot, testData);
-        this.rawConfigJson = vfsInfo.rawConfigJson;
 
-        this._cancellationToken = new TestCancellationToken();
-        this._hostSpecificFeatures = hostSpecificFeatures ?? new TestFeatures();
+        this.testFS =
+            testFS ??
+            createFromFileSystem(
+                host.HOST,
+                vfsInfo.ignoreCase,
+                { cwd: vfsInfo.projectRoot, files: vfsInfo.files, meta: testData.globalOptions },
+                mountPaths
+            );
 
         this.console = new NullConsole();
-        this.testFS = createFromFileSystem(
-            host.HOST,
-            vfsInfo.ignoreCase,
-            { cwd: vfsInfo.projectRoot, files: vfsInfo.files, meta: testData.globalOptions },
-            mountPaths
-        );
+        this._cancellationToken = new TestCancellationToken();
+        this._hostSpecificFeatures = hostSpecificFeatures ?? new TestFeatures();
 
         this.fs = new PyrightFileSystem(this.testFS);
         this._files = vfsInfo.sourceFileNames;
 
+        this.rawConfigJson = vfsInfo.rawConfigJson;
         const configOptions = this._convertGlobalOptionsToConfigOptions(vfsInfo.projectRoot, mountPaths);
+
         if (this.rawConfigJson) {
             configOptions.initializeFromJson(this.rawConfigJson, 'basic', this.console, this.fs, testAccessHost);
             this._applyTestConfigOptions(configOptions);
@@ -165,22 +164,23 @@ export class TestState {
         const service = this._createAnalysisService(
             this.console,
             this._hostSpecificFeatures.importResolverFactory,
+            this._hostSpecificFeatures.backgroundAnalysisProgramFactory,
             configOptions
         );
 
         this.workspace = {
             workspaceName: 'test workspace',
             rootPath: vfsInfo.projectRoot,
-            path: vfsInfo.projectRoot,
+            pythonPath: undefined,
+            pythonPathKind: WorkspacePythonPathKind.Mutable,
             uri: convertPathToUri(this.fs, vfsInfo.projectRoot),
             kinds: [WellKnownWorkspaceKinds.Test],
-            serviceInstance: service,
+            service: service,
             disableLanguageServices: false,
             disableOrganizeImports: false,
             disableWorkspaceSymbol: false,
-            isInitialized: createDeferred<boolean>(),
+            isInitialized: createInitStatus(),
             searchPathsToWatch: [],
-            owns: (f) => true,
         };
 
         const indexer = toBoolean(testData.globalOptions[GlobalMetadataOptionNames.indexer]);
@@ -205,15 +205,19 @@ export class TestState {
     }
 
     get importResolver(): ImportResolver {
-        return this.workspace.serviceInstance.getImportResolver();
+        return this.workspace.service.getImportResolver();
     }
 
     get configOptions(): ConfigOptions {
-        return this.workspace.serviceInstance.getConfigOptions();
+        return this.workspace.service.getConfigOptions();
     }
 
     get program(): Program {
-        return this.workspace.serviceInstance.test_program;
+        return this.workspace.service.test_program;
+    }
+
+    dispose() {
+        this.workspace.service.dispose();
     }
 
     cwd() {
@@ -251,28 +255,11 @@ export class TestState {
     }
 
     getMarkerName(m: Marker): string {
-        let found: string | undefined;
-        this.testData.markerPositions.forEach((marker, name) => {
-            if (marker === m) {
-                found = name;
-            }
-        });
-
-        assert.ok(found);
-        return found!;
+        return getMarkerName(this.testData, m);
     }
 
     getMarkerByName(markerName: string) {
-        const markerPos = this.testData.markerPositions.get(markerName);
-        if (markerPos === undefined) {
-            throw new Error(
-                `Unknown marker "${markerName}" Available markers: ${this.getMarkerNames()
-                    .map((m) => '"' + m + '"')
-                    .join(', ')}`
-            );
-        } else {
-            return markerPos;
-        }
+        return getMarkerByName(this.testData, markerName);
     }
 
     getMarkers(): Marker[] {
@@ -281,7 +268,7 @@ export class TestState {
     }
 
     getMarkerNames(): string[] {
-        return [...this.testData.markerPositions.keys()];
+        return getMarkerNames(this.testData);
     }
 
     getPositionRange(markerString: string) {
@@ -321,6 +308,10 @@ export class TestState {
 
     getDirectoryPath(path: string) {
         return getDirectoryPath(path);
+    }
+
+    getPathSep() {
+        return path.sep;
     }
 
     goToPosition(positionOrLineAndColumn: number | Position) {
@@ -534,7 +525,7 @@ export class TestState {
     }
 
     verifyDiagnostics(map?: { [marker: string]: { category: string; message: string } }): void {
-        this._analyze();
+        this.analyze();
 
         // organize things per file
         const resultPerFile = this._getDiagnosticsPerFile();
@@ -579,9 +570,13 @@ export class TestState {
                         ? result.warnings
                         : category === 'information'
                         ? result.information
+                        : category === 'unused'
+                        ? result.unused
+                        : category === 'none'
+                        ? []
                         : this.raiseError(`unexpected category ${category}`);
 
-                if (expected.length !== actual.length) {
+                if (expected.length !== actual.length && category !== 'none') {
                     this.raiseError(
                         `contains unexpected result - expected: ${stringify(expected)}, actual: ${stringify(actual)}`
                     );
@@ -597,15 +592,20 @@ export class TestState {
                         return this._deepEqual(diagnosticSpan, rangeSpan);
                     });
 
-                    if (matches.length === 0) {
+                    // If the map is provided, it might say
+                    // a marker should have none.
+                    const name = map ? this.getMarkerName(range.marker!) : '';
+                    const message = map ? map[name].message : undefined;
+                    const expectMatches = !!message;
+
+                    if (expectMatches && matches.length === 0) {
                         this.raiseError(`doesn't contain expected range: ${stringify(range)}`);
+                    } else if (!expectMatches && matches.length !== 0) {
+                        this.raiseError(`${name} should not contain any matches`);
                     }
 
                     // if map is provided, check message as well
-                    if (map) {
-                        const name = this.getMarkerName(range.marker!);
-                        const message = map[name].message;
-
+                    if (message) {
                         if (matches.filter((d) => message === d.message).length !== 1) {
                             this.raiseError(
                                 `message doesn't match: ${message} of ${name} - ${stringify(
@@ -652,8 +652,8 @@ export class TestState {
         verifyCodeActionCount?: boolean
     ): Promise<any> {
         // make sure we don't use cache built from other tests
-        this.workspace.serviceInstance.invalidateAndForceReanalysis();
-        this._analyze();
+        this.workspace.service.invalidateAndForceReanalysis();
+        this.analyze();
 
         for (const range of this.getRanges()) {
             const name = this.getMarkerName(range.marker!);
@@ -719,7 +719,7 @@ export class TestState {
     }
 
     async verifyCommand(command: Command, files: { [filePath: string]: string }): Promise<any> {
-        this._analyze();
+        this.analyze();
 
         const commandResult = await this._hostSpecificFeatures.execute(
             new TestLanguageService(this.workspace, this.console, this.fs),
@@ -748,155 +748,7 @@ export class TestState {
     }
 
     verifyWorkspaceEdit(expected: WorkspaceEdit, actual: WorkspaceEdit) {
-        if (actual.changes) {
-            this._verifyTextEditMap(expected.changes!, actual.changes);
-        } else {
-            assert(!expected.changes);
-        }
-
-        if (actual.documentChanges) {
-            this._verifyDocumentEdits(expected.documentChanges!, actual.documentChanges);
-        } else {
-            assert(!expected.documentChanges);
-        }
-
-        if (actual.changeAnnotations) {
-            this._verifyChangeAnnotations(expected.changeAnnotations!, actual.changeAnnotations);
-        } else {
-            assert(!expected.changeAnnotations);
-        }
-    }
-
-    private _verifyChangeAnnotations(
-        expected: { [id: string]: ChangeAnnotation },
-        actual: { [id: string]: ChangeAnnotation }
-    ) {
-        assert.strictEqual(Object.entries(expected).length, Object.entries(actual).length);
-
-        for (const key of Object.keys(expected)) {
-            const expectedAnnotation = expected[key];
-            const actualAnnotation = actual[key];
-
-            // We need to improve it to test localized strings.
-            assert.strictEqual(expectedAnnotation.label, actualAnnotation.label);
-            assert.strictEqual(expectedAnnotation.description, actualAnnotation.description);
-
-            assert.strictEqual(expectedAnnotation.needsConfirmation, actualAnnotation.needsConfirmation);
-        }
-    }
-
-    private _textDocumentAreSame(
-        expected: OptionalVersionedTextDocumentIdentifier,
-        actual: OptionalVersionedTextDocumentIdentifier
-    ) {
-        return expected.version === actual.version && expected.uri === actual.uri;
-    }
-
-    private _verifyDocumentEdits(
-        expected: (TextDocumentEdit | CreateFile | RenameFile | DeleteFile)[],
-        actual: (TextDocumentEdit | CreateFile | RenameFile | DeleteFile)[]
-    ) {
-        assert.strictEqual(expected.length, actual.length);
-
-        for (const op of expected) {
-            assert(
-                actual.some((a) => {
-                    const expectedKind = TextDocumentEdit.is(op) ? 'edit' : op.kind;
-                    const actualKind = TextDocumentEdit.is(a) ? 'edit' : a.kind;
-                    if (expectedKind !== actualKind) {
-                        return false;
-                    }
-
-                    switch (expectedKind) {
-                        case 'edit': {
-                            const expectedEdit = op as TextDocumentEdit;
-                            const actualEdit = a as TextDocumentEdit;
-
-                            if (!this._textDocumentAreSame(expectedEdit.textDocument, actualEdit.textDocument)) {
-                                return false;
-                            }
-
-                            return this._textEditsAreSame(expectedEdit.edits, actualEdit.edits);
-                        }
-                        case 'create': {
-                            const expectedOp = op as CreateFile;
-                            const actualOp = a as CreateFile;
-                            return (
-                                expectedOp.kind === actualOp.kind &&
-                                expectedOp.annotationId === actualOp.annotationId &&
-                                expectedOp.uri === actualOp.uri &&
-                                expectedOp.options?.ignoreIfExists === actualOp.options?.ignoreIfExists &&
-                                expectedOp.options?.overwrite === actualOp.options?.overwrite
-                            );
-                        }
-                        case 'rename': {
-                            const expectedOp = op as RenameFile;
-                            const actualOp = a as RenameFile;
-                            return (
-                                expectedOp.kind === actualOp.kind &&
-                                expectedOp.annotationId === actualOp.annotationId &&
-                                expectedOp.oldUri === actualOp.oldUri &&
-                                expectedOp.newUri === actualOp.newUri &&
-                                expectedOp.options?.ignoreIfExists === actualOp.options?.ignoreIfExists &&
-                                expectedOp.options?.overwrite === actualOp.options?.overwrite
-                            );
-                        }
-                        case 'delete': {
-                            const expectedOp = op as DeleteFile;
-                            const actualOp = a as DeleteFile;
-                            return (
-                                expectedOp.annotationId === actualOp.annotationId &&
-                                expectedOp.kind === actualOp.kind &&
-                                expectedOp.uri === actualOp.uri &&
-                                expectedOp.options?.ignoreIfNotExists === actualOp.options?.ignoreIfNotExists &&
-                                expectedOp.options?.recursive === actualOp.options?.recursive
-                            );
-                        }
-                        default:
-                            debug.assertNever(expectedKind);
-                    }
-                })
-            );
-        }
-    }
-
-    private _verifyTextEditMap(expected: { [uri: string]: TextEdit[] }, actual: { [uri: string]: TextEdit[] }) {
-        assert.strictEqual(Object.entries(expected).length, Object.entries(actual).length);
-
-        for (const key of Object.keys(expected)) {
-            assert(this._textEditsAreSame(expected[key], actual[key]));
-        }
-    }
-
-    private _textEditsAreSame(
-        expectedEdits: (TextEdit | AnnotatedTextEdit)[],
-        actualEdits: (TextEdit | AnnotatedTextEdit)[]
-    ) {
-        if (expectedEdits.length !== actualEdits.length) {
-            return false;
-        }
-
-        for (const edit of expectedEdits) {
-            if (!actualEdits.some((a) => this._textEditAreSame(edit, a))) {
-                return false;
-            }
-        }
-
-        return true;
-    }
-
-    private _textEditAreSame(expected: TextEdit, actual: TextEdit) {
-        if (!rangesAreEqual(expected.range, actual.range)) {
-            return false;
-        }
-
-        if (expected.newText !== actual.newText) {
-            return false;
-        }
-
-        const expectedAnnotation = AnnotatedTextEdit.is(expected) ? expected.annotationId : '';
-        const actualAnnotation = AnnotatedTextEdit.is(actual) ? actual.annotationId : '';
-        return expectedAnnotation === actualAnnotation;
+        return verifyWorkspaceEdit(expected, actual);
     }
 
     async verifyInvokeCodeAction(
@@ -905,7 +757,7 @@ export class TestState {
         },
         verifyCodeActionCount?: boolean
     ): Promise<any> {
-        this._analyze();
+        this.analyze();
 
         for (const range of this.getRanges()) {
             const name = this.getMarkerName(range.marker!);
@@ -1058,7 +910,7 @@ export class TestState {
         },
         abbrMap?: { [abbr: string]: AbbreviationInfo }
     ): Promise<void> {
-        this._analyze();
+        this.analyze();
 
         for (const marker of this.getMarkers()) {
             const markerName = this.getMarkerName(marker);
@@ -1079,12 +931,13 @@ export class TestState {
                 autoImport: true,
                 extraCommitChars: true,
                 importFormat: ImportFormat.Absolute,
+                includeUserSymbolsInAutoImport: false,
             };
             const nameMap = abbrMap ? new Map<string, AbbreviationInfo>(Object.entries(abbrMap)) : undefined;
-            const result = await this.workspace.serviceInstance.getCompletionsForPosition(
+            const result = await this.workspace.service.getCompletionsForPosition(
                 filePath,
                 completionPosition,
-                this.workspace.path,
+                this.workspace.rootPath,
                 options,
                 nameMap,
                 CancellationToken.None
@@ -1128,7 +981,7 @@ export class TestState {
 
                         if (expected.additionalTextEdits !== undefined) {
                             if (actual.additionalTextEdits === undefined) {
-                                this.workspace.serviceInstance.resolveCompletionItem(
+                                this.workspace.service.resolveCompletionItem(
                                     filePath,
                                     actual,
                                     options,
@@ -1141,8 +994,8 @@ export class TestState {
                         this.verifyCompletionItem(expected, actual);
 
                         if (expected.documentation !== undefined) {
-                            if (actual.documentation === undefined) {
-                                this.workspace.serviceInstance.resolveCompletionItem(
+                            if (actual.documentation === undefined && actual.data) {
+                                this.workspace.service.resolveCompletionItem(
                                     filePath,
                                     actual,
                                     options,
@@ -1228,7 +1081,7 @@ export class TestState {
             };
         }
     ): void {
-        this._analyze();
+        this.analyze();
 
         for (const marker of this.getMarkers()) {
             const fileName = marker.fileName;
@@ -1297,7 +1150,7 @@ export class TestState {
             references: DocumentRange[];
         };
     }) {
-        this._analyze();
+        this.analyze();
 
         for (const marker of this.getMarkers()) {
             const fileName = marker.fileName;
@@ -1328,6 +1181,37 @@ export class TestState {
         }
     }
 
+    verifyShowCallHierarchyGetIncomingCalls(map: {
+        [marker: string]: {
+            references: DocumentRange[];
+        };
+    }) {
+        this.analyze();
+
+        for (const marker of this.getMarkers()) {
+            const fileName = marker.fileName;
+            const name = this.getMarkerName(marker);
+
+            if (!(name in map)) {
+                continue;
+            }
+
+            const expected = map[name].references;
+
+            const position = this.convertOffsetToPosition(fileName, marker.position);
+
+            const actual = this.program.getIncomingCallsForPosition(fileName, position, CancellationToken.None);
+
+            assert.strictEqual(actual?.length ?? 0, expected.length, `${name} has failed`);
+            if (actual) {
+                for (const a of actual) {
+                    assert.equal(expected?.filter((e) => this._deepEqual(a.from.range, e.range)).length, 1);
+                    assert.equal(expected?.filter((e) => this._deepEqual(a.from.uri, e.path)).length, 1);
+                }
+            }
+        }
+    }
+
     getDocumentHighlightKind(m?: Marker): DocumentHighlightKind | undefined {
         const kind = m?.data ? ((m.data as any).kind as string) : undefined;
         switch (kind) {
@@ -1347,7 +1231,7 @@ export class TestState {
             references: DocumentHighlight[];
         };
     }) {
-        this._analyze();
+        this.analyze();
 
         for (const name of Object.keys(map)) {
             const marker = this.getMarkerByName(name);
@@ -1379,7 +1263,7 @@ export class TestState {
         },
         filter: DefinitionFilter = DefinitionFilter.All
     ) {
-        this._analyze();
+        this.analyze();
 
         for (const marker of this.getMarkers()) {
             const fileName = marker.fileName;
@@ -1391,13 +1275,25 @@ export class TestState {
 
             const expected = map[name].definitions;
 
+            // If we're going to def from a file, act like it's open.
+            if (!this.program.getSourceFileInfo(fileName)) {
+                const file = this.testData.files.find((v) => v.fileName === fileName);
+                if (file) {
+                    this.program.setFileOpened(fileName, file.version, [{ text: file.content }]);
+                }
+            }
+
             const position = this.convertOffsetToPosition(fileName, marker.position);
             const actual = this.program.getDefinitionsForPosition(fileName, position, filter, CancellationToken.None);
 
-            assert.equal(actual?.length ?? 0, expected.length);
+            assert.equal(actual?.length ?? 0, expected.length, `No definitions found for marker "${name}"`);
 
             for (const r of expected) {
-                assert.equal(actual?.filter((d) => this._deepEqual(d, r)).length, 1);
+                assert.equal(
+                    actual?.filter((d) => this._deepEqual(d, r)).length,
+                    1,
+                    `No match found for ${JSON.stringify(r)} from marker ${name}`
+                );
             }
         }
     }
@@ -1407,7 +1303,7 @@ export class TestState {
             definitions: DocumentRange[];
         };
     }) {
-        this._analyze();
+        this.analyze();
 
         for (const marker of this.getMarkers()) {
             const fileName = marker.fileName;
@@ -1436,7 +1332,7 @@ export class TestState {
             changes: FileEditAction[];
         };
     }) {
-        this._analyze();
+        this.analyze();
 
         for (const marker of this.getMarkers()) {
             const fileName = marker.fileName;
@@ -1478,7 +1374,12 @@ export class TestState {
         const configOptions = new ConfigOptions(projectRoot);
 
         // add more global options as we need them
-        return this._applyTestConfigOptions(configOptions, mountPaths);
+        const newConfigOptions = this._applyTestConfigOptions(configOptions, mountPaths);
+
+        // default tests to run use compact signatures.
+        newConfigOptions.functionSignatureDisplay = SignatureDisplayType.compact;
+
+        return newConfigOptions;
     }
 
     private _applyTestConfigOptions(configOptions: ConfigOptions, mountPaths?: Map<string, string>) {
@@ -1502,6 +1403,10 @@ export class TestState {
             for (const mountPath of mountPaths.keys()) {
                 configOptions.exclude.push(getFileSpec(this.fs, configOptions.projectRoot, mountPath));
             }
+        }
+
+        if (configOptions.functionSignatureDisplay === undefined) {
+            configOptions.functionSignatureDisplay === SignatureDisplayType.compact;
         }
 
         return configOptions;
@@ -1780,7 +1685,7 @@ export class TestState {
         return position <= editStart ? position : position < editEnd ? -1 : position + length - +(editEnd - editStart);
     }
 
-    private _analyze() {
+    public analyze() {
         while (this.program.analyze()) {
             // Continue to call analyze until it completes. Since we're not
             // specifying a timeout, it should complete the first time.
@@ -1799,6 +1704,7 @@ export class TestState {
                     errors: diagnostics.filter((diag) => diag.category === DiagnosticCategory.Error),
                     warnings: diagnostics.filter((diag) => diag.category === DiagnosticCategory.Warning),
                     information: diagnostics.filter((diag) => diag.category === DiagnosticCategory.Information),
+                    unused: diagnostics.filter((diag) => diag.category === DiagnosticCategory.UnusedCode),
                 };
                 return [filePath, value] as [string, typeof value];
             } else {
@@ -1806,12 +1712,13 @@ export class TestState {
             }
         });
 
-        return new Map<string, typeof results[0][1]>(results);
+        return new Map<string, (typeof results)[0][1]>(results);
     }
 
     private _createAnalysisService(
         nullConsole: ConsoleInterface,
         importResolverFactory: ImportResolverFactory,
+        backgroundAnalysisProgramFactory: BackgroundAnalysisProgramFactory,
         configOptions: ConfigOptions
     ) {
         // we do not initiate automatic analysis or file watcher in test.
@@ -1819,6 +1726,7 @@ export class TestState {
             console: nullConsole,
             hostFactory: () => testAccessHost,
             importResolverFactory,
+            backgroundAnalysisProgramFactory,
             configOptions,
         });
 
@@ -1941,14 +1849,25 @@ export class TestState {
         }
 
         if (expected.commitCharacters !== undefined) {
-            expect(expected.commitCharacters.sort()).toEqual(actual.commitCharacters?.sort());
+            expect(expected.commitCharacters.sort()).toEqual(actual.commitCharacters?.sort() ?? []);
         }
     }
 }
 
-export function parseAndGetTestState(code: string, projectRoot = '/', anonymousFileName = 'unnamedFile.py') {
+export function parseAndGetTestState(
+    code: string,
+    projectRoot = '/',
+    anonymousFileName = 'unnamedFile.py',
+    testFS?: vfs.TestFileSystem
+) {
     const data = parseTestData(normalizeSlashes(projectRoot), code, anonymousFileName);
-    const state = new TestState(normalizeSlashes('/'), data);
+    const state = new TestState(
+        normalizeSlashes('/'),
+        data,
+        /* mountPath */ undefined,
+        /* hostSpecificFeatures */ undefined,
+        testFS
+    );
 
     return { data, state };
 }
@@ -1987,38 +1906,4 @@ export function getNodeAtMarker(codeOrState: string | TestState, markerName = 'm
     assert(node);
 
     return node;
-}
-
-export function createVfsInfoFromFourSlashData(projectRoot: string, testData: FourSlashData) {
-    const metaProjectRoot = testData.globalOptions[GlobalMetadataOptionNames.projectRoot];
-    projectRoot = metaProjectRoot ? combinePaths(projectRoot, metaProjectRoot) : projectRoot;
-
-    const ignoreCase = toBoolean(testData.globalOptions[GlobalMetadataOptionNames.ignoreCase]);
-
-    let rawConfigJson = '';
-    const sourceFileNames: string[] = [];
-    const files: vfs.FileSet = {};
-
-    for (const file of testData.files) {
-        // if one of file is configuration file, set config options from the given json
-        if (isConfig(file, ignoreCase)) {
-            try {
-                rawConfigJson = JSONC.parse(file.content);
-            } catch (e: any) {
-                throw new Error(`Failed to parse test ${file.fileName}: ${e.message}`);
-            }
-        } else {
-            files[file.fileName] = new vfs.File(file.content, { meta: file.fileOptions, encoding: 'utf8' });
-
-            if (!toBoolean(file.fileOptions[MetadataOptionNames.library])) {
-                sourceFileNames.push(file.fileName);
-            }
-        }
-    }
-    return { files, sourceFileNames, projectRoot, ignoreCase, rawConfigJson };
-}
-
-function isConfig(file: FourSlashFile, ignoreCase: boolean): boolean {
-    const comparer = getStringComparer(ignoreCase);
-    return configFileNames.some((f) => comparer(getBaseFileName(file.fileName), f) === Comparison.EqualTo);
 }

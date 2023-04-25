@@ -9,11 +9,11 @@ def my_cool_function(a: str) -> str:
 #               > ) -> str:
 #               > ```
 #                    ^ definition  snapshot-util 0.1 `src.single_function`/my_cool_function().(a)
-#                       ^^^ reference  python-stdlib 3.10 builtins/str#
+#                       ^^^ reference  python-stdlib 3.11 builtins/str#
 #                       external documentation ```python
 #                                   > (class) str
 #                                   > ```
-#                               ^^^ reference  python-stdlib 3.10 builtins/str#
+#                               ^^^ reference  python-stdlib 3.11 builtins/str#
     x = ", world"
 #   ^ definition local 0
 #   documentation ```python
@@ -31,7 +31,7 @@ def my_cool_function_2(a: str):
 #               > ):
 #               > ```
 #                      ^ definition  snapshot-util 0.1 `src.single_function`/my_cool_function_2().(a)
-#                         ^^^ reference  python-stdlib 3.10 builtins/str#
+#                         ^^^ reference  python-stdlib 3.11 builtins/str#
     x = ", world"
 #   ^ definition local 1
 #   documentation ```python

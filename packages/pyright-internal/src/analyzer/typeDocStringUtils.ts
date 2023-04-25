@@ -32,6 +32,7 @@ import {
     Type,
     TypeCategory,
 } from '../analyzer/types';
+import { addIfNotNull } from '../common/collectionUtils';
 import { ModuleNode, ParseNodeType } from '../parser/parseNodes';
 import { TypeEvaluator } from './typeEvaluatorTypes';
 import {
@@ -131,7 +132,7 @@ export function getOverloadedFunctionDocStringsInherited(
 
         for (const classMember of memberIterator) {
             const inheritedDecl = classMember.symbol.getDeclarations().slice(-1)[0];
-            const declType = evaluator.getTypeForDeclaration(inheritedDecl);
+            const declType = evaluator.getTypeForDeclaration(inheritedDecl)?.type;
             if (declType) {
                 docStrings = _getOverloadedFunctionDocStrings(declType, inheritedDecl, sourceMapper);
                 if (docStrings && docStrings.length > 0) {
@@ -179,6 +180,32 @@ export function getVariableInStubFileDocStrings(decl: VariableDeclaration, sourc
     return docStrings;
 }
 
+export function getModuleDocStringFromModuleNodes(modules: ModuleNode[]): string | undefined {
+    for (const module of modules) {
+        if (module.statements) {
+            const docString = ParseTreeUtils.getDocString(module.statements);
+            if (docString) {
+                return docString;
+            }
+        }
+    }
+
+    return undefined;
+}
+
+export function getModuleDocStringFromPaths(filePaths: string[], sourceMapper: SourceMapper) {
+    const modules: ModuleNode[] = [];
+    for (const filePath of filePaths) {
+        if (isStubFile(filePath)) {
+            addIfNotNull(modules, sourceMapper.getModuleNode(filePath));
+        }
+
+        modules.push(...sourceMapper.findModules(filePath));
+    }
+
+    return getModuleDocStringFromModuleNodes(modules);
+}
+
 export function getModuleDocString(
     type: ModuleType,
     resolvedDecl: DeclarationBase | undefined,
@@ -186,10 +213,8 @@ export function getModuleDocString(
 ) {
     let docString = type.docString;
     if (!docString) {
-        if (resolvedDecl && isStubFile(resolvedDecl.path)) {
-            const modules = sourceMapper.findModules(resolvedDecl.path);
-            docString = _getModuleNodeDocString(modules);
-        }
+        const filePath = resolvedDecl?.path ?? type.filePath;
+        docString = getModuleDocStringFromPaths([filePath], sourceMapper);
     }
 
     return docString;
@@ -290,7 +315,7 @@ function _getPropertyDocStringInherited(
         return;
     }
 
-    const declaredType = evaluator.getTypeForDeclaration(decl);
+    const declaredType = evaluator.getTypeForDeclaration(decl)?.type;
     if (!declaredType || !isMaybeDescriptorInstance(declaredType)) {
         return;
     }
@@ -313,7 +338,7 @@ function _getPropertyDocStringInherited(
         if (decls) {
             for (const decl of decls) {
                 if (isFunctionDeclaration(decl)) {
-                    const declaredType = evaluator.getTypeForDeclaration(decl);
+                    const declaredType = evaluator.getTypeForDeclaration(decl)?.type;
                     if (declaredType && isMaybeDescriptorInstance(declaredType)) {
                         const docString = _getFunctionDocStringFromDeclaration(decl, sourceMapper);
                         if (docString) {
@@ -360,19 +385,6 @@ function _getFunctionOrClassDeclsDocString(decls: FunctionDeclaration[] | ClassD
         const docString = getFunctionOrClassDeclDocString(decl);
         if (docString) {
             return docString;
-        }
-    }
-
-    return undefined;
-}
-
-function _getModuleNodeDocString(modules: ModuleNode[]): string | undefined {
-    for (const module of modules) {
-        if (module.statements) {
-            const docString = ParseTreeUtils.getDocString(module.statements);
-            if (docString) {
-                return docString;
-            }
         }
     }
 

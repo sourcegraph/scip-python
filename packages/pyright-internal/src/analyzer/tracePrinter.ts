@@ -3,7 +3,7 @@
  * Copyright (c) Microsoft Corporation.
  * Licensed under the MIT license.
  *
- * Converts various types into a string representation.
+ * Converts various types into string representations.
  */
 
 import { isNumber, isString } from '../common/core';
@@ -50,7 +50,7 @@ export function createTracePrinter(roots: string[]): TracePrinter {
                 }
 
                 return filePathOrModule;
-            } else {
+            } else if (filePathOrModule.nameParts) {
                 return filePathOrModule.nameParts.join('.');
             }
         }
@@ -260,7 +260,8 @@ export function createTracePrinter(roots: string[]): TracePrinter {
             return printType(o as Type);
         }
 
-        assertNever(o);
+        // Do nothing, we can't print it.
+        return '';
     }
 
     return {

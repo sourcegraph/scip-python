@@ -10,6 +10,7 @@
 
 import * as assert from 'assert';
 
+import { findNodeByOffset, getFirstAncestorOrSelfOfKind } from '../analyzer/parseTreeUtils';
 import { DiagnosticSink } from '../common/diagnosticSink';
 import { TextRange } from '../common/textRange';
 import { ParseNodeType, StatementListNode } from '../parser/parseNodes';
@@ -68,9 +69,9 @@ test('ExpressionWrappedInParens', () => {
     const statementList = parseResults.parseTree.statements[0] as StatementListNode;
     assert.equal(statementList.statements.length, 1);
 
-    // length of node should exclude parens
+    // length of node should include parens
     assert.equal(statementList.statements[0].nodeType, ParseNodeType.Name);
-    assert.equal(statementList.statements[0].length, 3);
+    assert.equal(statementList.statements[0].length, 5);
 });
 
 test('MaxParseDepth1', () => {
@@ -96,4 +97,31 @@ test('ModuleName range', () => {
 
     assert.strictEqual(node.start, expectedRange?.pos);
     assert.strictEqual(TextRange.getEnd(node), expectedRange?.end);
+});
+
+test('ParserRecovery1', () => {
+    const diagSink = new DiagnosticSink();
+    const parseResults = TestUtils.parseSampleFile('parserRecovery1.py', diagSink).parseResults;
+
+    const node = findNodeByOffset(parseResults.parseTree, parseResults.text.length - 2);
+    const functionNode = getFirstAncestorOrSelfOfKind(node, ParseNodeType.Function);
+    assert.equal(functionNode!.parent!.nodeType, ParseNodeType.Module);
+});
+
+test('ParserRecovery2', () => {
+    const diagSink = new DiagnosticSink();
+    const parseResults = TestUtils.parseSampleFile('parserRecovery2.py', diagSink).parseResults;
+
+    const node = findNodeByOffset(parseResults.parseTree, parseResults.text.length - 2);
+    const functionNode = getFirstAncestorOrSelfOfKind(node, ParseNodeType.Function);
+    assert.equal(functionNode!.parent!.nodeType, ParseNodeType.Suite);
+});
+
+test('ParserRecovery3', () => {
+    const diagSink = new DiagnosticSink();
+    const parseResults = TestUtils.parseSampleFile('parserRecovery3.py', diagSink).parseResults;
+
+    const node = findNodeByOffset(parseResults.parseTree, parseResults.text.length - 2);
+    const functionNode = getFirstAncestorOrSelfOfKind(node, ParseNodeType.Function);
+    assert.equal(functionNode!.parent!.nodeType, ParseNodeType.Module);
 });

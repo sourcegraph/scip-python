@@ -88,7 +88,7 @@ class TrackedImportFrom extends TrackedImport {
 }
 
 class ImportSymbolWalker extends ParseTreeWalker {
-    constructor(private _accessedImportedSymbols: Map<string, boolean>, private _treatStringsAsSymbols: boolean) {
+    constructor(private _accessedImportedSymbols: Set<string>, private _treatStringsAsSymbols: boolean) {
         super();
     }
 
@@ -103,7 +103,7 @@ class ImportSymbolWalker extends ParseTreeWalker {
     }
 
     override visitName(node: NameNode) {
-        this._accessedImportedSymbols.set(node.value, true);
+        this._accessedImportedSymbols.add(node.value);
         return true;
     }
 
@@ -111,7 +111,7 @@ class ImportSymbolWalker extends ParseTreeWalker {
         const baseExpression = this._getRecursiveModuleAccessExpression(node.leftExpression);
 
         if (baseExpression) {
-            this._accessedImportedSymbols.set(`${baseExpression}.${node.memberName.value}`, true);
+            this._accessedImportedSymbols.add(`${baseExpression}.${node.memberName.value}`);
         }
 
         return true;
@@ -119,7 +119,7 @@ class ImportSymbolWalker extends ParseTreeWalker {
 
     override visitString(node: StringNode) {
         if (this._treatStringsAsSymbols) {
-            this._accessedImportedSymbols.set(node.value, true);
+            this._accessedImportedSymbols.add(node.value);
         }
 
         return true;
@@ -156,7 +156,7 @@ export class TypeStubWriter extends ParseTreeWalker {
     private _emitDocString = true;
     private _trackedImportAs = new Map<string, TrackedImportAs>();
     private _trackedImportFrom = new Map<string, TrackedImportFrom>();
-    private _accessedImportedSymbols = new Map<string, boolean>();
+    private _accessedImportedSymbols = new Set<string>();
 
     constructor(private _stubPath: string, private _sourceFile: SourceFile, private _evaluator: TypeEvaluator) {
         super();
@@ -289,7 +289,7 @@ export class TypeStubWriter extends ParseTreeWalker {
                     let returnType = this._evaluator.getFunctionInferredReturnType(functionType.functionType);
                     returnType = removeUnknownFromUnion(returnType);
                     if (!isNever(returnType) && !isUnknown(returnType)) {
-                        line += ` # -> ${this._evaluator.printType(returnType, /* expandTypeAlias */ false)}:`;
+                        line += ` # -> ${this._evaluator.printType(returnType)}:`;
                     }
                 }
             }
@@ -324,6 +324,9 @@ export class TypeStubWriter extends ParseTreeWalker {
     override visitTry(node: TryNode) {
         // Don't emit a doc string after the first statement.
         this._emitDocString = false;
+
+        // Only walk a single branch of the try/catch to for imports.
+        this.walk(node.trySuite);
         return false;
     }
 
@@ -638,6 +641,11 @@ export class TypeStubWriter extends ParseTreeWalker {
             line += this._printExpression(node.boundExpression);
         }
 
+        if (node.defaultExpression) {
+            line += ' = ';
+            line += this._printExpression(node.defaultExpression);
+        }
+
         return line;
     }
 
@@ -705,7 +713,7 @@ export class TypeStubWriter extends ParseTreeWalker {
 
         // Emit the "import" statements.
         this._trackedImportAs.forEach((imp) => {
-            if (this._accessedImportedSymbols.get(imp.alias || imp.importName)) {
+            if (this._accessedImportedSymbols.has(imp.alias || imp.importName)) {
                 imp.isAccessed = true;
             }
 
@@ -722,7 +730,7 @@ export class TypeStubWriter extends ParseTreeWalker {
         // Emit the "import from" statements.
         this._trackedImportFrom.forEach((imp) => {
             imp.symbols.forEach((s) => {
-                if (this._accessedImportedSymbols.get(s.alias || s.name)) {
+                if (this._accessedImportedSymbols.has(s.alias || s.name)) {
                     s.isAccessed = true;
                 }
             });

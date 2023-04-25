@@ -8,21 +8,24 @@
  */
 
 import * as AnalyzerNodeInfo from '../analyzer/analyzerNodeInfo';
+import { containsOnlyWhitespace } from '../common/core';
 import { assert, assertNever, fail } from '../common/debug';
 import { convertPositionToOffset, convertTextRangeToRange } from '../common/positionUtils';
 import { Position, Range } from '../common/textRange';
 import { TextRange } from '../common/textRange';
-import { TextRangeCollection } from '../common/textRangeCollection';
+import { getIndexContaining, TextRangeCollection } from '../common/textRangeCollection';
 import {
     ArgumentCategory,
     ArgumentNode,
     AssignmentExpressionNode,
     CallNode,
     ClassNode,
+    DecoratorNode,
     EvaluationScopeNode,
     ExecutionScopeNode,
     ExpressionNode,
     FunctionNode,
+    ImportFromNode,
     IndexNode,
     isExpressionNode,
     LambdaNode,
@@ -41,10 +44,12 @@ import {
     TypeAnnotationNode,
     TypeParameterScopeNode,
 } from '../parser/parseNodes';
+import { ParseResults } from '../parser/parser';
+import * as StringTokenUtils from '../parser/stringTokenUtils';
 import { TokenizerOutput } from '../parser/tokenizer';
 import { KeywordType, OperatorType, StringToken, StringTokenFlags, Token, TokenType } from '../parser/tokenizerTypes';
 import { getScope } from './analyzerNodeInfo';
-import { ParseTreeWalker } from './parseTreeWalker';
+import { getChildNodes, ParseTreeWalker } from './parseTreeWalker';
 
 export const enum PrintExpressionFlags {
     None = 0,
@@ -91,27 +96,46 @@ export function findNodeByOffset(node: ParseNode, offset: number): ParseNode | u
         return undefined;
     }
 
-    const parseTreeWalker = new ParseTreeWalker();
-
     // The range is found within this node. See if we can localize it
     // further by checking its children.
-    const children = parseTreeWalker.visitNode(node);
-    for (const child of children) {
-        if (child) {
-            const containingChild = findNodeByOffset(child, offset);
-            if (containingChild) {
-                // For augmented assignments, prefer the dest expression, which is a clone
-                // of the left expression but is used to hold the type of the operation result.
-                if (node.nodeType === ParseNodeType.AugmentedAssignment && containingChild === node.leftExpression) {
-                    return node.destExpression;
-                }
+    let children = getChildNodes(node);
+    if (isCompliantWithNodeRangeRules(node) && children.length > 20) {
+        // Use binary search to find the child to visit. This should be helpful
+        // when there are many siblings, such as statements in a module/suite
+        // or expressions in a list, etc. Otherwise, we will have to traverse
+        // every sibling before finding the correct one.
+        const index = getIndexContaining(children, offset);
+        if (index >= 0) {
+            children = [children[index]];
+        }
+    }
 
-                return containingChild;
+    for (const child of children) {
+        if (!child) {
+            continue;
+        }
+
+        const containingChild = findNodeByOffset(child, offset);
+        if (containingChild) {
+            // For augmented assignments, prefer the dest expression, which is a clone
+            // of the left expression but is used to hold the type of the operation result.
+            if (node.nodeType === ParseNodeType.AugmentedAssignment && containingChild === node.leftExpression) {
+                return node.destExpression;
             }
+
+            return containingChild;
         }
     }
 
     return node;
+}
+
+export function isCompliantWithNodeRangeRules(node: ParseNode) {
+    // ParseNode range rules are
+    // 1. Children are all contained within the parent.
+    // 2. Children have non-overlapping ranges.
+    // 3. Children are listed in increasing order.
+    return node.nodeType !== ParseNodeType.Assignment && node.nodeType !== ParseNodeType.StringList;
 }
 
 export function getClassFullName(classNode: ParseNode, moduleName: string, className: string): string {
@@ -512,6 +536,25 @@ export function printOperator(operator: OperatorType): string {
     }
 
     return 'unknown';
+}
+
+// If the name node is the LHS of a call expression or is a member
+// name in the LHS of a call expression, returns the call node.
+export function getCallForName(node: NameNode): CallNode | undefined {
+    if (node.parent?.nodeType === ParseNodeType.Call && node.parent.leftExpression === node) {
+        return node.parent;
+    }
+
+    if (
+        node.parent?.nodeType === ParseNodeType.MemberAccess &&
+        node.parent.memberName === node &&
+        node.parent.parent?.nodeType === ParseNodeType.Call &&
+        node.parent.parent.leftExpression === node.parent
+    ) {
+        return node.parent.parent;
+    }
+
+    return undefined;
 }
 
 export function getEnclosingSuite(node: ParseNode): SuiteNode | undefined {
@@ -918,6 +961,15 @@ export function isClassVarAllowedForAssignmentTarget(targetNode: ExpressionNode)
     return true;
 }
 
+export function isRequiredAllowedForAssignmentTarget(targetNode: ExpressionNode): boolean {
+    const classNode = getEnclosingClass(targetNode, /* stopAtFunction */ true);
+    if (!classNode) {
+        return false;
+    }
+
+    return true;
+}
+
 export function isNodeContainedWithin(node: ParseNode, potentialContainer: ParseNode): boolean {
     let curNode: ParseNode | undefined = node;
     while (curNode) {
@@ -983,13 +1035,6 @@ export function getParentAnnotationNode(node: ExpressionNode): ExpressionNode | 
         if (curNode.nodeType === ParseNodeType.FunctionAnnotation) {
             if (prevNode === curNode.returnTypeAnnotation || curNode.paramTypeAnnotations.some((p) => p === prevNode)) {
                 assert(!prevNode || isExpressionNode(prevNode));
-                return prevNode;
-            }
-            return undefined;
-        }
-
-        if (curNode.nodeType === ParseNodeType.StringList) {
-            if (prevNode === curNode.typeAnnotation) {
                 return prevNode;
             }
             return undefined;
@@ -1505,7 +1550,7 @@ export function getCallNodeAndActiveParameterIndex(
     while (curNode !== undefined) {
         // make sure we only look at callNodes when we are inside their arguments
         if (curNode.nodeType === ParseNodeType.Call) {
-            if (isOffsetInsideCallArgs(curNode, insertionOffset)) {
+            if (isOffsetInsideCallArgs(tokens, curNode, insertionOffset)) {
                 callNode = curNode;
                 break;
             }
@@ -1580,19 +1625,77 @@ export function getCallNodeAndActiveParameterIndex(
         activeOrFake,
     };
 
-    function isOffsetInsideCallArgs(node: CallNode, offset: number) {
-        let found = true;
+    function isOffsetInsideCallArgs(tokens: TextRangeCollection<Token>, node: CallNode, offset: number) {
         const argumentStart =
             node.leftExpression.length > 0 ? TextRange.getEnd(node.leftExpression) - 1 : node.leftExpression.start;
-        const index = tokens.getItemAtPosition(argumentStart);
-        if (index >= 0 && index + 1 < tokens.count) {
-            const token = tokens.getItemAt(index + 1);
-            if (token.type === TokenType.OpenParenthesis && insertionOffset < TextRange.getEnd(token)) {
-                // position must be after '('
-                found = false;
+
+        // Handle obvious case first.
+        const callEndOffset = TextRange.getEnd(node);
+        if (offset < argumentStart || callEndOffset < offset) {
+            return false;
+        }
+
+        if (node.arguments.length > 0) {
+            const start = node.arguments[0].start;
+            const end = TextRange.getEnd(node.arguments[node.arguments.length - 1]);
+            if (start <= offset && offset < end) {
+                return true;
             }
         }
-        return found;
+
+        const index = tokens.getItemAtPosition(argumentStart);
+        if (index < 0 || tokens.count <= index) {
+            // Somehow, we can't get token. To be safe, we will allow
+            // signature help to show up.
+            return true;
+        }
+
+        const token = tokens.getItemAt(index);
+        if (
+            token.type === TokenType.String &&
+            (token as StringToken).flags & StringTokenFlags.Format &&
+            TextRange.contains(token, offset)
+        ) {
+            // tokenizer won't tokenize format string segments. We get one token
+            // for the whole format string. We need to dig in.
+            const stringToken = token as StringToken;
+            const result = StringTokenUtils.getUnescapedString(stringToken);
+            const offsetInSegment = offset - stringToken.start - stringToken.prefixLength - stringToken.quoteMarkLength;
+            const segment = result.formatStringSegments.find(
+                (s) => s.offset <= offsetInSegment && offsetInSegment < s.offset + s.length
+            );
+            if (!segment || !segment.isExpression) {
+                // Just to be safe, allow signature help.
+                return true;
+            }
+
+            const length = Math.min(
+                segment.length,
+                callEndOffset -
+                    stringToken.start -
+                    stringToken.prefixLength -
+                    stringToken.quoteMarkLength -
+                    segment.offset
+            );
+
+            for (let i = offsetInSegment - segment.offset; i < length; i++) {
+                const ch = segment.value[i];
+                if (ch === '(') {
+                    // position must be after '('
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        const nextToken = tokens.getItemAt(index + 1);
+        if (nextToken.type === TokenType.OpenParenthesis && offset < TextRange.getEnd(nextToken)) {
+            // position must be after '('
+            return false;
+        }
+
+        return true;
     }
 }
 
@@ -1639,7 +1742,7 @@ export function getTokenAtLeft(
     return tokens.getItemAt(index);
 }
 
-function isWhitespace(token: Token) {
+export function isWhitespace(token: Token) {
     return token.type === TokenType.NewLine || token.type === TokenType.Indent || token.type === TokenType.Dedent;
 }
 
@@ -2132,6 +2235,31 @@ export function getDottedNameWithGivenNodeAsLastName(node: NameNode): MemberAcce
     return node.parent;
 }
 
+//
+// Returns the dotted name that makes up the expression for the decorator.
+// Example:
+// @pytest.fixture()
+// def my_fixture():
+//    pass
+//
+// would return `pytest.fixture`
+export function getDecoratorName(decorator: DecoratorNode): string | undefined {
+    function getExpressionName(node: ExpressionNode): string | undefined {
+        if (node.nodeType === ParseNodeType.Name || node.nodeType === ParseNodeType.MemberAccess) {
+            return getDottedName(node)
+                ?.map((n) => n.value)
+                .join('.');
+        }
+        if (node.nodeType === ParseNodeType.Call) {
+            return getExpressionName(node.leftExpression);
+        }
+
+        return undefined;
+    }
+
+    return getExpressionName(decorator.expression);
+}
+
 export function getDottedName(node: MemberAccessNode | NameNode): NameNode[] | undefined {
     // ex) [a] or [a].b
     // simple case, [a]
@@ -2225,26 +2353,53 @@ export function getStringValueRange(token: StringToken) {
     return TextRange.create(token.start + length, token.length - length - (hasEnding ? length : 0));
 }
 
-export function getFullStatementRange(statementNode: ParseNode, tokenizerOutput: TokenizerOutput): Range {
+export function getFullStatementRange(
+    statementNode: ParseNode,
+    parseResults: ParseResults,
+    options?: { includeTrailingBlankLines: boolean }
+): Range {
+    const tokenizerOutput = parseResults.tokenizerOutput;
     const range = convertTextRangeToRange(statementNode, tokenizerOutput.lines);
 
+    const start = _getStartPositionIfMultipleStatementsAreOnSameLine(range, statementNode.start, tokenizerOutput) ?? {
+        line: range.start.line,
+        character: 0,
+    };
+
     // First, see whether there are other tokens except semicolon or new line on the same line.
-    const endPosition = _getEndPositionIfMultipleStatementsAreOnSameLine(
+    const end = _getEndPositionIfMultipleStatementsAreOnSameLine(
         range,
         TextRange.getEnd(statementNode),
         tokenizerOutput
     );
 
-    if (endPosition) {
-        return { start: range.start, end: endPosition };
+    if (end) {
+        return { start, end };
     }
 
     // If not, delete the whole line.
     if (range.end.line === tokenizerOutput.lines.count - 1) {
-        return range;
+        return { start, end: range.end };
     }
 
-    return { start: range.start, end: { line: range.end.line + 1, character: 0 } };
+    let lineDeltaToAdd = 1;
+    if (options) {
+        if (options.includeTrailingBlankLines) {
+            for (let i = lineDeltaToAdd; range.end.line + i < tokenizerOutput.lines.count; i++) {
+                if (!isBlankLine(parseResults, range.end.line + i)) {
+                    lineDeltaToAdd = i;
+                    break;
+                }
+            }
+        }
+    }
+
+    return { start, end: { line: range.end.line + lineDeltaToAdd, character: 0 } };
+}
+
+export function isBlankLine(parseResults: ParseResults, line: number) {
+    const span = parseResults.tokenizerOutput.lines.getItemAt(line);
+    return containsOnlyWhitespace(parseResults.text, span);
 }
 
 export function isUnannotatedFunction(node: FunctionNode) {
@@ -2254,6 +2409,47 @@ export function isUnannotatedFunction(node: FunctionNode) {
             (param) => param.typeAnnotation === undefined && param.typeAnnotationComment === undefined
         )
     );
+}
+
+// Verifies that an import of the form "from __future__ import x"
+// occurs only at the top of a file. This mirrors the algorithm used
+// in the CPython interpreter.
+export function isValidLocationForFutureImport(node: ImportFromNode): boolean {
+    const module = getModuleNode(node);
+    assert(module);
+
+    let sawDocString = false;
+
+    for (const statement of module.statements) {
+        if (statement.nodeType !== ParseNodeType.StatementList) {
+            return false;
+        }
+
+        for (const simpleStatement of statement.statements) {
+            if (simpleStatement === node) {
+                return true;
+            }
+
+            if (simpleStatement.nodeType === ParseNodeType.StringList) {
+                if (sawDocString) {
+                    return false;
+                }
+                sawDocString = true;
+            } else if (simpleStatement.nodeType === ParseNodeType.ImportFrom) {
+                if (
+                    simpleStatement.module.leadingDots !== 0 ||
+                    simpleStatement.module.nameParts.length !== 1 ||
+                    simpleStatement.module.nameParts[0].value !== '__future__'
+                ) {
+                    return false;
+                }
+            } else {
+                return false;
+            }
+        }
+    }
+
+    return false;
 }
 
 // "Chaining" is when binary operators can be chained together
@@ -2277,6 +2473,55 @@ export function operatorSupportsChaining(op: OperatorType) {
     return false;
 }
 
+// If the statement is a part of multiple statements on the same line
+// and the statement is not the first statement on the line, then it will return
+// appropriate start position. otherwise, return undefined.
+// ex) a = 1; [|b = 1|]
+function _getStartPositionIfMultipleStatementsAreOnSameLine(
+    range: Range,
+    tokenPosition: number,
+    tokenizerOutput: TokenizerOutput
+): Position | undefined {
+    const tokenIndex = tokenizerOutput.tokens.getItemAtPosition(tokenPosition);
+    if (tokenIndex < 0) {
+        return undefined;
+    }
+
+    // Find the last token index on the previous line or the first token.
+    let currentIndex = tokenIndex;
+    for (; currentIndex > 0; currentIndex--) {
+        const token = tokenizerOutput.tokens.getItemAt(currentIndex);
+        const tokenRange = convertTextRangeToRange(token, tokenizerOutput.lines);
+        if (tokenRange.end.line !== range.start.line) {
+            break;
+        }
+    }
+
+    // Find the previous token of the first token of the statement.
+    for (let index = tokenIndex - 1; index > currentIndex; index--) {
+        const token = tokenizerOutput.tokens.getItemAt(index);
+
+        // Eat up indentation
+        if (token.type === TokenType.Indent || token.type === TokenType.Dedent) {
+            continue;
+        }
+
+        // If previous token is new line, use default.
+        if (token.type === TokenType.NewLine) {
+            return undefined;
+        }
+
+        // Anything else (ex, semicolon), use statement start as it is.
+        return range.start;
+    }
+
+    return undefined;
+}
+
+// If the statement is a part of multiple statements on the same line
+// and the statement is not the last statement on the line, then it will return
+// appropriate end position. otherwise, return undefined.
+// ex) [|a = 1|]; b = 1
 function _getEndPositionIfMultipleStatementsAreOnSameLine(
     range: Range,
     tokenPosition: number,
@@ -2287,6 +2532,7 @@ function _getEndPositionIfMultipleStatementsAreOnSameLine(
         return undefined;
     }
 
+    // Find the first token index on the next line or the last token.
     let currentIndex = tokenIndex;
     for (; currentIndex < tokenizerOutput.tokens.count; currentIndex++) {
         const token = tokenizerOutput.tokens.getItemAt(currentIndex);
@@ -2296,9 +2542,12 @@ function _getEndPositionIfMultipleStatementsAreOnSameLine(
         }
     }
 
+    // Find the next token of the last token of the statement.
     let foundStatementEnd = false;
     for (let index = tokenIndex; index < currentIndex; index++) {
         const token = tokenizerOutput.tokens.getItemAt(index);
+
+        // Eat up semicolon or new line.
         if (token.type === TokenType.Semicolon || token.type === TokenType.NewLine) {
             foundStatementEnd = true;
             continue;
@@ -2313,4 +2562,84 @@ function _getEndPositionIfMultipleStatementsAreOnSameLine(
     }
 
     return undefined;
+}
+
+export function getVariableDocStringNode(node: ExpressionNode): StringListNode | undefined {
+    // Walk up the parse tree to find an assignment expression.
+    let curNode: ParseNode | undefined = node;
+    let annotationNode: TypeAnnotationNode | undefined;
+
+    while (curNode) {
+        if (curNode.nodeType === ParseNodeType.Assignment) {
+            break;
+        }
+
+        if (curNode.nodeType === ParseNodeType.TypeAnnotation && !annotationNode) {
+            annotationNode = curNode;
+        }
+
+        curNode = curNode.parent;
+    }
+
+    if (curNode?.nodeType !== ParseNodeType.Assignment) {
+        // Allow a simple annotation statement to have a docstring even
+        // though PEP 258 doesn't mention this case. This PEP pre-dated
+        // PEP 526, so it didn't contemplate this situation.
+        if (annotationNode) {
+            curNode = annotationNode;
+        } else {
+            return undefined;
+        }
+    }
+
+    const parentNode = curNode.parent;
+    if (parentNode?.nodeType !== ParseNodeType.StatementList) {
+        return undefined;
+    }
+
+    const suiteOrModule = parentNode.parent;
+    if (
+        !suiteOrModule ||
+        (suiteOrModule.nodeType !== ParseNodeType.Module && suiteOrModule.nodeType !== ParseNodeType.Suite)
+    ) {
+        return undefined;
+    }
+
+    const assignmentIndex = suiteOrModule.statements.findIndex((node) => node === parentNode);
+    if (assignmentIndex < 0 || assignmentIndex === suiteOrModule.statements.length - 1) {
+        return undefined;
+    }
+
+    const nextStatement = suiteOrModule.statements[assignmentIndex + 1];
+
+    if (nextStatement.nodeType !== ParseNodeType.StatementList || !isDocString(nextStatement)) {
+        return undefined;
+    }
+
+    // See if the assignment is within one of the contexts specified in PEP 258.
+    let isValidContext = false;
+    if (parentNode?.parent?.nodeType === ParseNodeType.Module) {
+        // If we're at the top level of a module, the attribute docstring is valid.
+        isValidContext = true;
+    } else if (
+        parentNode?.parent?.nodeType === ParseNodeType.Suite &&
+        parentNode?.parent?.parent?.nodeType === ParseNodeType.Class
+    ) {
+        // If we're at the top level of a class, the attribute docstring is valid.
+        isValidContext = true;
+    } else {
+        const func = getEnclosingFunction(parentNode);
+
+        // If we're within an __init__ method, the attribute docstring is valid.
+        if (func && func.name.value === '__init__' && getEnclosingClass(func, /* stopAtFunction */ true)) {
+            isValidContext = true;
+        }
+    }
+
+    if (!isValidContext) {
+        return undefined;
+    }
+
+    // A docstring can consist of multiple joined strings in a single expression.
+    return nextStatement.statements[0] as StringListNode;
 }

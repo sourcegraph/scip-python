@@ -736,7 +736,6 @@ export function isExpressionNode(node: ParseNode): node is ExpressionNode {
         case ParseNodeType.FormatString:
         case ParseNodeType.StringList:
         case ParseNodeType.Dictionary:
-        case ParseNodeType.DictionaryExpandEntry:
         case ParseNodeType.List:
         case ParseNodeType.Set:
             return true;
@@ -886,6 +885,7 @@ export interface AssignmentNode extends ParseNodeBase {
     leftExpression: ExpressionNode;
     rightExpression: ExpressionNode;
     typeAnnotationComment?: ExpressionNode | undefined;
+    chainedTypeAnnotationComment?: ExpressionNode | undefined;
 }
 
 export namespace AssignmentNode {
@@ -919,10 +919,16 @@ export interface TypeParameterNode extends ParseNodeBase {
     name: NameNode;
     typeParamCategory: TypeParameterCategory;
     boundExpression?: ExpressionNode;
+    defaultExpression?: ExpressionNode;
 }
 
 export namespace TypeParameterNode {
-    export function create(name: NameNode, typeParamCategory: TypeParameterCategory, boundExpression?: ExpressionNode) {
+    export function create(
+        name: NameNode,
+        typeParamCategory: TypeParameterCategory,
+        boundExpression?: ExpressionNode,
+        defaultExpression?: ExpressionNode
+    ) {
         const node: TypeParameterNode = {
             start: name.start,
             length: name.length,
@@ -931,6 +937,7 @@ export namespace TypeParameterNode {
             name,
             typeParamCategory,
             boundExpression,
+            defaultExpression,
         };
 
         name.parent = node;
@@ -938,6 +945,11 @@ export namespace TypeParameterNode {
         if (boundExpression) {
             boundExpression.parent = node;
             extendRange(node, boundExpression);
+        }
+
+        if (defaultExpression) {
+            defaultExpression.parent = node;
+            extendRange(node, defaultExpression);
         }
 
         return node;

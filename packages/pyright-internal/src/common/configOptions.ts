@@ -14,6 +14,7 @@ import * as pathConsts from '../common/pathConsts';
 import { appendArray } from './collectionUtils';
 import { DiagnosticSeverityOverridesMap } from './commandLineOptions';
 import { ConsoleInterface } from './console';
+import { TaskListToken } from './diagnostic';
 import { DiagnosticRule } from './diagnosticRules';
 import { FileSystem } from './fileSystem';
 import { Host } from './host';
@@ -65,6 +66,11 @@ export class ExecutionEnvironment {
 
 export type DiagnosticLevel = 'none' | 'information' | 'warning' | 'error';
 
+export enum SignatureDisplayType {
+    compact = 'compact',
+    formatted = 'formatted',
+}
+
 export interface DiagnosticRuleSet {
     // Should "Unknown" types be reported as "Any"?
     printUnknownAsAny: boolean;
@@ -91,6 +97,9 @@ export interface DiagnosticRuleSet {
 
     // Use strict inference rules for dictionary expressions?
     strictDictionaryInference: boolean;
+
+    // Analyze functions and methods that have no annotations?
+    analyzeUnannotatedFunctions: boolean;
 
     // Use strict type rules for parameters assigned default of None?
     strictParameterNoneValue: boolean;
@@ -183,6 +192,9 @@ export interface DiagnosticRuleSet {
 
     // Report attempts to redefine variables that are in all-caps.
     reportConstantRedefinition: DiagnosticLevel;
+
+    // Report use of deprecated classes or functions.
+    reportDeprecated: DiagnosticLevel;
 
     // Report usage of method override that is incompatible with
     // the base class method of the same name?
@@ -295,6 +307,12 @@ export interface DiagnosticRuleSet {
     // Report cases where the a "match" statement is not exhaustive in
     // covering all possible cases.
     reportMatchNotExhaustive: DiagnosticLevel;
+
+    // Report files that match stdlib modules.
+    reportShadowedImports: DiagnosticLevel;
+
+    // Report missing @override decorator.
+    reportImplicitOverride: DiagnosticLevel;
 }
 
 export function cloneDiagnosticRuleSet(diagSettings: DiagnosticRuleSet): DiagnosticRuleSet {
@@ -309,6 +327,7 @@ export function getBooleanDiagnosticRules(includeNonOverridable = false) {
         DiagnosticRule.strictListInference,
         DiagnosticRule.strictSetInference,
         DiagnosticRule.strictDictionaryInference,
+        DiagnosticRule.analyzeUnannotatedFunctions,
         DiagnosticRule.strictParameterNoneValue,
     ];
 
@@ -354,6 +373,7 @@ export function getDiagLevelDiagnosticRules() {
         DiagnosticRule.reportTypeCommentUsage,
         DiagnosticRule.reportPrivateImportUsage,
         DiagnosticRule.reportConstantRedefinition,
+        DiagnosticRule.reportDeprecated,
         DiagnosticRule.reportIncompatibleMethodOverride,
         DiagnosticRule.reportIncompatibleVariableOverride,
         DiagnosticRule.reportInconsistentConstructor,
@@ -387,6 +407,8 @@ export function getDiagLevelDiagnosticRules() {
         DiagnosticRule.reportUnusedExpression,
         DiagnosticRule.reportUnnecessaryTypeIgnoreComment,
         DiagnosticRule.reportMatchNotExhaustive,
+        DiagnosticRule.reportShadowedImports,
+        DiagnosticRule.reportImplicitOverride,
     ];
 }
 
@@ -406,6 +428,7 @@ export function getOffDiagnosticRuleSet(): DiagnosticRuleSet {
         strictListInference: false,
         strictSetInference: false,
         strictDictionaryInference: false,
+        analyzeUnannotatedFunctions: true,
         strictParameterNoneValue: true,
         enableTypeIgnoreComments: true,
         reportGeneralTypeIssues: 'none',
@@ -436,6 +459,7 @@ export function getOffDiagnosticRuleSet(): DiagnosticRuleSet {
         reportTypeCommentUsage: 'none',
         reportPrivateImportUsage: 'none',
         reportConstantRedefinition: 'none',
+        reportDeprecated: 'none',
         reportIncompatibleMethodOverride: 'none',
         reportIncompatibleVariableOverride: 'none',
         reportInconsistentConstructor: 'none',
@@ -469,6 +493,8 @@ export function getOffDiagnosticRuleSet(): DiagnosticRuleSet {
         reportUnusedExpression: 'none',
         reportUnnecessaryTypeIgnoreComment: 'none',
         reportMatchNotExhaustive: 'none',
+        reportShadowedImports: 'none',
+        reportImplicitOverride: 'none',
     };
 
     return diagSettings;
@@ -484,6 +510,7 @@ export function getBasicDiagnosticRuleSet(): DiagnosticRuleSet {
         strictListInference: false,
         strictSetInference: false,
         strictDictionaryInference: false,
+        analyzeUnannotatedFunctions: true,
         strictParameterNoneValue: true,
         enableTypeIgnoreComments: true,
         reportGeneralTypeIssues: 'error',
@@ -514,6 +541,7 @@ export function getBasicDiagnosticRuleSet(): DiagnosticRuleSet {
         reportTypeCommentUsage: 'none',
         reportPrivateImportUsage: 'error',
         reportConstantRedefinition: 'none',
+        reportDeprecated: 'none',
         reportIncompatibleMethodOverride: 'none',
         reportIncompatibleVariableOverride: 'none',
         reportInconsistentConstructor: 'none',
@@ -547,6 +575,8 @@ export function getBasicDiagnosticRuleSet(): DiagnosticRuleSet {
         reportUnusedExpression: 'warning',
         reportUnnecessaryTypeIgnoreComment: 'none',
         reportMatchNotExhaustive: 'none',
+        reportShadowedImports: 'none',
+        reportImplicitOverride: 'none',
     };
 
     return diagSettings;
@@ -562,6 +592,7 @@ export function getStrictDiagnosticRuleSet(): DiagnosticRuleSet {
         strictListInference: true,
         strictSetInference: true,
         strictDictionaryInference: true,
+        analyzeUnannotatedFunctions: true,
         strictParameterNoneValue: true,
         enableTypeIgnoreComments: true, // Not overridden by strict mode
         reportGeneralTypeIssues: 'error',
@@ -592,6 +623,7 @@ export function getStrictDiagnosticRuleSet(): DiagnosticRuleSet {
         reportTypeCommentUsage: 'error',
         reportPrivateImportUsage: 'error',
         reportConstantRedefinition: 'error',
+        reportDeprecated: 'error',
         reportIncompatibleMethodOverride: 'error',
         reportIncompatibleVariableOverride: 'error',
         reportInconsistentConstructor: 'error',
@@ -625,9 +657,21 @@ export function getStrictDiagnosticRuleSet(): DiagnosticRuleSet {
         reportUnusedExpression: 'error',
         reportUnnecessaryTypeIgnoreComment: 'none',
         reportMatchNotExhaustive: 'error',
+        reportShadowedImports: 'none',
+        reportImplicitOverride: 'none',
     };
 
     return diagSettings;
+}
+
+export function matchFileSpecs(configOptions: ConfigOptions, filePath: string, isFile = true) {
+    for (const includeSpec of configOptions.include) {
+        if (FileSpec.matchIncludeFileSpec(includeSpec.regExp, configOptions.exclude, filePath, isFile)) {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 // Internal configuration options. These are derived from a combination
@@ -637,6 +681,7 @@ export class ConfigOptions {
         this.projectRoot = projectRoot;
         this.typeCheckingMode = typeCheckingMode;
         this.diagnosticRuleSet = ConfigOptions.getDiagnosticRuleSet(typeCheckingMode);
+        this.functionSignatureDisplay = SignatureDisplayType.formatted;
     }
 
     // Absolute directory of project. All relative paths in the config
@@ -709,14 +754,15 @@ export class ConfigOptions {
     // Was this config initialized from JSON (pyrightconfig/pyproject)?
     initializedFromJson = false;
 
-    // Should we skip analysis of all functions and methods that have
-    // no parameter ore return type annotations?
-    analyzeUnannotatedFunctions = true;
-
     //---------------------------------------------------------------
     // Diagnostics Rule Set
 
     diagnosticRuleSet: DiagnosticRuleSet;
+
+    //---------------------------------------------------------------
+    // TaskList tokens used by diagnostics
+
+    taskListTokens?: TaskListToken[] | undefined;
 
     //---------------------------------------------------------------
     // Parsing and Import Resolution Settings
@@ -755,6 +801,9 @@ export class ConfigOptions {
     // When a symbol cannot be resolved from an import, should it be
     // treated as Any rather than Unknown?
     evaluateUnknownImportsAsAny?: boolean;
+
+    // Controls how hover and completion function signatures are displayed.
+    functionSignatureDisplay: SignatureDisplayType;
 
     static getDiagnosticRuleSet(typeCheckingMode?: string): DiagnosticRuleSet {
         if (typeCheckingMode === 'strict') {
@@ -1126,6 +1175,20 @@ export class ConfigOptions {
                 this.typeEvaluationTimeThreshold = configObj.typeEvaluationTimeThreshold;
             }
         }
+
+        // Read the "functionSignatureDisplay" setting.
+        if (configObj.functionSignatureDisplay !== undefined) {
+            if (typeof configObj.functionSignatureDisplay !== 'string') {
+                console.error(`Config "functionSignatureDisplay" field must be true or false.`);
+            } else {
+                if (
+                    configObj.functionSignatureDisplay === 'compact' ||
+                    configObj.functionSignatureDisplay === 'formatted'
+                ) {
+                    this.functionSignatureDisplay = configObj.functionSignatureDisplay as SignatureDisplayType;
+                }
+            }
+        }
     }
 
     ensureDefaultPythonPlatform(host: Host, console: ConsoleInterface) {
@@ -1137,7 +1200,7 @@ export class ConfigOptions {
 
         this.defaultPythonPlatform = host.getPythonPlatform();
         if (this.defaultPythonPlatform !== undefined) {
-            console.info(`Assuming Python platform ${this.defaultPythonPlatform}`);
+            console.log(`Assuming Python platform ${this.defaultPythonPlatform}`);
         }
     }
 

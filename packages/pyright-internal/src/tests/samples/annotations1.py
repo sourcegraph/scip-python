@@ -3,6 +3,7 @@
 
 from typing import Optional, Type, Union
 import uuid
+from datetime import datetime
 
 
 class ClassA:
@@ -59,7 +60,8 @@ class ClassD:
 
     # This should generate an error because ClassF refers
     # to itself, and there is no ClassF declared at the module
-    # level.
+    # level. It should also generate a second error because
+    # ClassF is a variable and can't be used as an annotation.
     ClassF: "ClassF"
 
     str: "str"
@@ -85,7 +87,7 @@ class ClassG:
 
 class ClassH:
     # This should generate an error because uuid refers to the local
-    # symbol in this case.
+    # symbol in this case, which is a circular reference.
     uuid: uuid.UUID = uuid.uuid4()
 
 
@@ -104,3 +106,11 @@ def func12(x: Type[int]):
     # normal annotation limitations do not apply here.
     print(Union[x, x])
     print(Optional[x])
+
+
+# This should generate an error because foo isn't defined.
+foo: int = foo
+
+
+class ClassJ:
+    datetime: datetime

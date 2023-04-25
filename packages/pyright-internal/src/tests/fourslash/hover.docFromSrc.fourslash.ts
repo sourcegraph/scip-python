@@ -55,29 +55,31 @@
 //// def func2() -> bool: ...
 
 // @filename: test.py
-//// import module1
-//// import module2
+//// import [|/*module1_docs*/module1|] as m1
+//// import [|/*module2_docs*/module2|] as m2
 ////
-//// print([|/*module1_docs*/module1|].[|/*func1_docs*/func1|]())
+//// print([|/*m1_docs*/m1|].[|/*func1_docs*/func1|]())
 ////
-//// a = module1.[|/*a_docs*/A|]()
+//// a = m1.[|/*a_docs*/A|]()
 //// print(a.[|/*method1_docs*/method1|]())
 ////
-//// b = module1.[|/*b_docs*/B|]()
+//// b = m1.[|/*b_docs*/B|]()
 ////
-//// print([|/*module2_docs*/module2|].[|/*func2_docs*/func2|]())
+//// print([|/*m2_docs*/m2|].[|/*func2_docs*/func2|]())
 ////
-//// inner = module1.A.[|/*a_inner_docs*/Inner|]()
+//// inner = m1.A.[|/*a_inner_docs*/Inner|]()
 //// print(inner.[|/*inner_method1_docs*/method1|]())
 
 helper.verifyHover('markdown', {
-    a_docs: '```python\n(class) A()\n```\n---\nA docs',
-    b_docs: '```python\n(class) B()\n```\n---\nB init docs',
-    a_inner_docs: '```python\n(class) Inner()\n```\n---\nA.Inner docs',
-    func1_docs: '```python\n(function) func1: () -> bool\n```\n---\nfunc1 docs',
-    func2_docs: '```python\n(function) func2: () -> bool\n```\n---\nfunc2 docs',
-    inner_method1_docs: '```python\n(method) method1: () -> bool\n```\n---\nA.Inner.method1 docs',
-    method1_docs: '```python\n(method) method1: () -> bool\n```\n---\nA.method1 docs',
+    a_docs: '```python\nclass A()\n```\n---\nA docs',
+    b_docs: '```python\nclass B()\n```\n---\nB init docs',
+    a_inner_docs: '```python\nclass Inner()\n```\n---\nA.Inner docs',
+    func1_docs: '```python\n(function) def func1() -> bool\n```\n---\nfunc1 docs',
+    func2_docs: '```python\n(function) def func2() -> bool\n```\n---\nfunc2 docs',
+    inner_method1_docs: '```python\n(method) def method1() -> bool\n```\n---\nA.Inner.method1 docs',
+    method1_docs: '```python\n(method) def method1() -> bool\n```\n---\nA.method1 docs',
     module1_docs: '```python\n(module) module1\n```\n---\nmodule1 docs',
     module2_docs: '```python\n(module) module2\n```\n---\nmodule2 docs',
+    m1_docs: '```python\n(module) m1\n```\n---\nmodule1 docs',
+    m2_docs: '```python\n(module) m2\n```\n---\nmodule2 docs',
 });

@@ -44,13 +44,19 @@ _ = {k: x for (k, x) in enumerate(range(10))}
 #                 documentation ```python
 #                             > (variable) x: int
 #                             > ```
-#                       ^^^^^^^^^ reference  python-stdlib 3.10 builtins/enumerate#
+#                       ^^^^^^^^^ reference  python-stdlib 3.11 builtins/enumerate#
 #                       external documentation ```python
-#                                   > (class) enumerate(iterable: Iterable[int...
+#                                   > class enumerate(
+#                                   >     iterable: Iterable[int],
+#                                   >     start: int = ...
+#                                   > )
 #                                   > ```
-#                                 ^^^^^ reference  python-stdlib 3.10 builtins/range#
+#                                 ^^^^^ reference  python-stdlib 3.11 builtins/range#
 #                                 external documentation ```python
-#                                             > (class) range
+#                                             > class range(
+#                                             >     __stop: SupportsIndex,
+#                                             >     /
+#                                             > )
 #                                             > ```
 
 
@@ -69,12 +75,15 @@ for var in asdf:
 #   ^^^ definition  snapshot-util 0.1 comp/var.
 #          ^^^^ reference  snapshot-util 0.1 comp/asdf.
     print(var)
-#   ^^^^^ reference  python-stdlib 3.10 builtins/__init__:print().
+#   ^^^^^ reference  python-stdlib 3.11 builtins/__init__:print().
 #   external documentation ```python
-#               > (function)
-#               > print(*values: object, sep: str | None =...
-#               > 
-#               > print(*values: object, sep: str | None =...
+#               > (function) def print(
+#               >     *values: object,
+#               >     sep: str | None = " ",
+#               >     end: str | None = "\n",
+#               >     file: SupportsWrite[str] | None = No...
+#               >     flush: Literal[False] = False
+#               > ) -> None
 #               > ```
 #         ^^^ reference  snapshot-util 0.1 comp/var.
 

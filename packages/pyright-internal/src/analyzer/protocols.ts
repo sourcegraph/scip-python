@@ -73,7 +73,7 @@ export function assignClassToProtocol(
             return isTypeSame(entry.srcType, srcType) && isTypeSame(entry.destType, destType);
         })
     ) {
-        return true;
+        return !enforceInvariance;
     }
 
     // See if we've already determined that this class is compatible with this protocol.
@@ -150,7 +150,8 @@ function assignClassToProtocolInternal(
     const genericDestTypeVarContext = new TypeVarContext(getTypeVarScopeId(destType));
 
     const selfTypeVarContext = new TypeVarContext(getTypeVarScopeId(destType));
-    populateTypeVarContextForSelfType(selfTypeVarContext, destType, srcType);
+    const noLiteralSrcType = evaluator.stripLiteralValue(srcType) as ClassType;
+    populateTypeVarContextForSelfType(selfTypeVarContext, destType, noLiteralSrcType);
 
     // If the source is a TypedDict, use the _TypedDict placeholder class
     // instead. We don't want to use the TypedDict members for protocol
@@ -165,7 +166,9 @@ function assignClassToProtocolInternal(
     let typesAreConsistent = true;
     const checkedSymbolSet = new Set<string>();
     const srcClassTypeVarContext = buildTypeVarContextFromSpecializedClass(srcType);
-    const assignTypeFlags = containsLiteralType(srcType, /* includeTypeArgs */ true)
+    let assignTypeFlags = flags & AssignTypeFlags.OverloadOverlapCheck;
+
+    assignTypeFlags |= containsLiteralType(srcType, /* includeTypeArgs */ true)
         ? AssignTypeFlags.RetainLiteralsForTypeVar
         : AssignTypeFlags.Default;
 
@@ -228,7 +231,7 @@ function assignClassToProtocolInternal(
                     diag?.addMessage(Localizer.DiagnosticAddendum.protocolMemberMissing().format({ name }));
                     typesAreConsistent = false;
                 } else {
-                    let destMemberType = evaluator.getDeclaredTypeOfSymbol(symbol);
+                    let destMemberType = evaluator.getDeclaredTypeOfSymbol(symbol)?.type;
                     if (destMemberType) {
                         // Partially specialize the type of the symbol based on the MRO class.
                         // We can skip this if it's the dest class because it is already
@@ -246,7 +249,11 @@ function assignClassToProtocolInternal(
                                 evaluator.inferReturnTypeIfNecessary(symbolType);
                             }
 
-                            srcMemberType = partiallySpecializeType(symbolType, srcMemberInfo.classType, srcType);
+                            srcMemberType = partiallySpecializeType(
+                                symbolType,
+                                srcMemberInfo.classType,
+                                noLiteralSrcType
+                            );
                         } else {
                             srcMemberType = UnknownType.create();
                         }
@@ -254,7 +261,7 @@ function assignClassToProtocolInternal(
                         if (isFunction(srcMemberType) || isOverloadedFunction(srcMemberType)) {
                             if (isMemberFromMetaclass) {
                                 const boundSrcFunction = evaluator.bindFunctionToClassOrObject(
-                                    srcType,
+                                    ClassType.cloneAsInstance(srcType),
                                     srcMemberType,
                                     /* memberClass */ undefined,
                                     /* errorNode */ undefined,
@@ -268,7 +275,7 @@ function assignClassToProtocolInternal(
 
                                 if (isFunction(destMemberType) || isOverloadedFunction(destMemberType)) {
                                     const boundDeclaredType = evaluator.bindFunctionToClassOrObject(
-                                        srcType,
+                                        ClassType.cloneAsInstance(srcType),
                                         destMemberType,
                                         /* memberClass */ undefined,
                                         /* errorNode */ undefined,
@@ -423,7 +430,7 @@ function assignClassToProtocolInternal(
                         }
                     }
 
-                    if (symbol.isClassVar() && !srcMemberInfo.symbol.isClassMember()) {
+                    if (symbol.isClassVar() && !srcMemberInfo.symbol.isClassVar()) {
                         diag?.addMessage(Localizer.DiagnosticAddendum.protocolMemberClassVar().format({ name }));
                         typesAreConsistent = false;
                     }
@@ -433,23 +440,42 @@ function assignClassToProtocolInternal(
     });
 
     // If the dest protocol has type parameters, make sure the source type arguments match.
-    if (typesAreConsistent && destType.details.typeParameters.length > 0 && destType.typeArguments) {
+    if (typesAreConsistent && destType.details.typeParameters.length > 0) {
         // Create a specialized version of the protocol defined by the dest and
         // make sure the resulting type args can be assigned.
         const specializedDestProtocol = applySolvedTypeVars(genericDestType, genericDestTypeVarContext) as ClassType;
 
-        if (
-            !evaluator.verifyTypeArgumentsAssignable(
-                destType,
-                specializedDestProtocol,
-                diag,
-                destTypeVarContext,
-                srcTypeVarContext,
-                flags,
-                recursionCount
-            )
+        if (destType.typeArguments) {
+            if (
+                !evaluator.verifyTypeArgumentsAssignable(
+                    destType,
+                    specializedDestProtocol,
+                    diag,
+                    destTypeVarContext,
+                    srcTypeVarContext,
+                    flags,
+                    recursionCount
+                )
+            ) {
+                typesAreConsistent = false;
+            }
+        } else if (
+            destTypeVarContext &&
+            destType.details.typeParameters.length > 0 &&
+            specializedDestProtocol.typeArguments &&
+            !destTypeVarContext.isLocked()
         ) {
-            typesAreConsistent = false;
+            // Populate the typeVar map with type arguments of the source.
+            const srcTypeArgs = specializedDestProtocol.typeArguments;
+            for (let i = 0; i < destType.details.typeParameters.length; i++) {
+                const typeArgType = i < srcTypeArgs.length ? srcTypeArgs[i] : UnknownType.create();
+                destTypeVarContext.setTypeVarType(
+                    destType.details.typeParameters[i],
+                    /* narrowBound */ undefined,
+                    /* narrowBoundNoLiterals */ undefined,
+                    typeArgType
+                );
+            }
         }
     }
 
@@ -494,7 +520,7 @@ export function assignModuleToProtocol(
                     diag?.addMessage(Localizer.DiagnosticAddendum.protocolMemberMissing().format({ name }));
                     typesAreConsistent = false;
                 } else {
-                    let destMemberType = evaluator.getDeclaredTypeOfSymbol(symbol);
+                    let destMemberType = evaluator.getDeclaredTypeOfSymbol(symbol)?.type;
                     if (destMemberType) {
                         destMemberType = partiallySpecializeType(destMemberType, destType);
 

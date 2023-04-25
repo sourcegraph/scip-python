@@ -1,4 +1,5 @@
-# This sample tests error cases associated with the "type" statement.
+# This sample tests error cases associated with the "type" statement
+# introduced in PEP 695.
 
 from typing import Callable
 
@@ -12,7 +13,6 @@ class ClassA[T2]:
 
     type TA4 = int
 
-    # This should generate an error because T2 is in use.
     T2 = 4
 
 
@@ -33,4 +33,16 @@ if 1 < 2:
     type TA7 = int
 else:
     type TA7 = int
+
+
+def func1() -> type[int]:
+    ...
+
+# This should generate an error because a call expression is not
+# allowed in a type alias definition.
+type TA8 = func1()
+
+# This should generate an error because a tuple and index expression is not
+# allowed in a type alias definition.
+type TA9 = (int, str, str)[0]
 

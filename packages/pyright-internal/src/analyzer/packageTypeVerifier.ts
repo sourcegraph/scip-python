@@ -8,7 +8,9 @@
  * that the types are complete.
  */
 
+import { CommandLineOptions } from '../common/commandLineOptions';
 import { ConfigOptions, ExecutionEnvironment } from '../common/configOptions';
+import { NullConsole } from '../common/console';
 import { assert } from '../common/debug';
 import { Diagnostic, DiagnosticAddendum, DiagnosticCategory } from '../common/diagnostic';
 import { FileSystem } from '../common/fileSystem';
@@ -55,7 +57,7 @@ import {
     isPartlyUnknown,
 } from './typeUtils';
 
-type PublicSymbolMap = Map<string, string>;
+type PublicSymbolSet = Set<string>;
 
 export class PackageTypeVerifier {
     private _configOptions: ConfigOptions;
@@ -63,8 +65,23 @@ export class PackageTypeVerifier {
     private _importResolver: ImportResolver;
     private _program: Program;
 
-    constructor(private _fileSystem: FileSystem, private _packageName: string, private _ignoreExternal = false) {
+    constructor(
+        private _fileSystem: FileSystem,
+        commandLineOptions: CommandLineOptions,
+        private _packageName: string,
+        private _ignoreExternal = false
+    ) {
+        const host = new FullAccessHost(_fileSystem);
         this._configOptions = new ConfigOptions('');
+
+        this._configOptions.defaultPythonPlatform = commandLineOptions.pythonPlatform;
+        this._configOptions.defaultPythonVersion = commandLineOptions.pythonVersion;
+
+        // Make sure we have default python version and platform set if the user didn't
+        // specify these on the command line.
+        const console = new NullConsole();
+        this._configOptions.ensureDefaultPythonPlatform(host, console);
+        this._configOptions.ensureDefaultPythonVersion(host, console);
 
         if (_ignoreExternal) {
             this._configOptions.evaluateUnknownImportsAsAny = true;
@@ -141,16 +158,16 @@ export class PackageTypeVerifier {
                         );
                     }
 
-                    // Build a map of all public symbols exported by this package. We'll
+                    // Build a set of all public symbols exported by this package. We'll
                     // use this map to determine which diagnostics to report. We don't want
                     // to report diagnostics many times for types that include public types.
-                    const publicSymbolMap = new Map<string, string>();
+                    const publicSymbols = new Set<string>();
                     publicModules.forEach((moduleName) => {
-                        this._getPublicSymbolsForModule(moduleName, publicSymbolMap, report.alternateSymbolNames);
+                        this._getPublicSymbolsForModule(moduleName, publicSymbols, report.alternateSymbolNames);
                     });
 
                     publicModules.forEach((moduleName) => {
-                        this._verifyTypesOfModule(moduleName, publicSymbolMap, report);
+                        this._verifyTypesOfModule(moduleName, publicSymbols, report);
                     });
                 }
             }
@@ -225,7 +242,7 @@ export class PackageTypeVerifier {
 
     private _getPublicSymbolsForModule(
         moduleName: string,
-        symbolMap: PublicSymbolMap,
+        publicSymbols: PublicSymbolSet,
         alternateSymbolNames: AlternateSymbolNameMap
     ) {
         const importResult = this._resolveImport(moduleName);
@@ -247,7 +264,7 @@ export class PackageTypeVerifier {
                 const moduleScope = getScopeForNode(parseTree)!;
 
                 this._getPublicSymbolsInSymbolTable(
-                    symbolMap,
+                    publicSymbols,
                     alternateSymbolNames,
                     module,
                     module.name,
@@ -259,7 +276,7 @@ export class PackageTypeVerifier {
     }
 
     private _getPublicSymbolsInSymbolTable(
-        symbolMap: PublicSymbolMap,
+        publicSymbols: PublicSymbolSet,
         alternateSymbolNames: AlternateSymbolNameMap,
         module: ModuleInfo,
         scopeName: string,
@@ -276,7 +293,7 @@ export class PackageTypeVerifier {
 
                 if (!symbol.isExternallyHidden() && !symbol.isPrivateMember() && !symbol.isPrivatePyTypedImport()) {
                     const symbolType = this._program.getTypeOfSymbol(symbol);
-                    symbolMap.set(fullName, fullName);
+                    publicSymbols.add(fullName);
 
                     const typedDecls = symbol.getTypedDeclarations();
 
@@ -287,7 +304,7 @@ export class PackageTypeVerifier {
                         if (classDecl) {
                             if (isInstantiableClass(symbolType)) {
                                 this._getPublicSymbolsInSymbolTable(
-                                    symbolMap,
+                                    publicSymbols,
                                     alternateSymbolNames,
                                     module,
                                     fullName,
@@ -327,7 +344,7 @@ export class PackageTypeVerifier {
         }
     }
 
-    private _verifyTypesOfModule(moduleName: string, publicSymbolMap: PublicSymbolMap, report: PackageTypeReport) {
+    private _verifyTypesOfModule(moduleName: string, publicSymbols: PublicSymbolSet, report: PackageTypeReport) {
         const importResult = this._resolveImport(moduleName);
         if (!importResult.isImportFound) {
             report.generalDiagnostics.push(
@@ -364,7 +381,7 @@ export class PackageTypeVerifier {
                     module.name,
                     moduleScope.symbolTable,
                     ScopeType.Module,
-                    publicSymbolMap
+                    publicSymbols
                 );
             } else {
                 report.generalDiagnostics.push(
@@ -455,7 +472,7 @@ export class PackageTypeVerifier {
         scopeName: string,
         symbolTable: SymbolTable,
         scopeType: ScopeType,
-        publicSymbolMap: PublicSymbolMap,
+        publicSymbols: PublicSymbolSet,
         overrideSymbolCallback?: (name: string, symbol: Symbol) => Symbol
     ): TypeKnownStatus {
         if (this._shouldIgnoreType(report, scopeName)) {
@@ -516,16 +533,16 @@ export class PackageTypeVerifier {
                 let symbolInfo: SymbolInfo;
 
                 if (primaryDecl?.type === DeclarationType.Class && isInstantiableClass(symbolType)) {
-                    symbolInfo = this._getSymbolForClass(report, symbolType, publicSymbolMap);
+                    symbolInfo = this._getSymbolForClass(report, symbolType, publicSymbols);
                 } else if (primaryDecl?.type === DeclarationType.Alias && isModule(symbolType)) {
-                    symbolInfo = this._getSymbolForModule(report, symbolType, publicSymbolMap);
+                    symbolInfo = this._getSymbolForModule(report, symbolType, publicSymbols);
                 } else {
                     const decls = symbol.getDeclarations();
                     const primaryDecl = decls.length > 0 ? decls[decls.length - 1] : undefined;
                     const declRange = primaryDecl?.range || getEmptyRange();
                     const declPath = primaryDecl?.path || '';
                     const symbolCategory = this._getSymbolCategory(symbol, symbolType);
-                    const isExported = publicSymbolMap.has(fullName);
+                    const isExported = publicSymbols.has(fullName);
 
                     // If the only reference to this symbol is a "__slots__" entry, we will
                     // skip it when considering type completeness.
@@ -558,7 +575,7 @@ export class PackageTypeVerifier {
                             symbolType,
                             declRange,
                             declPath,
-                            publicSymbolMap
+                            publicSymbols
                         );
                     }
                 }
@@ -572,19 +589,13 @@ export class PackageTypeVerifier {
                     const extraInfo = new DiagnosticAddendum();
                     if (baseSymbolType) {
                         extraInfo.addMessage(
-                            `Type declared in base class is "${this._program.printType(
-                                baseSymbolType,
-                                /* expandTypeAlias */ false
-                            )}"`
+                            `Type declared in base class is "${this._program.printType(baseSymbolType)}"`
                         );
                     }
 
                     if (childSymbolType) {
                         extraInfo.addMessage(
-                            `Type inferred in child class is "${this._program.printType(
-                                childSymbolType,
-                                /* expandTypeAlias */ false
-                            )}"`
+                            `Type inferred in child class is "${this._program.printType(childSymbolType)}"`
                         );
 
                         if (TypeBase.isAmbiguous(childSymbolType)) {
@@ -622,7 +633,7 @@ export class PackageTypeVerifier {
         type: Type,
         declRange: Range,
         declFilePath: string,
-        publicSymbolMap: PublicSymbolMap,
+        publicSymbols: PublicSymbolSet,
         skipDocStringCheck = false
     ): TypeKnownStatus {
         let knownStatus = TypeKnownStatus.Known;
@@ -653,9 +664,7 @@ export class PackageTypeVerifier {
 
         if (TypeBase.isAmbiguous(type) && !isUnknown(type)) {
             const ambiguousDiag = new DiagnosticAddendum();
-            ambiguousDiag.addMessage(
-                `Inferred type is "${this._program.printType(type, /* expandTypeAlias */ false)}"`
-            );
+            ambiguousDiag.addMessage(`Inferred type is "${this._program.printType(type)}"`);
             this._addSymbolError(
                 symbolInfo,
                 'Type is missing type annotation and could be inferred differently by type checkers' +
@@ -697,7 +706,7 @@ export class PackageTypeVerifier {
                             subtype,
                             declRange,
                             declFilePath,
-                            publicSymbolMap
+                            publicSymbols
                         )
                     );
                 });
@@ -714,7 +723,7 @@ export class PackageTypeVerifier {
                             overload,
                             declRange,
                             declFilePath,
-                            publicSymbolMap
+                            publicSymbols
                         )
                     );
                 }
@@ -728,7 +737,7 @@ export class PackageTypeVerifier {
                         this._getFunctionTypeKnownStatus(
                             report,
                             type,
-                            publicSymbolMap,
+                            publicSymbols,
                             symbolInfo,
                             declRange,
                             declFilePath,
@@ -777,7 +786,7 @@ export class PackageTypeVerifier {
                                 accessType,
                                 getEmptyRange(),
                                 '',
-                                publicSymbolMap,
+                                publicSymbols,
                                 skipDocStringCheck
                             )
                         );
@@ -789,8 +798,8 @@ export class PackageTypeVerifier {
                 if (!this._shouldIgnoreType(report, type.details.fullName)) {
                     // Don't bother type-checking built-in types.
                     if (!ClassType.isBuiltIn(type)) {
-                        // Reference the class.
-                        this._getSymbolForClass(report, type, publicSymbolMap);
+                        const symbolInfo = this._getSymbolForClass(report, type, publicSymbols);
+                        knownStatus = this._updateKnownStatusIfWorse(knownStatus, symbolInfo.typeKnownStatus);
                     }
                 }
 
@@ -807,7 +816,7 @@ export class PackageTypeVerifier {
                             knownStatus = this._updateKnownStatusIfWorse(knownStatus, TypeKnownStatus.Unknown);
                         } else if (isPartlyUnknown(typeArg)) {
                             const diag = new DiagnosticAddendum();
-                            diag.addMessage(`Type is ${this._program.printType(typeArg, /* expandTypeAlias */ false)}`);
+                            diag.addMessage(`Type is ${this._program.printType(typeArg)}`);
                             this._addSymbolError(
                                 symbolInfo,
                                 `Type argument ${index + 1} for class "${
@@ -826,7 +835,7 @@ export class PackageTypeVerifier {
 
             case TypeCategory.Module: {
                 if (!this._shouldIgnoreType(report, type.moduleName)) {
-                    const moduleSymbol = this._getSymbolForModule(report, type, publicSymbolMap);
+                    const moduleSymbol = this._getSymbolForModule(report, type, publicSymbols);
                     if (moduleSymbol.typeKnownStatus !== TypeKnownStatus.Known) {
                         this._addSymbolError(
                             symbolInfo,
@@ -851,7 +860,7 @@ export class PackageTypeVerifier {
     private _getFunctionTypeKnownStatus(
         report: PackageTypeReport,
         type: FunctionType,
-        publicSymbolMap: PublicSymbolMap,
+        publicSymbols: PublicSymbolSet,
         symbolInfo?: SymbolInfo,
         declRange?: Range,
         declFilePath?: string,
@@ -906,14 +915,12 @@ export class PackageTypeVerifier {
                     const paramKnownStatus = this._getTypeKnownStatus(
                         report,
                         param.type,
-                        publicSymbolMap,
+                        publicSymbols,
                         extraInfo.createAddendum()
                     );
 
                     if (paramKnownStatus !== TypeKnownStatus.Known) {
-                        extraInfo.addMessage(
-                            `Parameter type is "${this._program.printType(param.type, /* expandTypeAlias */ false)}"`
-                        );
+                        extraInfo.addMessage(`Parameter type is "${this._program.printType(param.type)}"`);
 
                         if (symbolInfo) {
                             this._addSymbolError(
@@ -952,16 +959,13 @@ export class PackageTypeVerifier {
                 const returnTypeKnownStatus = this._getTypeKnownStatus(
                     report,
                     type.details.declaredReturnType,
-                    publicSymbolMap,
+                    publicSymbols,
                     extraInfo.createAddendum()
                 );
 
                 if (returnTypeKnownStatus !== TypeKnownStatus.Known) {
                     extraInfo.addMessage(
-                        `Return type is "${this._program.printType(
-                            type.details.declaredReturnType,
-                            /* expandTypeAlias */ false
-                        )}"`
+                        `Return type is "${this._program.printType(type.details.declaredReturnType)}"`
                     );
 
                     if (symbolInfo) {
@@ -1048,11 +1052,7 @@ export class PackageTypeVerifier {
         return knownStatus;
     }
 
-    private _getSymbolForClass(
-        report: PackageTypeReport,
-        type: ClassType,
-        publicSymbolMap: PublicSymbolMap
-    ): SymbolInfo {
+    private _getSymbolForClass(report: PackageTypeReport, type: ClassType, publicSymbols: PublicSymbolSet): SymbolInfo {
         // See if this type is already analyzed.
         const cachedType = report.symbols.get(type.details.fullName);
         if (cachedType) {
@@ -1065,7 +1065,7 @@ export class PackageTypeVerifier {
             name: type.details.name,
             fullName: type.details.fullName,
             filePath: type.details.filePath,
-            isExported: publicSymbolMap.has(type.details.fullName),
+            isExported: publicSymbols.has(type.details.fullName),
             typeKnownStatus: TypeKnownStatus.Known,
             referenceCount: 1,
             diagnostics: [],
@@ -1091,7 +1091,7 @@ export class PackageTypeVerifier {
             type.details.fullName,
             type.details.fields,
             ScopeType.Class,
-            publicSymbolMap,
+            publicSymbols,
             (name: string, symbol: Symbol) => {
                 // If the symbol within this class is lacking a type declaration,
                 // see if we can find a same-named symbol in a parent class with
@@ -1129,7 +1129,7 @@ export class PackageTypeVerifier {
                 const metaclassKnownStatus = this._getTypeKnownStatus(
                     report,
                     type.details.effectiveMetaclass,
-                    publicSymbolMap,
+                    publicSymbols,
                     diag
                 );
 
@@ -1165,7 +1165,7 @@ export class PackageTypeVerifier {
                 }
 
                 const diag = new DiagnosticAddendum();
-                const baseClassTypeStatus = this._getTypeKnownStatus(report, baseClass, publicSymbolMap, diag);
+                const baseClassTypeStatus = this._getTypeKnownStatus(report, baseClass, publicSymbols, diag);
 
                 if (baseClassTypeStatus !== TypeKnownStatus.Known) {
                     this._addSymbolError(
@@ -1189,7 +1189,7 @@ export class PackageTypeVerifier {
     private _getSymbolForModule(
         report: PackageTypeReport,
         type: ModuleType,
-        publicSymbolMap: PublicSymbolMap
+        publicSymbols: PublicSymbolSet
     ): SymbolInfo {
         // See if this type is already analyzed.
         const cachedType = report.symbols.get(type.moduleName);
@@ -1203,7 +1203,7 @@ export class PackageTypeVerifier {
             name: type.moduleName,
             fullName: type.moduleName,
             filePath: type.filePath,
-            isExported: publicSymbolMap.has(type.moduleName),
+            isExported: publicSymbols.has(type.moduleName),
             typeKnownStatus: TypeKnownStatus.Known,
             referenceCount: 1,
             diagnostics: [],
@@ -1217,7 +1217,7 @@ export class PackageTypeVerifier {
             type.moduleName,
             type.fields,
             ScopeType.Module,
-            publicSymbolMap
+            publicSymbols
         );
 
         symbolInfo.typeKnownStatus = this._updateKnownStatusIfWorse(
@@ -1231,7 +1231,7 @@ export class PackageTypeVerifier {
     private _getTypeKnownStatus(
         report: PackageTypeReport,
         type: Type,
-        publicSymbolMap: PublicSymbolMap,
+        publicSymbols: PublicSymbolSet,
         diag: DiagnosticAddendum
     ): TypeKnownStatus {
         let knownStatus = TypeKnownStatus.Known;
@@ -1275,7 +1275,7 @@ export class PackageTypeVerifier {
                 doForEachSubtype(type, (subtype) => {
                     knownStatus = this._updateKnownStatusIfWorse(
                         knownStatus,
-                        this._getTypeKnownStatus(report, subtype, publicSymbolMap, diag.createAddendum())
+                        this._getTypeKnownStatus(report, subtype, publicSymbols, diag.createAddendum())
                     );
                 });
 
@@ -1286,7 +1286,7 @@ export class PackageTypeVerifier {
                 for (const overload of type.overloads) {
                     knownStatus = this._updateKnownStatusIfWorse(
                         knownStatus,
-                        this._getTypeKnownStatus(report, overload, publicSymbolMap, diag.createAddendum())
+                        this._getTypeKnownStatus(report, overload, publicSymbols, diag.createAddendum())
                     );
                 }
 
@@ -1300,7 +1300,7 @@ export class PackageTypeVerifier {
                         this._getFunctionTypeKnownStatus(
                             report,
                             type,
-                            publicSymbolMap,
+                            publicSymbols,
                             /* symbolInfo */ undefined,
                             /* declRange */ undefined,
                             /* declFilePath */ undefined,
@@ -1316,8 +1316,8 @@ export class PackageTypeVerifier {
                 if (!this._shouldIgnoreType(report, type.details.fullName)) {
                     // Don't bother type-checking built-in types.
                     if (!ClassType.isBuiltIn(type)) {
-                        // Reference the class.
-                        this._getSymbolForClass(report, type, publicSymbolMap);
+                        const symbolInfo = this._getSymbolForClass(report, type, publicSymbols);
+                        knownStatus = this._updateKnownStatusIfWorse(knownStatus, symbolInfo.typeKnownStatus);
                     }
                 }
 
@@ -1343,7 +1343,7 @@ export class PackageTypeVerifier {
 
             case TypeCategory.Module: {
                 if (!this._shouldIgnoreType(report, type.moduleName)) {
-                    const moduleSymbol = this._getSymbolForModule(report, type, publicSymbolMap);
+                    const moduleSymbol = this._getSymbolForModule(report, type, publicSymbols);
                     knownStatus = this._updateKnownStatusIfWorse(knownStatus, moduleSymbol.typeKnownStatus);
                 }
 

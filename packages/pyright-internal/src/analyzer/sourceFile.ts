@@ -4,7 +4,7 @@
  * Licensed under the MIT license.
  * Author: Eric Traut
  *
- * Class that represents a single python source file.
+ * Class that represents a single Python source or stub file.
  */
 
 import {
@@ -19,17 +19,25 @@ import { isMainThread } from 'worker_threads';
 
 import * as SymbolNameUtils from '../analyzer/symbolNameUtils';
 import { OperationCanceledException } from '../common/cancellationUtils';
-import { ConfigOptions, ExecutionEnvironment, getBasicDiagnosticRuleSet } from '../common/configOptions';
+import {
+    ConfigOptions,
+    ExecutionEnvironment,
+    getBasicDiagnosticRuleSet,
+    SignatureDisplayType,
+} from '../common/configOptions';
 import { ConsoleInterface, StandardConsole } from '../common/console';
 import { assert } from '../common/debug';
+import { TaskListToken } from '../common/diagnostic';
 import { convertLevelToCategory, Diagnostic, DiagnosticCategory } from '../common/diagnostic';
+import { DiagnosticRule } from '../common/diagnosticRules';
 import { DiagnosticSink, TextRangeDiagnosticSink } from '../common/diagnosticSink';
 import { TextEditAction } from '../common/editAction';
+import { Extensions } from '../common/extensibility';
 import { FileSystem } from '../common/fileSystem';
 import { LogTracker } from '../common/logTracker';
 import { fromLSPAny } from '../common/lspUtils';
 import { getFileName, normalizeSlashes, stripFileExtension } from '../common/pathUtils';
-import { convertOffsetsToRange } from '../common/positionUtils';
+import { convertOffsetsToRange, convertTextRangeToRange } from '../common/positionUtils';
 import * as StringUtils from '../common/stringUtils';
 import { DocumentRange, getEmptyRange, Position, Range, TextRange } from '../common/textRange';
 import { TextRangeCollection } from '../common/textRangeCollection';
@@ -39,13 +47,14 @@ import { AbbreviationMap, CompletionOptions, CompletionResults } from '../langua
 import { CompletionItemData, CompletionProvider } from '../languageService/completionProvider';
 import { DefinitionFilter, DefinitionProvider } from '../languageService/definitionProvider';
 import { DocumentHighlightProvider } from '../languageService/documentHighlightProvider';
+import { DocumentSymbolCollectorUseCase } from '../languageService/documentSymbolCollector';
 import { DocumentSymbolProvider, IndexOptions, IndexResults } from '../languageService/documentSymbolProvider';
 import { HoverProvider, HoverResults } from '../languageService/hoverProvider';
 import { performQuickAction } from '../languageService/quickActions';
 import { ReferenceCallback, ReferencesProvider, ReferencesResult } from '../languageService/referencesProvider';
 import { SignatureHelpProvider, SignatureHelpResults } from '../languageService/signatureHelpProvider';
 import { Localizer } from '../localization/localize';
-import { ModuleNode, NameNode } from '../parser/parseNodes';
+import { ModuleNode } from '../parser/parseNodes';
 import { ModuleImport, ParseOptions, Parser, ParseResults } from '../parser/parser';
 import { IgnoreComment } from '../parser/tokenizer';
 import { Token } from '../parser/tokenizerTypes';
@@ -83,8 +92,6 @@ export enum IPythonMode {
     // Not a notebook. This is the only falsy enum value, so you
     // can test if IPython is supported via "if (ipythonMode)"
     None = 0,
-    // All cells are concatenated into a single document.
-    ConcatDoc,
     // Each cell is its own document.
     CellDocs,
 }
@@ -93,8 +100,12 @@ export class SourceFile {
     // Console interface to use for debugging.
     private _console: ConsoleInterface;
 
-    // File path on disk.
+    // File path unique to this file within the workspace. May not represent
+    // a real file on disk.
     private readonly _filePath: string;
+
+    // File path on disk. May not be unique.
+    private readonly _realFilePath: string;
 
     // Period-delimited import path for the module.
     private _moduleName: string;
@@ -158,13 +169,16 @@ export class SourceFile {
 
     // Diagnostics generated during different phases of analysis.
     private _parseDiagnostics: Diagnostic[] = [];
+    private _commentDiagnostics: Diagnostic[] = [];
     private _bindDiagnostics: Diagnostic[] = [];
     private _checkerDiagnostics: Diagnostic[] = [];
     private _typeIgnoreLines = new Map<number, IgnoreComment>();
     private _typeIgnoreAll: IgnoreComment | undefined;
     private _pyrightIgnoreLines = new Map<number, IgnoreComment>();
 
-    // Settings that control which diagnostics should be output.
+    // Settings that control which diagnostics should be output. The rules
+    // are initialized to the basic set. They should be updated after the
+    // the file is parsed.
     private _diagnosticRuleSet = getBasicDiagnosticRuleSet();
 
     // Circular dependencies that have been reported in this file.
@@ -205,11 +219,13 @@ export class SourceFile {
         isThirdPartyPyTypedPresent: boolean,
         console?: ConsoleInterface,
         logTracker?: LogTracker,
+        realFilePath?: string,
         ipythonMode = IPythonMode.None
     ) {
         this.fileSystem = fs;
         this._console = console || new StandardConsole();
         this._filePath = filePath;
+        this._realFilePath = realFilePath ?? filePath;
         this._moduleName = moduleName;
         this._isStubFile = filePath.endsWith('.pyi');
         this._isThirdPartyImport = isThirdPartyImport;
@@ -241,6 +257,14 @@ export class SourceFile {
         // 'FG' or 'BG' based on current thread.
         this._logTracker = logTracker ?? new LogTracker(console, isMainThread ? 'FG' : 'BG');
         this._ipythonMode = ipythonMode;
+    }
+
+    getRealFilePath(): string {
+        return this._realFilePath;
+    }
+
+    getIPythonMode(): IPythonMode {
+        return this._ipythonMode;
     }
 
     getFilePath(): string {
@@ -283,7 +307,12 @@ export class SourceFile {
             includeWarningsAndErrors = false;
         }
 
-        let diagList = [...this._parseDiagnostics, ...this._bindDiagnostics, ...this._checkerDiagnostics];
+        let diagList = [
+            ...this._parseDiagnostics,
+            ...this._commentDiagnostics,
+            ...this._bindDiagnostics,
+            ...this._checkerDiagnostics,
+        ];
         const prefilteredDiagList = diagList;
         const typeIgnoreLinesClone = new Map(this._typeIgnoreLines);
         const pyrightIgnoreLinesClone = new Map(this._pyrightIgnoreLines);
@@ -313,11 +342,7 @@ export class SourceFile {
         // Filter the diagnostics based on "pyright: ignore" lines.
         if (this._pyrightIgnoreLines.size > 0) {
             diagList = diagList.filter((d) => {
-                if (
-                    d.category !== DiagnosticCategory.UnusedCode &&
-                    d.category !== DiagnosticCategory.UnreachableCode &&
-                    d.category !== DiagnosticCategory.Deprecated
-                ) {
+                if (d.category !== DiagnosticCategory.UnreachableCode && d.category !== DiagnosticCategory.Deprecated) {
                     for (let line = d.range.start.line; line <= d.range.end.line; line++) {
                         const pyrightIgnoreComment = this._pyrightIgnoreLines.get(line);
                         if (pyrightIgnoreComment) {
@@ -389,7 +414,7 @@ export class SourceFile {
                 const rangeEnd = rangeStart + this._typeIgnoreAll.range.length;
                 const range = convertOffsetsToRange(rangeStart, rangeEnd, this._parseResults!.tokenizerOutput.lines!);
 
-                if (!isUnreachableCodeRange(range)) {
+                if (!isUnreachableCodeRange(range) && this._diagnosticRuleSet.enableTypeIgnoreComments) {
                     unnecessaryTypeIgnoreDiags.push(
                         new Diagnostic(diagCategory, Localizer.Diagnostic.unnecessaryTypeIgnore(), range)
                     );
@@ -406,7 +431,7 @@ export class SourceFile {
                         this._parseResults!.tokenizerOutput.lines!
                     );
 
-                    if (!isUnreachableCodeRange(range)) {
+                    if (!isUnreachableCodeRange(range) && this._diagnosticRuleSet.enableTypeIgnoreComments) {
                         unnecessaryTypeIgnoreDiags.push(
                             new Diagnostic(diagCategory, Localizer.Diagnostic.unnecessaryTypeIgnore(), range)
                         );
@@ -461,18 +486,18 @@ export class SourceFile {
             const category = convertLevelToCategory(this._diagnosticRuleSet.reportImportCycles);
 
             this._circularDependencies.forEach((cirDep) => {
-                diagList.push(
-                    new Diagnostic(
-                        category,
-                        Localizer.Diagnostic.importCycleDetected() +
-                            '\n' +
-                            cirDep
-                                .getPaths()
-                                .map((path) => '  ' + path)
-                                .join('\n'),
-                        getEmptyRange()
-                    )
+                const diag = new Diagnostic(
+                    category,
+                    Localizer.Diagnostic.importCycleDetected() +
+                        '\n' +
+                        cirDep
+                            .getPaths()
+                            .map((path) => '  ' + path)
+                            .join('\n'),
+                    getEmptyRange()
                 );
+                diag.setRule(DiagnosticRule.reportImportCycles);
+                diagList.push(diag);
             });
         }
 
@@ -486,8 +511,11 @@ export class SourceFile {
             );
         }
 
+        // add diagnostics for comments that match the task list tokens
+        this._addTaskListDiagnostics(options.taskListTokens, diagList);
+
         // If the file is in the ignore list, clear the diagnostic list.
-        if (options.ignore.find((ignoreFileSpec) => ignoreFileSpec.regExp.test(this._filePath))) {
+        if (options.ignore.find((ignoreFileSpec) => ignoreFileSpec.regExp.test(this._realFilePath))) {
             diagList = [];
         }
 
@@ -520,6 +548,64 @@ export class SourceFile {
         }
 
         return diagList;
+    }
+
+    // Get all task list diagnostics for the current file and add them
+    // to the specified diagnostic list
+    private _addTaskListDiagnostics(taskListTokens: TaskListToken[] | undefined, diagList: Diagnostic[]) {
+        // input validation
+        if (!taskListTokens || taskListTokens.length === 0 || !diagList) {
+            return;
+        }
+
+        // if we have no tokens, we're done
+        if (!this._parseResults?.tokenizerOutput?.tokens) {
+            return;
+        }
+
+        const tokenizerOutput = this._parseResults.tokenizerOutput;
+        for (let i = 0; i < tokenizerOutput.tokens.count; i++) {
+            const token = tokenizerOutput.tokens.getItemAt(i);
+
+            // if there are no comments, skip this token
+            if (!token.comments || token.comments.length === 0) {
+                continue;
+            }
+
+            for (const comment of token.comments) {
+                for (const token of taskListTokens) {
+                    // Check if the comment matches the task list token.
+                    // The comment must start with zero or more whitespace characters,
+                    // followed by the taskListToken (case insensitive),
+                    // followed by (0+ whitespace + EOL) OR (1+ NON-alphanumeric characters)
+                    const regexStr = '^[\\s]*' + token.text + '([\\s]*$|[\\W]+)';
+                    const regex = RegExp(regexStr, 'i'); // case insensitive
+
+                    // if the comment doesn't match, skip it
+                    if (!regex.test(comment.value)) {
+                        continue;
+                    }
+
+                    // Calculate the range for the diagnostic
+                    // This allows navigation to the comment via double clicking the item in the task list pane
+                    let rangeStart = comment.start;
+
+                    // The comment technically starts right after the comment identifier (#), but we want the caret right
+                    // before the task list token (since there might be whitespace before it)
+                    const indexOfToken = comment.value.toLowerCase().indexOf(token.text.toLowerCase());
+                    rangeStart += indexOfToken;
+
+                    const rangeEnd = TextRange.getEnd(comment);
+                    const range = convertOffsetsToRange(rangeStart, rangeEnd, tokenizerOutput.lines!);
+
+                    // Add the diagnostic to the list to send to VS,
+                    // and trim whitespace from the comment so it's easier to read in the task list
+                    diagList.push(
+                        new Diagnostic(DiagnosticCategory.TaskItem, comment.value.trim(), range, token.priority)
+                    );
+                }
+            }
+        }
     }
 
     getImports(): ImportResult[] {
@@ -598,11 +684,14 @@ export class SourceFile {
         this._indexingNeeded = indexingNeeded;
         this._moduleSymbolTable = undefined;
         this._cachedIndexResults = undefined;
+        const filePath = this.getFilePath();
+        Extensions.getProgramExtensions(filePath).forEach((e) => (e.fileDirty ? e.fileDirty(filePath) : null));
     }
 
     markReanalysisRequired(forceRebinding: boolean): void {
         // Keep the parse info, but reset the analysis to the beginning.
         this._isCheckingNeeded = true;
+        this._noCircularDependencyConfirmed = false;
 
         // If the file contains a wildcard import or __all__ symbols,
         // we need to rebind because a dependent import may have changed.
@@ -633,7 +722,7 @@ export class SourceFile {
     getFileContent(): string | undefined {
         // Get current buffer content if the file is opened.
         const openFileContent = this.getOpenFileContents();
-        if (openFileContent) {
+        if (openFileContent !== undefined) {
             return openFileContent;
         }
 
@@ -794,22 +883,16 @@ export class SourceFile {
                 }
             }
 
-            // Use the configuration options to determine the environment in which
-            // this source file will be executed.
-            const execEnvironment = configOptions.findExecEnvironment(this._filePath);
-
-            const parseOptions = new ParseOptions();
-            parseOptions.ipythonMode = this._ipythonMode;
-            if (this._filePath.endsWith('pyi')) {
-                parseOptions.isStubFile = true;
-            }
-            parseOptions.pythonVersion = execEnvironment.pythonVersion;
-            parseOptions.skipFunctionAndClassBody = configOptions.indexGenerationMode ?? false;
-
             try {
                 // Parse the token stream, building the abstract syntax tree.
-                const parser = new Parser();
-                const parseResults = parser.parseSourceFile(fileContents!, parseOptions, diagSink);
+                const parseResults = parseFile(
+                    configOptions,
+                    this._filePath,
+                    fileContents!,
+                    this._ipythonMode,
+                    diagSink
+                );
+
                 assert(parseResults !== undefined && parseResults.tokenizerOutput !== undefined);
                 this._parseResults = parseResults;
                 this._typeIgnoreLines = this._parseResults.tokenizerOutput.typeIgnoreLines;
@@ -817,6 +900,7 @@ export class SourceFile {
                 this._pyrightIgnoreLines = this._parseResults.tokenizerOutput.pyrightIgnoreLines;
 
                 // Resolve imports.
+                const execEnvironment = configOptions.findExecEnvironment(this._filePath);
                 timingStats.resolveImportsTime.timeOperation(() => {
                     const importResult = this._resolveImports(
                         importResolver,
@@ -833,14 +917,28 @@ export class SourceFile {
 
                 // Is this file in a "strict" path?
                 const useStrict =
-                    configOptions.strict.find((strictFileSpec) => strictFileSpec.regExp.test(this._filePath)) !==
+                    configOptions.strict.find((strictFileSpec) => strictFileSpec.regExp.test(this._realFilePath)) !==
                     undefined;
 
+                const commentDiags: CommentUtils.CommentDiagnostic[] = [];
                 this._diagnosticRuleSet = CommentUtils.getFileLevelDirectives(
                     this._parseResults.tokenizerOutput.tokens,
                     configOptions.diagnosticRuleSet,
-                    useStrict
+                    useStrict,
+                    commentDiags
                 );
+
+                this._commentDiagnostics = [];
+
+                commentDiags.forEach((commentDiag) => {
+                    this._commentDiagnostics.push(
+                        new Diagnostic(
+                            DiagnosticCategory.Error,
+                            commentDiag.message,
+                            convertTextRangeToRange(commentDiag.range, this._parseResults!.tokenizerOutput.lines)
+                        )
+                    );
+                });
             } catch (e: any) {
                 const message: string =
                     (e.stack ? e.stack.toString() : undefined) ||
@@ -855,7 +953,7 @@ export class SourceFile {
                     text: '',
                     parseTree: ModuleNode.create({ start: 0, length: 0 }),
                     importedModules: [],
-                    futureImports: new Map<string, boolean>(),
+                    futureImports: new Set<string>(),
                     tokenizerOutput: {
                         tokens: new TextRangeCollection<Token>([]),
                         lines: new TextRangeCollection<TextRange>([]),
@@ -964,27 +1062,14 @@ export class SourceFile {
         );
     }
 
-    getDeclarationForNode(
-        sourceMapper: SourceMapper,
-        node: NameNode,
-        evaluator: TypeEvaluator,
-        reporter: ReferenceCallback | undefined,
-        token: CancellationToken
-    ): ReferencesResult | undefined {
-        // If we have no completed analysis job, there's nothing to do.
-        if (!this._parseResults) {
-            return undefined;
-        }
-
-        return ReferencesProvider.getDeclarationForNode(sourceMapper, this._filePath, node, evaluator, reporter, token);
-    }
-
     getDeclarationForPosition(
         sourceMapper: SourceMapper,
         position: Position,
         evaluator: TypeEvaluator,
         reporter: ReferenceCallback | undefined,
-        token: CancellationToken
+        useCase: DocumentSymbolCollectorUseCase,
+        token: CancellationToken,
+        implicitlyImportedBy?: SourceFile[]
     ): ReferencesResult | undefined {
         // If we have no completed analysis job, there's nothing to do.
         if (!this._parseResults) {
@@ -998,7 +1083,9 @@ export class SourceFile {
             position,
             evaluator,
             reporter,
-            token
+            useCase,
+            token,
+            implicitlyImportedBy
         );
     }
 
@@ -1059,6 +1146,7 @@ export class SourceFile {
         position: Position,
         format: MarkupKind,
         evaluator: TypeEvaluator,
+        functionSignatureDisplay: SignatureDisplayType,
         token: CancellationToken
     ): HoverResults | undefined {
         // If this file hasn't been bound, no hover info is available.
@@ -1066,7 +1154,15 @@ export class SourceFile {
             return undefined;
         }
 
-        return HoverProvider.getHoverForPosition(sourceMapper, this._parseResults, position, format, evaluator, token);
+        return HoverProvider.getHoverForPosition(
+            sourceMapper,
+            this._parseResults,
+            position,
+            format,
+            evaluator,
+            functionSignatureDisplay,
+            token
+        );
     }
 
     getDocumentHighlight(
@@ -1211,7 +1307,12 @@ export class SourceFile {
         return performQuickAction(command, args, this._parseResults, token);
     }
 
-    bind(configOptions: ConfigOptions, importLookup: ImportLookup, builtinsScope: Scope | undefined) {
+    bind(
+        configOptions: ConfigOptions,
+        importLookup: ImportLookup,
+        builtinsScope: Scope | undefined,
+        futureImports: Set<string>
+    ) {
         assert(!this.isParseRequired(), 'Bind called before parsing');
         assert(this.isBindingRequired(), 'Bind called unnecessarily');
         assert(!this._isBindingInProgress, 'Bind called while binding in progress');
@@ -1227,7 +1328,8 @@ export class SourceFile {
                         configOptions,
                         this._parseResults!.text,
                         importLookup,
-                        builtinsScope
+                        builtinsScope,
+                        futureImports
                     );
                     AnalyzerNodeInfo.setFileInfo(this._parseResults!.parseTree, fileInfo);
 
@@ -1277,7 +1379,12 @@ export class SourceFile {
         });
     }
 
-    check(importResolver: ImportResolver, evaluator: TypeEvaluator) {
+    check(
+        importResolver: ImportResolver,
+        evaluator: TypeEvaluator,
+        sourceMapper: SourceMapper,
+        dependentFiles?: ParseResults[]
+    ) {
         assert(!this.isParseRequired(), 'Check called before parsing');
         assert(!this.isBindingRequired(), 'Check called before binding');
         assert(!this._isBindingInProgress, 'Check called while binding in progress');
@@ -1288,7 +1395,13 @@ export class SourceFile {
             try {
                 timingStats.typeCheckerTime.timeOperation(() => {
                     const checkDuration = new Duration();
-                    const checker = new Checker(importResolver, evaluator, this._parseResults!.parseTree);
+                    const checker = new Checker(
+                        importResolver,
+                        evaluator,
+                        this._parseResults!,
+                        sourceMapper,
+                        dependentFiles
+                    );
                     checker.check();
                     this._isCheckingNeeded = false;
 
@@ -1330,21 +1443,22 @@ export class SourceFile {
     }
 
     test_enableIPythonMode(enable: boolean) {
-        this._ipythonMode = enable ? IPythonMode.ConcatDoc : IPythonMode.None;
+        this._ipythonMode = enable ? IPythonMode.CellDocs : IPythonMode.None;
     }
 
     private _buildFileInfo(
         configOptions: ConfigOptions,
         fileContents: string,
         importLookup: ImportLookup,
-        builtinsScope?: Scope
+        builtinsScope: Scope | undefined,
+        futureImports: Set<string>
     ) {
         assert(this._parseResults !== undefined, 'Parse results not available');
         const analysisDiagnostics = new TextRangeDiagnosticSink(this._parseResults!.tokenizerOutput.lines);
 
         const fileInfo: AnalyzerFileInfo = {
             importLookup,
-            futureImports: this._parseResults!.futureImports,
+            futureImports,
             builtinsScope,
             diagnosticSink: analysisDiagnostics,
             executionEnvironment: configOptions.findExecEnvironment(this._filePath),
@@ -1432,7 +1546,20 @@ export class SourceFile {
             // Associate the import results with the module import
             // name node in the parse tree so we can access it later
             // (for hover and definition support).
-            AnalyzerNodeInfo.setImportInfo(moduleImport.nameNode, importResult);
+            if (moduleImport.nameParts.length === moduleImport.nameNode.nameParts.length) {
+                AnalyzerNodeInfo.setImportInfo(moduleImport.nameNode, importResult);
+            } else {
+                // For implicit imports of higher-level modules within a multi-part
+                // module name, the moduleImport.nameParts will refer to the subset
+                // of the multi-part name rather than the full multi-part name. In this
+                // case, store the import info on the name part node.
+                assert(moduleImport.nameParts.length > 0);
+                assert(moduleImport.nameParts.length - 1 < moduleImport.nameNode.nameParts.length);
+                AnalyzerNodeInfo.setImportInfo(
+                    moduleImport.nameNode.nameParts[moduleImport.nameParts.length - 1],
+                    importResult
+                );
+            }
         }
 
         return {
@@ -1449,4 +1576,28 @@ export class SourceFile {
 
         return filepath;
     }
+}
+
+export function parseFile(
+    configOptions: ConfigOptions,
+    filePath: string,
+    fileContents: string,
+    ipythonMode: IPythonMode,
+    diagSink: DiagnosticSink
+) {
+    // Use the configuration options to determine the environment in which
+    // this source file will be executed.
+    const execEnvironment = configOptions.findExecEnvironment(filePath);
+
+    const parseOptions = new ParseOptions();
+    parseOptions.ipythonMode = ipythonMode;
+    if (filePath.endsWith('pyi')) {
+        parseOptions.isStubFile = true;
+    }
+    parseOptions.pythonVersion = execEnvironment.pythonVersion;
+    parseOptions.skipFunctionAndClassBody = configOptions.indexGenerationMode ?? false;
+
+    // Parse the token stream, building the abstract syntax tree.
+    const parser = new Parser();
+    return parser.parseSourceFile(fileContents, parseOptions, diagSink);
 }

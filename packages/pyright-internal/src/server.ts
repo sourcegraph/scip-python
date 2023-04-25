@@ -22,9 +22,10 @@ import { BackgroundAnalysis } from './backgroundAnalysis';
 import { BackgroundAnalysisBase } from './backgroundAnalysisBase';
 import { CommandController } from './commands/commandController';
 import { getCancellationFolderName } from './common/cancellationUtils';
-import { ConfigOptions } from './common/configOptions';
-import { ConsoleWithLogLevel, LogLevel } from './common/console';
+import { ConfigOptions, SignatureDisplayType } from './common/configOptions';
+import { ConsoleWithLogLevel, convertLogLevel, LogLevel } from './common/console';
 import { isDebugMode, isString } from './common/core';
+import { expandPathVariables } from './common/envVarUtils';
 import { FileBasedCancellationProvider } from './common/fileBasedCancellationUtils';
 import { FileSystem } from './common/fileSystem';
 import { FullAccessHost } from './common/fullAccessHost';
@@ -32,9 +33,9 @@ import { Host } from './common/host';
 import { resolvePaths } from './common/pathUtils';
 import { ProgressReporter } from './common/progressReporter';
 import { createFromRealFileSystem, WorkspaceFileWatcherProvider } from './common/realFileSystem';
-import { LanguageServerBase, ServerSettings, WorkspaceServiceInstance } from './languageServerBase';
+import { LanguageServerBase, ServerSettings } from './languageServerBase';
 import { CodeActionProvider } from './languageService/codeActionProvider';
-import { WorkspaceMap } from './workspaceMap';
+import { Workspace } from './workspaceFactory';
 
 const maxAnalysisTimeInForeground = { openFilesTimeInMs: 50, noOpenFilesTimeInMs: 200 };
 
@@ -51,7 +52,6 @@ export class PyrightServer extends LanguageServerBase {
         const rootDirectory = (global as any).__rootDirectory || __dirname;
 
         const console = new ConsoleWithLogLevel(connection.console);
-        const workspaceMap = new WorkspaceMap();
         const fileWatcherProvider = new WorkspaceFileWatcherProvider();
         const fileSystem = createFromRealFileSystem(console, fileWatcherProvider);
 
@@ -60,7 +60,6 @@ export class PyrightServer extends LanguageServerBase {
                 productName: 'Pyright',
                 rootDirectory,
                 version,
-                workspaceMap,
                 fileSystem,
                 fileWatcherHandler: fileWatcherProvider,
                 cancellationProvider: new FileBasedCancellationProvider('bg'),
@@ -74,7 +73,7 @@ export class PyrightServer extends LanguageServerBase {
         this._controller = new CommandController(this);
     }
 
-    async getSettings(workspace: WorkspaceServiceInstance): Promise<ServerSettings> {
+    async getSettings(workspace: Workspace): Promise<ServerSettings> {
         const serverSettings: ServerSettings = {
             watchForSourceChanges: true,
             watchForLibraryChanges: true,
@@ -87,6 +86,7 @@ export class PyrightServer extends LanguageServerBase {
             diagnosticSeverityOverrides: {},
             logLevel: LogLevel.Info,
             autoImportCompletions: true,
+            functionSignatureDisplay: SignatureDisplayType.formatted,
         };
 
         try {
@@ -96,7 +96,7 @@ export class PyrightServer extends LanguageServerBase {
                 if (pythonPath && isString(pythonPath) && !isPythonBinary(pythonPath)) {
                     serverSettings.pythonPath = resolvePaths(
                         workspace.rootPath,
-                        this.expandPathVariables(workspace.rootPath, pythonPath)
+                        expandPathVariables(workspace.rootPath, pythonPath)
                     );
                 }
 
@@ -105,7 +105,7 @@ export class PyrightServer extends LanguageServerBase {
                 if (venvPath && isString(venvPath)) {
                     serverSettings.venvPath = resolvePaths(
                         workspace.rootPath,
-                        this.expandPathVariables(workspace.rootPath, venvPath)
+                        expandPathVariables(workspace.rootPath, venvPath)
                     );
                 }
             }
@@ -118,7 +118,7 @@ export class PyrightServer extends LanguageServerBase {
                     if (typeshedPath && isString(typeshedPath)) {
                         serverSettings.typeshedPath = resolvePaths(
                             workspace.rootPath,
-                            this.expandPathVariables(workspace.rootPath, typeshedPath)
+                            expandPathVariables(workspace.rootPath, typeshedPath)
                         );
                     }
                 }
@@ -127,7 +127,7 @@ export class PyrightServer extends LanguageServerBase {
                 if (stubPath && isString(stubPath)) {
                     serverSettings.stubPath = resolvePaths(
                         workspace.rootPath,
-                        this.expandPathVariables(workspace.rootPath, stubPath)
+                        expandPathVariables(workspace.rootPath, stubPath)
                     );
                 }
 
@@ -152,14 +152,14 @@ export class PyrightServer extends LanguageServerBase {
                     serverSettings.useLibraryCodeForTypes = !!pythonAnalysisSection.useLibraryCodeForTypes;
                 }
 
-                serverSettings.logLevel = this.convertLogLevel(pythonAnalysisSection.logLevel);
+                serverSettings.logLevel = convertLogLevel(pythonAnalysisSection.logLevel);
                 serverSettings.autoSearchPaths = !!pythonAnalysisSection.autoSearchPaths;
 
                 const extraPaths = pythonAnalysisSection.extraPaths;
                 if (extraPaths && Array.isArray(extraPaths) && extraPaths.length > 0) {
                     serverSettings.extraPaths = extraPaths
                         .filter((p) => p && isString(p))
-                        .map((p) => resolvePaths(workspace.rootPath, this.expandPathVariables(workspace.rootPath, p)));
+                        .map((p) => resolvePaths(workspace.rootPath, expandPathVariables(workspace.rootPath, p)));
                 }
 
                 if (pythonAnalysisSection.typeCheckingMode !== undefined) {
@@ -208,7 +208,7 @@ export class PyrightServer extends LanguageServerBase {
         return serverSettings;
     }
 
-    createBackgroundAnalysis(): BackgroundAnalysisBase | undefined {
+    createBackgroundAnalysis(serviceId: string): BackgroundAnalysisBase | undefined {
         if (isDebugMode() || !getCancellationFolderName()) {
             // Don't do background analysis if we're in debug mode or an old client
             // is used where cancellation is not supported.

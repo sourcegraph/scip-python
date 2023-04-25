@@ -15,7 +15,7 @@ class ClassWithField:
 #   documentation ---
 #               > 
 #   documentation Hello world, this is a
-#      ^^^ reference  python-stdlib 3.10 builtins/int#
+#      ^^^ reference  python-stdlib 3.11 builtins/int#
 #      external documentation ```python
 #                  > (class) int
 #                  > ```

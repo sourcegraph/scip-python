@@ -2,6 +2,10 @@
 # when applied to functions that appear within a conditional expression.
 
 
+from typing import Any
+from dataclasses import dataclass
+
+
 def cond() -> bool:
     ...
 
@@ -37,3 +41,28 @@ a = [x for x in range(20) if cond]
 a = 1 if cond else 2
 
 b = "1" == "1" == "1"
+
+c = ""
+# This should generate a diagnostic when reportUnnecessaryComparison is enabled.
+if c is None:
+    pass
+
+# This should generate a diagnostic when reportUnnecessaryComparison is enabled.
+if c is not None:
+    pass
+
+
+def func2(d: str | Any):
+    if d is None:
+        pass
+
+
+@dataclass
+class DC1:
+    bar: str
+
+
+def func3(x: DC1):
+    # This should generate an error if reportUnnecessaryComparison is enabled.
+    if x == 42:
+        ...

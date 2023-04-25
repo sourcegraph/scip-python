@@ -14,9 +14,15 @@ import { Diagnostic } from '../common/diagnostic';
 import { DiagnosticRule } from '../common/diagnosticRules';
 import { FileEditActions } from '../common/editAction';
 import { Position } from '../common/textRange';
+import { ImportFormat } from '../languageService/autoImporter';
 import { Range } from './harness/fourslash/fourSlashTypes';
 import { TestState } from './harness/fourslash/testState';
-import { applyFileOperations, verifyEdits } from './testStateUtils';
+import {
+    applyFileOperations,
+    convertFileEditActionToString,
+    convertRangeToFileEditAction,
+    verifyEdits,
+} from './testStateUtils';
 
 export function testMoveSymbolAtPosition(
     state: TestState,
@@ -24,9 +30,16 @@ export function testMoveSymbolAtPosition(
     newFilePath: string,
     position: Position,
     text?: string,
-    replacementText?: string
+    replacementText?: string,
+    expectsMissingImport = false
 ) {
-    const actions = state.program.moveSymbolAtPosition(filePath, newFilePath, position, CancellationToken.None);
+    const actions = state.program.moveSymbolAtPosition(
+        filePath,
+        newFilePath,
+        position,
+        { importFormat: ImportFormat.Absolute },
+        CancellationToken.None
+    );
     assert(actions);
 
     const ranges: Range[] = [];
@@ -39,9 +52,16 @@ export function testMoveSymbolAtPosition(
         );
     }
 
-    assert.strictEqual(actions.edits.length, ranges.length);
+    assert.strictEqual(
+        actions.edits.length,
+        ranges.length,
+        `${actions.edits.map((e) => convertFileEditActionToString(e)).join('|')} vs ${ranges
+            .map((r) => convertRangeToFileEditAction(state, r, replacementText))
+            .map((e) => convertFileEditActionToString(e))
+            .join('|')}`
+    );
 
-    _verifyFileOperations(state, actions, ranges, replacementText);
+    _verifyFileOperations(state, actions, ranges, replacementText, expectsMissingImport);
 }
 
 export function testRenameModule(
@@ -64,7 +84,14 @@ export function testRenameModule(
         );
     }
 
-    assert.strictEqual(editActions.edits.length, ranges.length);
+    assert.strictEqual(
+        editActions.edits.length,
+        ranges.length,
+        `${editActions.edits.map((e) => convertFileEditActionToString(e)).join('\n')} vs ${ranges
+            .map((r) => convertRangeToFileEditAction(state, r, replacementText))
+            .map((e) => convertFileEditActionToString(e))
+            .join('\n')}`
+    );
 
     editActions.fileOperations.push({ kind: 'rename', oldFilePath: filePath, newFilePath });
 
@@ -76,18 +103,23 @@ function _verifyFileOperations(
     state: TestState,
     fileEditActions: FileEditActions,
     ranges: Range[],
-    replacementText: string | undefined
+    replacementText: string | undefined,
+    expectsMissingImport = false
 ) {
     const editsPerFileMap = createMapFromItems(fileEditActions.edits, (e) => e.filePath);
 
-    _verifyMissingImports();
+    if (!expectsMissingImport) {
+        _verifyMissingImports();
+    }
 
     verifyEdits(state, fileEditActions, ranges, replacementText);
 
     applyFileOperations(state, fileEditActions);
 
     // Make sure we don't have missing imports after the change.
-    _verifyMissingImports();
+    if (!expectsMissingImport) {
+        _verifyMissingImports();
+    }
 
     function _verifyMissingImports() {
         for (const editFileName of editsPerFileMap.keys()) {

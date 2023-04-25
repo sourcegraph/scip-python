@@ -362,3 +362,31 @@ def func13(subj: tuple[Literal[0]]):
         case d:
             reveal_type(subj, expected_text="Never")
             reveal_type(d, expected_text="Never")
+
+
+class ClassE(Generic[T]):
+    __match_args__ = ("x",)
+    x: list[T]
+
+
+class ClassF(ClassE[T]):
+    pass
+
+
+def func14(subj: ClassE[T]) -> T | None:
+    match subj:
+        case ClassF(a):
+            reveal_type(subj, expected_text="ClassF[T@func14]")
+            reveal_type(a, expected_text="list[T@func14]")
+            return a[0]
+
+
+class IntPair(tuple[int, int]):
+    pass
+
+
+def func15(x: IntPair | None) -> None:
+    match x:
+        case IntPair((y, z)):
+            reveal_type(y, expected_text="int")
+            reveal_type(z, expected_text="int")

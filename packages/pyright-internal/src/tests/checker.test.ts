@@ -179,6 +179,12 @@ test('With5', () => {
     TestUtils.validateResults(analysisResults, 0);
 });
 
+test('With6', () => {
+    const analysisResults = TestUtils.typeAnalyzeSampleFiles(['with6.py']);
+
+    TestUtils.validateResults(analysisResults, 0);
+});
+
 test('Mro1', () => {
     const analysisResults = TestUtils.typeAnalyzeSampleFiles(['mro1.py']);
 
@@ -340,6 +346,13 @@ test('PyrightIgnore2', () => {
     TestUtils.validateResults(analysisResults, 2, 3);
 });
 
+test('PyrightComment1', () => {
+    const configOptions = new ConfigOptions('.');
+
+    const analysisResults = TestUtils.typeAnalyzeSampleFiles(['pyrightComment1.py'], configOptions);
+    TestUtils.validateResults(analysisResults, 7);
+});
+
 test('DuplicateImports1', () => {
     const configOptions = new ConfigOptions('.');
 
@@ -353,11 +366,11 @@ test('DuplicateImports1', () => {
     TestUtils.validateResults(analysisResults, 2);
 });
 
-test('ParamName1', () => {
+test('ParamNames1', () => {
     const configOptions = new ConfigOptions('.');
 
     let analysisResults = TestUtils.typeAnalyzeSampleFiles(['paramNames1.py'], configOptions);
-    TestUtils.validateResults(analysisResults, 0, 4);
+    TestUtils.validateResults(analysisResults, 0, 7);
 
     configOptions.diagnosticRuleSet.reportSelfClsParameterName = 'none';
     analysisResults = TestUtils.typeAnalyzeSampleFiles(['paramNames1.py'], configOptions);
@@ -365,7 +378,7 @@ test('ParamName1', () => {
 
     configOptions.diagnosticRuleSet.reportSelfClsParameterName = 'error';
     analysisResults = TestUtils.typeAnalyzeSampleFiles(['paramNames1.py'], configOptions);
-    TestUtils.validateResults(analysisResults, 4, 0);
+    TestUtils.validateResults(analysisResults, 7, 0);
 });
 
 test('ParamType1', () => {
@@ -382,7 +395,7 @@ test('Python2', () => {
 test('InconsistentSpaceTab1', () => {
     const analysisResults = TestUtils.typeAnalyzeSampleFiles(['inconsistentSpaceTab1.py']);
 
-    TestUtils.validateResults(analysisResults, 4);
+    TestUtils.validateResults(analysisResults, 1);
 });
 
 test('InconsistentSpaceTab2', () => {
@@ -418,7 +431,7 @@ test('UnusedExpression1', () => {
 
     // By default, this is a warning.
     let analysisResults = TestUtils.typeAnalyzeSampleFiles(['unusedExpression1.py'], configOptions);
-    TestUtils.validateResults(analysisResults, 0, 10);
+    TestUtils.validateResults(analysisResults, 0, 14);
 
     // Disable it.
     configOptions.diagnosticRuleSet.reportUnusedExpression = 'none';
@@ -428,7 +441,26 @@ test('UnusedExpression1', () => {
     // Enable it as an error.
     configOptions.diagnosticRuleSet.reportUnusedExpression = 'error';
     analysisResults = TestUtils.typeAnalyzeSampleFiles(['unusedExpression1.py'], configOptions);
-    TestUtils.validateResults(analysisResults, 10);
+    TestUtils.validateResults(analysisResults, 14);
+});
+
+test('UnusedImport1', () => {
+    const configOptions = new ConfigOptions('.');
+
+    // Enabled it
+    configOptions.diagnosticRuleSet.reportUnusedImport = 'warning';
+    let analysisResults = TestUtils.typeAnalyzeSampleFiles(['unusedImport1.py'], configOptions);
+    TestUtils.validateResults(analysisResults, 0, 2);
+
+    // Disable it.
+    configOptions.diagnosticRuleSet.reportUnusedImport = 'none';
+    analysisResults = TestUtils.typeAnalyzeSampleFiles(['unusedImport1.py'], configOptions);
+    TestUtils.validateResults(analysisResults, 0);
+
+    // Enable it as an error.
+    configOptions.diagnosticRuleSet.reportUnusedImport = 'error';
+    analysisResults = TestUtils.typeAnalyzeSampleFiles(['unusedImport1.py'], configOptions);
+    TestUtils.validateResults(analysisResults, 2);
 });
 
 test('UninitializedVariable1', () => {
@@ -442,6 +474,12 @@ test('UninitializedVariable1', () => {
     configOptions.diagnosticRuleSet.reportUninitializedInstanceVariable = 'error';
     analysisResults = TestUtils.typeAnalyzeSampleFiles(['uninitializedVariable1.py'], configOptions);
     TestUtils.validateResults(analysisResults, 1);
+});
+
+test('RegionComments1', () => {
+    const analysisResults = TestUtils.typeAnalyzeSampleFiles(['regionComments1.py']);
+
+    TestUtils.validateResults(analysisResults, 2);
 });
 
 // For now, this functionality is disabled.
@@ -461,3 +499,25 @@ test('UninitializedVariable1', () => {
 //     const analysisResults3 = TestUtils.typeAnalyzeSampleFiles(['deprecated1.py'], configOptions);
 //     TestUtils.validateResults(analysisResults3, 0, 0, 0, 0, 13);
 // });
+
+test('Deprecated2', () => {
+    const configOptions = new ConfigOptions('.');
+
+    const analysisResults1 = TestUtils.typeAnalyzeSampleFiles(['deprecated2.py'], configOptions);
+    TestUtils.validateResults(analysisResults1, 0, 0, 0, undefined, undefined, 6);
+
+    configOptions.diagnosticRuleSet.reportDeprecated = 'error';
+    const analysisResults2 = TestUtils.typeAnalyzeSampleFiles(['deprecated2.py'], configOptions);
+    TestUtils.validateResults(analysisResults2, 6);
+});
+
+test('Deprecated3', () => {
+    const configOptions = new ConfigOptions('.');
+
+    const analysisResults1 = TestUtils.typeAnalyzeSampleFiles(['deprecated3.py'], configOptions);
+    TestUtils.validateResults(analysisResults1, 0, 0, 0, undefined, undefined, 5);
+
+    configOptions.diagnosticRuleSet.reportDeprecated = 'error';
+    const analysisResults2 = TestUtils.typeAnalyzeSampleFiles(['deprecated3.py'], configOptions);
+    TestUtils.validateResults(analysisResults2, 5);
+});

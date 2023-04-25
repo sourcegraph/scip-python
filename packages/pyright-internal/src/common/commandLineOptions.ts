@@ -9,6 +9,7 @@
  * of the analyzer).
  */
 
+import { TaskListToken } from './diagnostic';
 import { PythonVersion } from './pythonVersion';
 
 export const enum DiagnosticSeverityOverrides {
@@ -43,6 +44,15 @@ export class CommandLineOptions {
     // directories, in which case all "*.py" files within those directories
     // are included.
     fileSpecs: string[] = [];
+
+    // A list of file specs to exclude in the analysis. Can contain
+    // directories, in which case all "*.py" files within those directories
+    // are excluded.
+    excludeFileSpecs: string[] = [];
+
+    // A list of file specs whose errors and warnings should be ignored even
+    // if they are included in the transitive closure of included files.
+    ignoreFileSpecs: string[] = [];
 
     // Watch for changes in workspace source files.
     watchForSourceChanges?: boolean | undefined;
@@ -118,6 +128,9 @@ export class CommandLineOptions {
     // Use indexing.
     indexing?: boolean | undefined;
 
+    // Task list tokens, used for VS task list population
+    taskListTokens?: TaskListToken[] | undefined;
+
     // Use type evaluator call tracking.
     logTypeEvaluationTime = false;
 
@@ -128,5 +141,5 @@ export class CommandLineOptions {
     enableAmbientAnalysis = true;
 
     // Analyze functions and methods that have no type annotations?
-    analyzeUnannotatedFunctions = true;
+    analyzeUnannotatedFunctions?: boolean;
 }

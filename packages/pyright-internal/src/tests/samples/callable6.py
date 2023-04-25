@@ -13,14 +13,15 @@ TA2 = Callable[[int, Unpack[Tuple[int, ...]], Unpack[Tuple[int, int, str]], str]
 
 TA3 = Callable[[int, Unpack[Tuple[int, int]], str], int]
 
+TA4 = Callable[[Unpack[Tuple[int, ...]]], _T]
 
-def func1(x: TA1):
+def func1(x: TA1[int]):
     r1 = x(3, 4, 5, (1, 2, "hi"), "hi")
     reveal_type(r1, expected_text="int")
 
     x(3, (1, 2, "hi"), "hi")
 
-    # This should generage an error because the first argument is not an int.
+    # This should generate an error because the first argument is not an int.
     x(None, (1, 2, "hi"), "hi")
 
     y = [1, 2, 3]
@@ -35,6 +36,10 @@ def func2(x: TA3):
 
     # This should generate an error.
     x(3, 4, "hi", "hi")
+
+
+def func6(x: TA4):
+    x()
 
 
 Ts = TypeVarTuple("Ts")

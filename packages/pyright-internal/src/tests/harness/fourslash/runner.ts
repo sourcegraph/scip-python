@@ -95,5 +95,6 @@ ${code}
         if (cb) {
             cb(...args);
         }
+        state.dispose();
     }
 }

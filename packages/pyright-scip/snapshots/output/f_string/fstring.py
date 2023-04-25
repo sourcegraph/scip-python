@@ -8,12 +8,15 @@ var = ", world!"
 #            > ```
 
 print(f"var: hello {var}")
-#^^^^ reference  python-stdlib 3.10 builtins/__init__:print().
+#^^^^ reference  python-stdlib 3.11 builtins/__init__:print().
 #external documentation ```python
-#            > (function)
-#            > print(*values: object, sep: str | None =...
-#            > 
-#            > print(*values: object, sep: str | None =...
+#            > (function) def print(
+#            >     *values: object,
+#            >     sep: str | None = " ",
+#            >     end: str | None = "\n",
+#            >     file: SupportsWrite[str] | None = No...
+#            >     flush: Literal[False] = False
+#            > ) -> None
 #            > ```
 #                   ^^^ reference  snapshot-util 0.1 fstring/var.
 

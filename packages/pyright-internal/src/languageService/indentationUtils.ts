@@ -3,13 +3,15 @@
  * Copyright (c) Microsoft Corporation.
  * Licensed under the MIT license.
  *
- * Provides code to get indentation and re-indent code to the given indentation.
+ * Provides code to get indentation and re-indent code for the
+ * given indentation.
  */
 
 import Char from 'typescript-char';
 
 import {
     findNodeByOffset,
+    getFirstAncestorOrSelf,
     getFirstAncestorOrSelfOfKind,
     getStringValueRange,
     getTokenAt,
@@ -19,7 +21,7 @@ import { appendArray } from '../common/collectionUtils';
 import { convertOffsetToPosition, convertTextRangeToRange } from '../common/positionUtils';
 import { Range, TextRange } from '../common/textRange';
 import { TextRangeCollection } from '../common/textRangeCollection';
-import { ModuleNode, ParseNode, ParseNodeType, SuiteNode } from '../parser/parseNodes';
+import { MatchNode, ModuleNode, ParseNode, ParseNodeType, SuiteNode } from '../parser/parseNodes';
 import { ParseResults } from '../parser/parser';
 import { defaultTabSize } from '../parser/tokenizer';
 import {
@@ -42,11 +44,15 @@ interface TokenInfo extends TextRange {
     multilineDocComment: boolean;
 }
 
-export function getIndentation(parseResults: ParseResults, offset: number, preferDedent?: boolean): number {
+export function getNewlineIndentation(
+    parseResults: ParseResults,
+    newlineOffset: number,
+    preferDedent?: boolean
+): number {
     // ex)
     // a = """
     //      | <= here
-    const strIndent = _tryHandleStringLiterals(parseResults, offset);
+    const strIndent = _tryHandleStringLiterals(parseResults, newlineOffset);
     if (strIndent !== undefined) {
         return strIndent;
     }
@@ -57,13 +63,13 @@ export function getIndentation(parseResults: ParseResults, offset: number, prefe
     // or
     // a = (1 +
     //     | <= here
-    const exprIndent = _tryHandleMultilineConstructs(parseResults, offset);
+    const exprIndent = _tryHandleMultilineConstructs(parseResults, newlineOffset);
     if (exprIndent !== undefined) {
         return exprIndent;
     }
 
-    preferDedent = preferDedent ?? _shouldDedentAfterKeyword(parseResults.tokenizerOutput.tokens, offset);
-    return Math.max(_getIndentation(parseResults, offset, preferDedent).indentation, 0);
+    preferDedent = preferDedent ?? _shouldDedentAfterKeyword(parseResults, newlineOffset);
+    return Math.max(_getIndentation(parseResults, newlineOffset, preferDedent).indentation, 0);
 }
 
 export function reindentSpan(
@@ -76,7 +82,7 @@ export function reindentSpan(
     const texts: string[] = [];
 
     // Currently _convertTokenStreams converts text in the span as whitespace and non whitespace
-    // and then this function puts those back to string with reidentation if needed.
+    // and then this function puts those back to string with reindentation if needed.
     //
     // Another approach we can take is converting the text in 2 chunks that require reindentation and not
     // and process chunks that require reindentation line by line (like how it currently does for
@@ -86,14 +92,14 @@ export function reindentSpan(
 
     indentDelta =
         indentation -
-        _getIndentationFromText(parseResults, previousInfo.range.start.line, previousInfo.range.start.character)
+        getIndentationFromText(parseResults, previousInfo.range.start.line, previousInfo.range.start.character)
             .indentation;
 
     if (previousInfo.multilineDocComment) {
         appendArray(texts, _reindentLinesFromText(parseResults, previousInfo, indentDelta));
     } else {
         if (indentFirstToken) {
-            texts.push(_createIndentationString(parseResults, indentation));
+            texts.push(createIndentationString(parseResults, indentation));
         }
 
         texts.push(previousInfo.text);
@@ -113,11 +119,11 @@ export function reindentSpan(
             } else {
                 // Put indentation for the first token on the line.
                 texts.push(
-                    _createIndentationString(
+                    createIndentationString(
                         parseResults,
                         Math.max(
                             0,
-                            _getIndentationFromText(parseResults, info.range.start.line, info.range.start.character)
+                            getIndentationFromText(parseResults, info.range.start.line, info.range.start.character)
                                 .indentation + indentDelta
                         )
                     )
@@ -134,7 +140,18 @@ export function reindentSpan(
         previousInfo = info;
     }
 
-    return texts.join('');
+    return {
+        originalSpan: TextRange.combine(tokenInfo)!,
+        text: texts.join(''),
+    };
+}
+
+export function getModuleStatementIndentation(parseResults: ParseResults) {
+    if (parseResults.parseTree.statements.length === 0) {
+        return getNewlineIndentation(parseResults, parseResults.parseTree.length, /* preferDedent */ true);
+    }
+
+    return getNewlineIndentation(parseResults, parseResults.parseTree.statements[0].start, /* preferDedent */ true);
 }
 
 function _getIndentation(
@@ -143,7 +160,7 @@ function _getIndentation(
     preferDedent: boolean
 ): { token?: Token; indentation: number } {
     const tokens = parseResults.tokenizerOutput.tokens;
-    const startingToken = _findPreviousNonWhitespaceToken(tokens, offset);
+    const startingToken = findNonWhitespaceTokenAtOrBeforeOffset(tokens, offset);
     if (!startingToken) {
         return {
             indentation: 0,
@@ -157,38 +174,57 @@ function _getIndentation(
         };
     }
 
+    // Special-case the match statement since it does not contain a suite. Case statements do,
+    // but match does not.
+    if (node.nodeType === ParseNodeType.Match) {
+        const tabSize = _getTabSize(parseResults);
+        const outerContainer = getContainer(node, /*includeSelf*/ false);
+        const result = _getIndentationForNode(parseResults, offset, outerContainer ?? parseResults.parseTree, node);
+        result.indentation += tabSize;
+        return result;
+    }
+
     const suite = getFirstAncestorOrSelfOfKind(node, ParseNodeType.Suite);
     if (!suite) {
-        return _getIndentationForNode(parseResults, parseResults.parseTree, node);
+        return _getIndentationForNode(parseResults, offset, parseResults.parseTree, node);
     }
 
     const suiteSpan = convertTextRangeToRange(suite, parseResults.tokenizerOutput.lines);
-    if (preferDedent || suiteSpan.start.line === suiteSpan.end.line) {
+    if (preferDedent || (suiteSpan.start.line === suiteSpan.end.line && suite.statements.length > 0)) {
         // Go one more level up.
         const outerContainer = getContainer(suite, /*includeSelf*/ false);
-        return _getIndentationForNode(parseResults, outerContainer ?? parseResults.parseTree, suite);
+        return _getIndentationForNode(parseResults, offset, outerContainer ?? parseResults.parseTree, suite);
     }
 
-    return _getIndentationForNode(parseResults, suite, node);
+    return _getIndentationForNode(parseResults, offset, suite, node);
 }
 
 function _getIndentationForNode(
     parseResults: ParseResults,
-    container: ModuleNode | SuiteNode,
+    offset: number,
+    container: ModuleNode | SuiteNode | MatchNode,
     current: ParseNode
 ): { token?: Token; indentation: number } {
     if (container.nodeType === ParseNodeType.Module) {
         // It is at the module level
         return {
-            token: _getFirstTokenOFStatement(parseResults, container, current),
+            token: _getFirstTokenOfStatement(parseResults, container, current),
             indentation: 0,
         };
     }
 
-    if (_containsNoIndentBeforeFirstStatement(parseResults, container)) {
+    if (
+        container.nodeType === ParseNodeType.Match ||
+        _containsNoIndentBeforeFirstStatement(parseResults, offset, container)
+    ) {
         const tabSize = _getTabSize(parseResults);
         const outerContainer = getContainer(container, /*includeSelf*/ false);
-        const result = _getIndentationForNode(parseResults, outerContainer ?? parseResults.parseTree, container);
+        const result = _getIndentationForNode(
+            parseResults,
+            offset,
+            outerContainer ?? parseResults.parseTree,
+            container
+        );
         return {
             token: result.token,
             indentation: result.indentation + tabSize,
@@ -196,19 +232,36 @@ function _getIndentationForNode(
     } else {
         const tokens = parseResults.tokenizerOutput.tokens;
         return {
-            token: _getFirstTokenOFStatement(parseResults, container, current),
+            token: _getFirstTokenOfStatement(parseResults, container, current),
             indentation: _getIndentationFromIndentToken(tokens, tokens.getItemAtPosition(container.start)),
         };
     }
 }
 
-function _containsNoIndentBeforeFirstStatement(parseResults: ParseResults, suite: SuiteNode): boolean {
-    if (suite.statements.filter((s) => s.length > 0).length === 0) {
+function _containsNoIndentBeforeFirstStatement(parseResults: ParseResults, offset: number, suite: SuiteNode): boolean {
+    const statements = suite.statements.filter((s) => s.length > 0);
+    if (statements.length === 0) {
         // There is no statement in the suite.
         // ex)
         // def foo():
         // | <= here
         return true;
+    }
+
+    if (statements.length === 1) {
+        if (statements[0].nodeType !== ParseNodeType.StatementList || statements[0].statements.length === 1) {
+            if (statements[0].start >= offset) {
+                const statementLine = parseResults.tokenizerOutput.lines.getItemAtPosition(statements[0].start);
+                const offsetLine = parseResults.tokenizerOutput.lines.getItemAtPosition(offset);
+                if (statementLine === offsetLine) {
+                    // We are calculating indent for only statement in suite.
+                    // ex)
+                    // def foo():
+                    //     |pass <= offset before first statement
+                    return true;
+                }
+            }
+        }
     }
 
     // If suite contains no indent before first statement, then consider user is in the middle of writing block
@@ -235,7 +288,7 @@ function _containsNoIndentBeforeFirstStatement(parseResults: ParseResults, suite
     return true;
 }
 
-function _getFirstTokenOFStatement(
+function _getFirstTokenOfStatement(
     parseResults: ParseResults,
     container: ModuleNode | SuiteNode,
     span: TextRange
@@ -266,6 +319,7 @@ function _getIndentationFromIndentToken(tokens: TextRangeCollection<Token>, inde
 
 function _tryHandleMultilineConstructs(parseResults: ParseResults, offset: number): number | undefined {
     const tokens = parseResults.tokenizerOutput.tokens;
+    const lines = parseResults.tokenizerOutput.lines;
 
     // Make sure we use next token to get line delta.
     // This is just to handle how tokenizer associates new lines to which token.
@@ -276,9 +330,6 @@ function _tryHandleMultilineConstructs(parseResults: ParseResults, offset: numbe
     if (index < 0) {
         return undefined;
     }
-
-    const lines = parseResults.tokenizerOutput.lines;
-    const tabSize = _getTabSize(parseResults);
 
     for (let i = index; i > 0; i--) {
         const token = _getTokenAtIndex(tokens, i)!;
@@ -293,35 +344,10 @@ function _tryHandleMultilineConstructs(parseResults: ParseResults, offset: numbe
         if (
             tokenSpan &&
             previousTokenSpan &&
-            previousTokenSpan.end.line < tokenSpan.start.line &&
+            previousTokenSpan.start.line < tokenSpan.start.line &&
             previousToken!.type !== TokenType.NewLine
         ) {
-            const indentationResult = _getIndentation(parseResults, previousToken!.start, /* preferDedent */ false);
-            const currentPosition = convertOffsetToPosition(offset, lines);
-
-            // Handle multiline constructs (explicit or implicit)
-            // ex) def foo \
-            //         | <= here
-            // or
-            //     i = \
-            //         \
-            //         | <= here
-            // or
-            //     a = (
-            //         | <= here
-            const lineDelta =
-                currentPosition.line -
-                (indentationResult.token
-                    ? convertOffsetToPosition(indentationResult.token.start, lines).line
-                    : previousTokenSpan.start.line);
-
-            const indentation = _getFirstNonBlankLineIndentationFromText(
-                parseResults,
-                currentPosition.line,
-                previousTokenSpan.start.line
-            );
-
-            return indentation + (lineDelta === 1 ? tabSize : 0);
+            return _getIndentationForNextLine(parseResults, previousToken, token, offset);
         }
     }
 
@@ -367,10 +393,97 @@ function _tryHandleStringLiterals(parseResults: ParseResults, offset: number): n
     return _getFirstNonBlankLineIndentationFromText(parseResults, current.line, begin.line);
 }
 
+function _isOpenToken(token: Token) {
+    return (
+        token.type === TokenType.OpenParenthesis ||
+        token.type === TokenType.OpenBracket ||
+        token.type === TokenType.OpenCurlyBrace
+    );
+}
+
+function _isCloseToken(token: Token) {
+    return (
+        token.type === TokenType.CloseParenthesis ||
+        token.type === TokenType.CloseBracket ||
+        token.type === TokenType.CloseCurlyBrace
+    );
+}
+
+function _getIndentationForNextLine(parseResults: ParseResults, prevToken: Token, nextToken: Token, offset: number) {
+    // Get the last token on the same line as the previous token
+    const lines = parseResults.tokenizerOutput.lines;
+    const lineIndex = convertOffsetToPosition(prevToken.start, lines).line;
+    const line = lines.getItemAt(lineIndex);
+    const tabSize = _getTabSize(parseResults);
+    let token: Token | undefined = prevToken;
+
+    // Go backwards through tokens up until the front of the line
+    let whitespaceOnly = true;
+    let closeCount = 0;
+    while (token && token.start >= line.start) {
+        if (_isCloseToken(token)) {
+            whitespaceOnly = false;
+            closeCount += 1;
+        } else if (_isOpenToken(token) && closeCount === 0) {
+            // Special case for parenthesis
+            if (token.type === TokenType.OpenParenthesis && whitespaceOnly) {
+                const baseIndentation = _getIndentation(parseResults, token.start, false).indentation;
+
+                // In PEP 8, this should be this case here:
+                // # Add 4 spaces (an extra level of indentation) to distinguish arguments from the rest.
+                // def long_function_name(
+                //         var_one, var_two, var_three,
+                //         var_four):
+                //     print(var_one)
+                //
+                const node = findNodeByOffset(parseResults.parseTree, token.start - 1);
+                const funcNode = getFirstAncestorOrSelfOfKind(node, ParseNodeType.Function);
+                if (
+                    funcNode &&
+                    funcNode.nodeType === ParseNodeType.Function &&
+                    convertOffsetToPosition(funcNode.start, lines).line === lineIndex
+                ) {
+                    return baseIndentation + tabSize * 2;
+                }
+
+                // Not inside a function, just need one tab. See this in PEP 8
+                // # Hanging indents should add a level.
+                // foo = long_function_name(
+                //     var_one, var_two,
+                //     var_three, var_four)
+                return baseIndentation + tabSize;
+            } else if (whitespaceOnly) {
+                return _getIndentation(parseResults, token.start, false).indentation + tabSize;
+            } else {
+                // In PEP 8, this should be this case here:
+                // # Aligned with opening delimiter.
+                // def long_function_name(var_one, var_two,
+                //                        var_three, var_four)
+                // + 1 is to accommodate for the parenthesis.
+                return token.start - line.start + 1;
+            }
+        } else if (_isOpenToken(token) && closeCount > 0) {
+            closeCount--;
+            whitespaceOnly = false;
+        } else if (!_isWhitespaceToken(token.type)) {
+            // Found a non whitespace token before we returned.
+            whitespaceOnly = false;
+        }
+        token = findNonWhitespaceTokenAtOrBeforeOffset(parseResults.tokenizerOutput.tokens, token.start - 1);
+    }
+
+    // No parenthesis found
+    return _getFirstNonBlankLineIndentationFromText(
+        parseResults,
+        convertOffsetToPosition(offset, parseResults.tokenizerOutput.lines).line,
+        lineIndex
+    );
+}
+
 function _getFirstNonBlankLineIndentationFromText(parseResults: ParseResults, currentLine: number, endingLine: number) {
     endingLine = Math.max(endingLine, 0);
     for (let i = currentLine; i >= endingLine; i--) {
-        const result = _getIndentationFromText(parseResults, i);
+        const result = getIndentationFromText(parseResults, i);
 
         if (!_isBlankLine(parseResults, i, result.charOffset)) {
             // Not blank line.
@@ -379,11 +492,11 @@ function _getFirstNonBlankLineIndentationFromText(parseResults: ParseResults, cu
         }
     }
 
-    return _getIndentationFromText(parseResults, endingLine).indentation;
+    return getIndentationFromText(parseResults, endingLine).indentation;
 }
 
 function _findStringToken(tokens: TextRangeCollection<Token>, index: number): Token | undefined {
-    const token = _findPreviousNonWhitespaceTokenFromIndex(tokens, index);
+    const token = _findNonWhitespaceTokenAtOrBeforeIndex(tokens, index);
     if (!token) {
         return undefined;
     }
@@ -391,19 +504,19 @@ function _findStringToken(tokens: TextRangeCollection<Token>, index: number): To
     return token.type === TokenType.String ? token : undefined;
 }
 
-function _findPreviousNonWhitespaceToken(tokens: TextRangeCollection<Token>, offset: number): Token | undefined {
+export function findNonWhitespaceTokenAtOrBeforeOffset(
+    tokens: TextRangeCollection<Token>,
+    offset: number
+): Token | undefined {
     const index = tokens.getItemAtPosition(offset);
     if (index < 0) {
         return undefined;
     }
 
-    return _findPreviousNonWhitespaceTokenFromIndex(tokens, index);
+    return _findNonWhitespaceTokenAtOrBeforeIndex(tokens, index);
 }
 
-function _findPreviousNonWhitespaceTokenFromIndex(
-    tokens: TextRangeCollection<Token>,
-    index: number
-): Token | undefined {
+function _findNonWhitespaceTokenAtOrBeforeIndex(tokens: TextRangeCollection<Token>, index: number): Token | undefined {
     for (let i = index; i >= 0; i--) {
         const token = _getTokenAtIndex(tokens, i);
         if (!token) {
@@ -446,11 +559,11 @@ function _getTokenAtIndex(tokens: TextRangeCollection<Token>, index: number) {
     return tokens.getItemAt(index);
 }
 
-function _shouldDedentAfterKeyword(tokens: TextRangeCollection<Token>, offset: number) {
-    // Keeping the PTVS smart indenter behavior.
+function _shouldDedentAfterKeyword(parseResults: ParseResults, offset: number) {
     // For now, we won't include all small statements that can put at single line.
     // See parser.ts to see all small statements or see python grammar.
     // ex) def foo(): pass
+    const tokens = parseResults.tokenizerOutput.tokens;
     const index = tokens.getItemAtPosition(offset);
     if (index < 0) {
         return false;
@@ -477,18 +590,36 @@ function _shouldDedentAfterKeyword(tokens: TextRangeCollection<Token>, offset: n
                 }
 
                 const keyword = token as KeywordToken;
-                return (
+                // Dedent if we found one of these keywords
+                if (
                     keyword.keywordType === KeywordType.Pass ||
                     keyword.keywordType === KeywordType.Return ||
                     keyword.keywordType === KeywordType.Break ||
                     keyword.keywordType === KeywordType.Continue ||
                     keyword.keywordType === KeywordType.Raise
-                );
-            }
+                ) {
+                    return true;
+                }
 
-            default:
-                return false;
+                // Otherwise, unless the keyword can be used as a return/raise value, don't dedent.
+                if (
+                    keyword.keywordType !== KeywordType.True &&
+                    keyword.keywordType !== KeywordType.False &&
+                    keyword.keywordType !== KeywordType.None &&
+                    keyword.keywordType !== KeywordType.Debug
+                ) {
+                    return false;
+                }
+            }
         }
+
+        // Dedent if we've found a return or raise statement
+        const node = findNodeByOffset(parseResults.parseTree, token.start);
+        const returnOrRaise = getFirstAncestorOrSelf(
+            node,
+            (x) => x.nodeType === ParseNodeType.Return || x.nodeType === ParseNodeType.Raise
+        );
+        return !!returnOrRaise;
     }
 
     return false;
@@ -523,7 +654,7 @@ function _getLineEndingLength(parseResults: ParseResults, line: number) {
     return length;
 }
 
-function _getIndentationFromText(
+export function getIndentationFromText(
     parseResults: ParseResults,
     line: number,
     uptoLineOffset?: number
@@ -580,7 +711,7 @@ function _convertTokenStreams(parseResults: ParseResults, span: TextRange) {
 
     let endIndex = Math.min(tokens.getItemAtPosition(TextRange.getEnd(span)), tokens.length - 1);
     const endToken = _getTokenAtIndex(tokens, endIndex)!;
-    if (TextRange.getEnd(span) < endToken.start) {
+    if (TextRange.getEnd(span) <= endToken.start) {
         // ex) |< = span end [endToken]
         endIndex--;
     }
@@ -631,6 +762,12 @@ function _convertTokenStreams(parseResults: ParseResults, span: TextRange) {
     // Handle text in whitespace that is not part of token stream.
     let previousInfo = tokenInfoArray[0];
     const additionalTokens: TokenInfo[] = [];
+    if (previousInfo.kind === 'comment') {
+        // ex) token [#] comment
+        const start = startIndex === 0 ? 0 : TextRange.getEnd(_getTokenAtIndex(tokens, startIndex - 1)!);
+        _addTokenInfoIfMatch(parseResults, start, previousInfo.start, Char.Hash, additionalTokens);
+    }
+
     for (let i = 1; i < tokenInfoArray.length; i++) {
         const info = tokenInfoArray[i];
 
@@ -677,9 +814,13 @@ function _convertTokenStreams(parseResults: ParseResults, span: TextRange) {
         // It is the first token in the file.
         previousInfo.firstTokenOnLine = true;
     } else {
-        const previousToken = _findPreviousNonWhitespaceTokenFromIndex(tokens, startIndex - 1)!;
-        const previousEnd = convertOffsetToPosition(TextRange.getEnd(previousToken), lines);
-        previousInfo.firstTokenOnLine = previousEnd.line !== previousInfo.range.start.line;
+        const previousNonWhitespaceToken = _findNonWhitespaceTokenAtOrBeforeIndex(tokens, startIndex - 1);
+        if (previousNonWhitespaceToken) {
+            const previousEnd = convertOffsetToPosition(TextRange.getEnd(previousNonWhitespaceToken), lines);
+            previousInfo.firstTokenOnLine = previousEnd.line !== previousInfo.range.start.line;
+        } else {
+            previousInfo.firstTokenOnLine = true;
+        }
     }
 
     previousInfo.multilineDocComment = _isMultilineDocComment(parseResults, previousInfo);
@@ -764,7 +905,7 @@ function _reindentLineFromText(
     indentDelta: number,
     range?: TextRange
 ): string {
-    const result = _getIndentationFromText(parseResults, line);
+    const result = getIndentationFromText(parseResults, line);
     if (_isBlankLine(parseResults, line, result.charOffset)) {
         return '';
     }
@@ -778,7 +919,7 @@ function _reindentLineFromText(
     }
 
     const text = parseResults.text.substr(lineRange.start + result.charOffset, lineRange.length - result.charOffset);
-    return _createIndentationString(parseResults, Math.max(result.indentation + indentDelta, 0)) + text;
+    return createIndentationString(parseResults, Math.max(result.indentation + indentDelta, 0)) + text;
 }
 
 function _getTabSize(parseResults: ParseResults) {
@@ -792,7 +933,7 @@ function _getTabSize(parseResults: ParseResults) {
     return tabLength;
 }
 
-function _createIndentationString(parseResults: ParseResults, indentation: number) {
+export function createIndentationString(parseResults: ParseResults, indentation: number) {
     const tab = parseResults.tokenizerOutput.predominantTabSequence;
     const tabLength = tab.length;
     if (tabLength === 1 && tab.charCodeAt(0) === Char.Tab) {

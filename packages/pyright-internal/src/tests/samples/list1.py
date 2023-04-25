@@ -12,6 +12,7 @@ from typing import (
     Optional,
     Sequence,
     TypeVar,
+    Union,
 )
 
 
@@ -88,3 +89,24 @@ reveal_type(func1(["name", "country"]), expected_type="Literal['name', 'country'
 
 # This should generate an error.
 func1(["id"])
+
+
+def func2(thing: Union[str, List[Union[str, int]], List[List[Union[str, int]]]]):
+    ...
+
+
+func2("")
+func2(["", 0])
+func2([["", 0], ["", 0]])
+func2([[""]])
+
+
+def func3(value: _T) -> list[_T]:
+    to_add = [value, str(value)]
+    # This should generate an error.
+    return to_add
+
+
+def func4(value: _T) -> list[_T]:
+    # This should generate an error.
+    return [value, str(value)]

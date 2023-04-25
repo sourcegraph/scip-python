@@ -20,6 +20,7 @@ export interface ImplicitImport {
     isNativeLib: boolean;
     name: string;
     path: string;
+    pyTypedInfo?: PyTypedInfo | undefined;
 }
 
 export interface ImportResult {
@@ -38,8 +39,12 @@ export interface ImportResult {
     isPartlyResolved: boolean;
 
     // True if the import refers to a namespace package (a
-    // folder without an __init__.py file).
+    // folder without an __init__.py(i) file at every level).
     isNamespacePackage: boolean;
+
+    // True if there is an __init__.py(i) file in the final
+    // directory resolved.
+    isInitFilePresent: boolean;
 
     // Did it resolve to a stub within a stub package?
     isStubPackage: boolean;

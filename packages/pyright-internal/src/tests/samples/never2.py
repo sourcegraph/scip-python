@@ -1,48 +1,23 @@
-# This sample tests the handling of the "Never" type,
-# ensuring that it's treated as the same as NoReturn.
+# This sample validates that Never is treated as a bottom type for
+# covariant type arguments.
 
-from typing import NoReturn
-from typing_extensions import Never
+from typing import Generic, Never, TypeVar
 
+U = TypeVar("U")
 
-def assert_never1(val: Never) -> NoReturn:
-    raise Exception("Should never get here")
+T_co = TypeVar("T_co", covariant=True)
+class ClassA(Generic[T_co]):
+    pass
 
-
-def assert_never2(val: NoReturn) -> NoReturn:
-    raise Exception("Should never get here")
-
-
-# This should generate an error because Never doesn't accept type arguments.
-def assert_never3(val: Never[int]):
-    ...
+def func1(x: U) -> ClassA[U]:
+    return ClassA[Never]()
 
 
-# This should generate an error because NoReturn doesn't accept type arguments.
-def assert_never4(val: NoReturn[int]):
-    ...
+T = TypeVar("T")
+class ClassB(Generic[T]):
+    pass
 
+def func2(x: U) -> ClassB[U]:
+    # This should generate an error because T is invariant.
+    return ClassB[Never]()
 
-def func1(val: str | int) -> str:
-    if isinstance(val, (str, int)):
-        return "str or int"
-    else:
-        assert_never1(val)
-
-
-def func2(val: str | int) -> str:
-    if isinstance(val, (str, int)):
-        return "str or int"
-    else:
-        assert_never2(val)
-
-
-def func3():
-    # This should generate an error because of the missing argument.
-    assert_never1()
-
-
-reveal_type(assert_never1, expected_text="(val: Never) -> NoReturn")
-
-# This should generate an error.
-assert_never1(1)

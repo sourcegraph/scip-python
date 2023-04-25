@@ -16,6 +16,7 @@ import {
     isClassDeclaration,
     isFunctionDeclaration,
     isParameterDeclaration,
+    isUnresolvedAliasDeclaration,
     isVariableDeclaration,
     ModuleLoaderActions,
 } from '../analyzer/declaration';
@@ -26,10 +27,12 @@ import {
 } from '../analyzer/declarationUtils';
 import { ImportResolver } from '../analyzer/importResolver';
 import {
+    getImportGroupFromModuleNameAndType,
     getRelativeModuleName,
     getTextEditsForAutoImportInsertions,
     getTextEditsForAutoImportSymbolAddition,
     getTopLevelImports,
+    ImportGroup,
     ImportNameInfo,
     ImportNameWithModuleInfo,
     ImportStatements,
@@ -46,9 +49,11 @@ import { TypeEvaluator } from '../analyzer/typeEvaluatorTypes';
 import { throwIfCancellationRequested } from '../common/cancellationUtils';
 import { addIfUnique, appendArray, createMapFromItems, getOrAdd, removeArrayElements } from '../common/collectionUtils';
 import { ConfigOptions } from '../common/configOptions';
+import { isArray } from '../common/core';
 import { TextEditAction } from '../common/editAction';
 import { getDirectoryPath } from '../common/pathUtils';
 import { convertOffsetToPosition } from '../common/positionUtils';
+import { TextEditTracker } from '../common/textEditTracker';
 import { TextRange } from '../common/textRange';
 import { ModuleNameNode, NameNode, ParseNode, ParseNodeType } from '../parser/parseNodes';
 import { ParseResults } from '../parser/parser';
@@ -78,6 +83,7 @@ export class ImportAdder {
 
     applyImports(
         result: ImportData,
+        filePath: string,
         parseResults: ParseResults,
         insertionPosition: number,
         importFormat: ImportFormat,
@@ -85,14 +91,62 @@ export class ImportAdder {
     ): TextEditAction[] {
         throwIfCancellationRequested(token);
 
+        const importStatements = getTopLevelImports(parseResults.parseTree);
+        const importNameInfo = this._getImportNameWithModuleInfo(filePath, result, importFormat);
+
+        const edits: TextEditAction[] = [];
+        const newNameInfo: ImportNameWithModuleInfo[] = [];
+        for (const moduleAndInfo of createMapFromItems(importNameInfo, (i) => i.module.moduleName)) {
+            if (!this._tryProcessExistingImports(moduleAndInfo, importStatements, parseResults, edits)) {
+                appendArray(newNameInfo, moduleAndInfo[1]);
+                continue;
+            }
+        }
+
+        edits.push(
+            ...getTextEditsForAutoImportInsertions(
+                newNameInfo,
+                importStatements,
+                parseResults,
+                convertOffsetToPosition(insertionPosition, parseResults.tokenizerOutput.lines)
+            )
+        );
+
+        return edits;
+    }
+
+    applyImportsTo(
+        result: ImportData,
+        parseResults: ParseResults,
+        importFormat: ImportFormat,
+        textEditTracker: TextEditTracker,
+        token: CancellationToken
+    ): void {
+        throwIfCancellationRequested(token);
+
         const filePath = getFileInfo(parseResults.parseTree).filePath;
         const importStatements = getTopLevelImports(parseResults.parseTree);
-        const execEnv = this._configOptions.findExecEnvironment(filePath);
+        const importNameInfo = this._getImportNameWithModuleInfo(filePath, result, importFormat);
 
+        const newNameInfo: ImportNameWithModuleInfo[] = [];
+        for (const moduleAndInfo of createMapFromItems(importNameInfo, (i) => i.module.moduleName)) {
+            if (!this._tryProcessExistingImports(moduleAndInfo, importStatements, parseResults, textEditTracker)) {
+                appendArray(newNameInfo, moduleAndInfo[1]);
+                continue;
+            }
+        }
+
+        for (const moduleAndInfo of createMapFromItems(newNameInfo, (i) => i.module.moduleName)) {
+            this._addOrUpdateImport(moduleAndInfo, importStatements, parseResults, moduleAndInfo[1], textEditTracker);
+        }
+    }
+
+    private _getImportNameWithModuleInfo(filePath: string, result: ImportData, importFormat: ImportFormat) {
         const importNameInfo: ImportNameWithModuleInfo[] = [];
+        const execEnv = this._configOptions.findExecEnvironment(filePath);
         for (const decl of result.declarations.keys() ?? []) {
             const importInfo = this._getImportInfo(decl, filePath);
-            if (!importInfo) {
+            if (!importInfo || isUnresolvedAliasDeclaration(decl)) {
                 continue;
             }
 
@@ -120,33 +174,14 @@ export class ImportAdder {
                 (a, b) => this._areSame(a, b)
             );
         }
-
-        const edits: TextEditAction[] = [];
-        const newNameInfo: ImportNameWithModuleInfo[] = [];
-        for (const moduleAndInfo of createMapFromItems(importNameInfo, (i) => i.module.moduleName)) {
-            if (!this._tryProcessExistingImports(moduleAndInfo, importStatements, parseResults, edits)) {
-                appendArray(newNameInfo, moduleAndInfo[1]);
-                continue;
-            }
-        }
-
-        edits.push(
-            ...getTextEditsForAutoImportInsertions(
-                newNameInfo,
-                importStatements,
-                parseResults,
-                convertOffsetToPosition(insertionPosition, parseResults.tokenizerOutput.lines)
-            )
-        );
-
-        return edits;
+        return importNameInfo;
     }
 
     private _tryProcessExistingImports(
         moduleAndInfo: [string, ImportNameWithModuleInfo[]],
         importStatements: ImportStatements,
         parseResults: ParseResults,
-        edits: TextEditAction[]
+        edits: TextEditAction[] | TextEditTracker
     ) {
         for (const kindAndImports of createMapFromItems(
             importStatements.orderedImports.filter((i) => i.moduleName === moduleAndInfo[0]),
@@ -171,7 +206,12 @@ export class ImportAdder {
                                 n.node.imports.some((i) => i.name.value === m.name && i.alias?.value === m.alias)
                         )
                 );
-                appendArray(edits, getTextEditsForAutoImportSymbolAddition(info, imported[0], parseResults));
+
+                if (isArray(edits)) {
+                    appendArray(edits, getTextEditsForAutoImportSymbolAddition(info, imported[0], parseResults));
+                } else {
+                    this._addOrUpdateImport(moduleAndInfo, importStatements, parseResults, info, edits);
+                }
                 return true;
             }
 
@@ -186,6 +226,27 @@ export class ImportAdder {
         }
 
         return false;
+    }
+
+    private _addOrUpdateImport(
+        moduleAndInfo: [string, ImportNameWithModuleInfo[]],
+        importStatements: ImportStatements,
+        parseResults: ParseResults,
+        info: ImportNameWithModuleInfo[],
+        editTracker: TextEditTracker
+    ) {
+        if (info.length === 0) {
+            return;
+        }
+
+        const name = moduleAndInfo[0];
+        const nameForImportFrom = moduleAndInfo[1].length === 0 ? undefined : moduleAndInfo[1][0].nameForImportFrom;
+        const importGroup =
+            moduleAndInfo[1].length === 0
+                ? ImportGroup.Local
+                : getImportGroupFromModuleNameAndType(moduleAndInfo[1][0].module);
+
+        editTracker.addOrUpdateImport(parseResults, importStatements, { name, nameForImportFrom }, importGroup, info);
     }
 
     private _getImportInfo(
@@ -318,6 +379,10 @@ class NameCollector extends ParseTreeWalker {
     }
 
     override visitName(name: NameNode) {
+        if (!TextRange.containsRange(this._range, name)) {
+            return false;
+        }
+
         throwIfCancellationRequested(this._token);
 
         // We process dotted name as a whole rather than
