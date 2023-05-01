@@ -15,7 +15,6 @@ import {
     isDirectory,
     getFileSpec,
 } from 'pyright-internal/common/pathUtils';
-import { createFromRealFileSystem } from 'pyright-internal/common/realFileSystem';
 import { PyrightFileSystem } from 'pyright-internal/pyrightFileSystem';
 import { ScipConfig } from './lib';
 
@@ -41,6 +40,8 @@ export class ScipPyrightConfig {
 
     getConfigOptions(): ConfigOptions {
         const host = new FullAccessHost(this.fs);
+
+        // TODO: This probably should be ScipConfig.workspaceroot or similar?
         const options = new CommandLineOptions(process.cwd(), false);
 
         let config = this._getConfigOptions(host, options);

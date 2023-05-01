@@ -18,6 +18,7 @@ import { FileMatcher } from './FileMatcher';
 import { sendStatus, StatusUpdater, withStatus } from './status';
 import { scip } from './scip';
 import { ScipPyrightConfig } from './config';
+import { setProjectNamespace } from './symbols';
 
 export class Indexer {
     program: Program;
@@ -46,10 +47,10 @@ export class Indexer {
 
         this.projectFiles = new Set(matcher.matchFiles(this.pyrightConfig.include, this.pyrightConfig.exclude));
         if (scipConfig.targetOnly) {
-            const target = path.resolve(scipConfig.targetOnly);
+            scipConfig.targetOnly = path.resolve(scipConfig.targetOnly);
             const targetFiles: Set<string> = new Set();
             for (const file of this.projectFiles) {
-                if (file.startsWith(target)) {
+                if (file.startsWith(scipConfig.targetOnly)) {
                     targetFiles.add(file);
                 }
             }
@@ -64,6 +65,10 @@ export class Indexer {
 
         this.program = new Program(this.importResolver, this.pyrightConfig);
         this.program.setTrackedFiles([...this.projectFiles]);
+
+        if (scipConfig.projectNamespace) {
+            setProjectNamespace(scipConfig.projectName, this.scipConfig.projectNamespace!);
+        }
     }
 
     public index(): void {
@@ -92,7 +97,7 @@ export class Indexer {
         this.scipConfig.writeIndex(
             new scip.Index({
                 metadata: new scip.Metadata({
-                    project_root: url.pathToFileURL(this.scipConfig.workspaceRoot).toString(),
+                    project_root: url.pathToFileURL(this.getProjectRoot()).toString(),
                     text_document_encoding: scip.TextEncoding.UTF8,
                     tool_info: new scip.ToolInfo({
                         name: 'scip-python',
@@ -143,7 +148,7 @@ export class Indexer {
 
                 const filepath = sourceFile.getFilePath();
                 let doc = new scip.Document({
-                    relative_path: path.relative(this.scipConfig.workspaceRoot, filepath),
+                    relative_path: path.relative(this.getProjectRoot(), filepath),
                 });
 
                 const parseResults = sourceFile.getParseResults();
@@ -190,5 +195,13 @@ export class Indexer {
         });
 
         sendStatus(`Sucessfully wrote SCIP index to ${this.scipConfig.output}`);
+    }
+
+    private getProjectRoot(): string {
+        if (this.scipConfig.targetOnly && this.scipConfig.targetOnly !== '') {
+            return this.scipConfig.targetOnly;
+        } else {
+            return this.scipConfig.workspaceRoot;
+        }
     }
 }

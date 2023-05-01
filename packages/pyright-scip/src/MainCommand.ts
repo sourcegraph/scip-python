@@ -5,6 +5,7 @@ export interface IndexOptions {
     project: string;
     projectName: string;
     projectVersion: string;
+    projectNamespace?: string;
     snapshotDir: string;
     environment?: string;
     dev: boolean;
@@ -54,6 +55,7 @@ export function mainCommand(
         .command('index')
         .requiredOption('--project-name <name>', 'the name of the current project, pypi name if applicable')
         .option('--project-version <version>', 'the version of the current project, defaults to git revision')
+        .option('--project-namespace <namespace>', 'A prefix to prepend to all module definitions in the current index')
         .option('--cwd <path>', 'working directory for executing scip-python', process.cwd())
         .option('--target-only <path>', 'limit analysis to the following path')
         .option('--output <path>', 'path to the output file', DEFAULT_OUTPUT_FILE)

@@ -6,7 +6,7 @@ import this_is_not_real
 #      documentation (module): this_is_not_real [unable to re...
 
 print(this_is_not_real.x)
-#^^^^ reference  python-stdlib 3.11 builtins/__init__:print().
+#^^^^ reference  python-stdlib 3.11 builtins/print().
 #external documentation ```python
 #            > (function) def print(
 #            >     *values: object,
@@ -18,7 +18,7 @@ print(this_is_not_real.x)
 #            > ```
 #     ^^^^^^^^^^^^^^^^ reference local 0
 print(this_is_not_real.x)
-#^^^^ reference  python-stdlib 3.11 builtins/__init__:print().
+#^^^^ reference  python-stdlib 3.11 builtins/print().
 #     ^^^^^^^^^^^^^^^^ reference local 0
 
 

@@ -26,14 +26,6 @@ import {
 import * as ModifiedTypeUtils from './ModifiedTypeUtils';
 import { scip } from './scip';
 import * as Symbols from './symbols';
-import {
-    metaDescriptor,
-    methodDescriptor,
-    packageDescriptor,
-    parameterDescriptor,
-    termDescriptor,
-    typeDescriptor,
-} from './lsif-typescript/Descriptor';
 import { ScipSymbol } from './ScipSymbol';
 import { Position } from './lsif-typescript/Position';
 import { Range } from './lsif-typescript/Range';
@@ -61,7 +53,6 @@ import { Event } from 'vscode-languageserver';
 import { HoverResults } from 'pyright-internal/languageService/hoverProvider';
 import { convertDocStringToMarkdown } from 'pyright-internal/analyzer/docStringConversion';
 import { assert } from 'pyright-internal/common/debug';
-import { createTracePrinter } from 'pyright-internal/analyzer/tracePrinter';
 import { getClassFieldsRecursive } from 'pyright-internal/analyzer/typeUtils';
 
 //  Useful functions for later, but haven't gotten far enough yet to use them.
@@ -83,8 +74,8 @@ function softAssert(expression: any, message: string, ...exprs: any) {
     return expression;
 }
 
+// const _printer = createTracePrinter([process.cwd()]);
 const _msgs = new Set<string>();
-const _printer = createTracePrinter([process.cwd()]);
 const _transform = function (exprs: any[]): any[] {
     const result: any[] = [];
     for (let i = 0; i < exprs.length; i++) {
@@ -237,7 +228,7 @@ export class TreeVisitor extends ParseTreeWalker {
         const pythonPackage = this.getPackageInfo(node, fileInfo.moduleName);
         if (pythonPackage) {
             if (softAssert(pythonPackage === this.projectPackage, 'expected pythonPackage to be this.projectPackage')) {
-                const symbol = Symbols.makeModule(fileInfo.moduleName, pythonPackage);
+                const symbol = Symbols.makeModuleInit(pythonPackage, fileInfo.moduleName);
 
                 this.document.occurrences.push(
                     new scip.Occurrence({
@@ -524,13 +515,13 @@ export class TreeVisitor extends ParseTreeWalker {
             importInfo.resolvedPaths[0] &&
             path.resolve(importInfo.resolvedPaths[0]).startsWith(this.cwd)
         ) {
-            const symbol = Symbols.makeModule(moduleName, this.projectPackage);
+            const symbol = Symbols.makeModuleInit(this.projectPackage, moduleName);
             this.pushNewOccurrence(node.module, symbol);
         } else {
             const pythonPackage = this.moduleNameNodeToPythonPackage(node.module);
 
             if (pythonPackage) {
-                const symbol = Symbols.makeModule(moduleName, pythonPackage);
+                const symbol = Symbols.makeModuleInit(pythonPackage, moduleName);
                 this.pushNewOccurrence(node.module, symbol);
             } else {
                 // For python packages & modules that we cannot resolve,
@@ -584,8 +575,6 @@ export class TreeVisitor extends ParseTreeWalker {
     }
 
     private emitDeclaration(node: NameNode, decl: Declaration): boolean {
-        log.debug('  emitDeclaration:');
-        log.debug('    decl:', () => _printer.print(decl));
         const parent = node.parent!;
 
         if (!decl.node) {
@@ -603,7 +592,6 @@ export class TreeVisitor extends ParseTreeWalker {
         }
 
         const isDefinition = decl.node.id === parent.id;
-        log.debug('  node:', ParseTreeUtils.printParseNodeType(decl.node.nodeType), isDefinition);
 
         const builtinType = this.evaluator.getBuiltInType(node, node.value);
         if (this.isStdlib(decl, builtinType)) {
@@ -632,7 +620,7 @@ export class TreeVisitor extends ParseTreeWalker {
                     assert(declNode != node.parent, 'Must not be the definition');
                     assert(pythonPackage, 'Must have a python package: ' + moduleName);
 
-                    return Symbols.makeModule(moduleName, pythonPackage);
+                    return Symbols.makeModuleInit(pythonPackage, moduleName);
                 });
 
                 // TODO: We could maybe cache this to not always be asking for these names & decls
@@ -871,8 +859,6 @@ export class TreeVisitor extends ParseTreeWalker {
     }
 
     override visitName(node: NameNode): boolean {
-        log.debug('\nVisiting Name:', node.value);
-
         if (!node.parent) {
             throw `No parent for named node: ${node.token.value}`;
         }
@@ -881,10 +867,8 @@ export class TreeVisitor extends ParseTreeWalker {
             return true;
         }
 
-        const parent = node.parent;
         const decls = this.evaluator.getDeclarationsForNameNode(node) || [];
 
-        log.debug('  ParentParsenodeType:', ParseTreeUtils.printParseNodeType, parent.nodeType);
         if (decls.length === 0) {
             return this.emitNameWithoutDeclaration(node);
         }
@@ -1026,14 +1010,9 @@ export class TreeVisitor extends ParseTreeWalker {
                     return symbol;
                 }
                 case TypeCategory.Module: {
-                    const symbol = ScipSymbol.global(
-                        ScipSymbol.package(builtinType.moduleName, this.stdlibPackage.version),
-                        metaDescriptor('__init__')
-                    );
-
+                    const symbol = Symbols.makeModuleInit(this.stdlibPackage, builtinType.moduleName);
                     this.pushNewOccurrence(node, symbol);
 
-                    // const pythonPackage = this.getPackageInfo(node, builtinType.moduleName)!;
                     this.emitExternalSymbolInformation(node, symbol, []);
                     return symbol;
                 }
@@ -1071,12 +1050,9 @@ export class TreeVisitor extends ParseTreeWalker {
             case ParseNodeType.Module: {
                 moduleName = getFileInfo(node).moduleName;
                 if (moduleName === 'builtins') {
-                    return Symbols.makeModule('builtins', this.stdlibPackage);
+                    return Symbols.makeModule(this.stdlibPackage, 'builtins');
                 } else {
-                    return ScipSymbol.global(
-                        ScipSymbol.package(pythonPackage.name, pythonPackage.version),
-                        packageDescriptor(moduleName)
-                    );
+                    return Symbols.makeModule(pythonPackage, moduleName);
                 }
             }
             case ParseNodeType.ModuleName: {
@@ -1097,12 +1073,9 @@ export class TreeVisitor extends ParseTreeWalker {
                     pythonPackage = this.stdlibPackage;
                 }
 
-                return ScipSymbol.global(
-                    ScipSymbol.global(
-                        ScipSymbol.package(pythonPackage.name, pythonPackage.version),
-                        packageDescriptor(node.nameParts.map((namePart) => namePart.value).join('.'))
-                    ),
-                    metaDescriptor('__init__')
+                return Symbols.makeModuleInit(
+                    pythonPackage,
+                    node.nameParts.map((namePart) => namePart.value).join('.')
                 );
             }
             case ParseNodeType.MemberAccess: {
@@ -1115,27 +1088,18 @@ export class TreeVisitor extends ParseTreeWalker {
                     return ScipSymbol.local(this.counter.next());
                 }
 
-                return ScipSymbol.global(this.getScipSymbol(node.parent!), parameterDescriptor(node.name.value));
+                return Symbols.makeParameter(this.getScipSymbol(node.parent!), node.name.value);
             }
             case ParseNodeType.Class: {
-                return ScipSymbol.global(
-                    this.getScipSymbol(node.parent!),
-                    typeDescriptor((node as ClassNode).name.value)
-                );
+                return Symbols.makeType(this.getScipSymbol(node.parent!), (node as ClassNode).name.value);
             }
             case ParseNodeType.Function: {
                 let cls = ParseTreeUtils.getEnclosingClass(node, false);
                 if (cls) {
-                    return ScipSymbol.global(
-                        this.getScipSymbol(cls),
-                        methodDescriptor((node as FunctionNode).name!.value)
-                    );
+                    return Symbols.makeMethod(this.getScipSymbol(cls), (node as FunctionNode).name!.value);
                 }
 
-                return ScipSymbol.global(
-                    this.getScipSymbol(node.parent!),
-                    methodDescriptor((node as FunctionNode).name!.value)
-                );
+                return Symbols.makeMethod(this.getScipSymbol(node.parent!), (node as FunctionNode).name!.value);
             }
             case ParseNodeType.Suite: {
                 if (node.parent) {
@@ -1144,7 +1108,7 @@ export class TreeVisitor extends ParseTreeWalker {
 
                 // TODO: Not sure what to do about this...
                 //  I don't know if we ever need to include this at all.
-                return ScipSymbol.global(this.getScipSymbol(node.parent!), metaDescriptor('#'));
+                return Symbols.makeMeta(this.getScipSymbol(node.parent!), '#');
             }
             case ParseNodeType.Name: {
                 const parent = node.parent;
@@ -1162,15 +1126,12 @@ export class TreeVisitor extends ParseTreeWalker {
 
                                 return this.getSymbolOnce(node, () => {
                                     const pythonPackage = this.getPackageInfo(node, bound.details.moduleName)!;
-                                    let symbol = ScipSymbol.global(
-                                        ScipSymbol.global(
-                                            ScipSymbol.global(
-                                                ScipSymbol.package(pythonPackage.name, pythonPackage.version),
-                                                packageDescriptor(bound.details.moduleName)
-                                            ),
-                                            typeDescriptor(bound.details.name)
+                                    let symbol = Symbols.makeTerm(
+                                        Symbols.makeType(
+                                            Symbols.makeModule(pythonPackage, bound.details.moduleName),
+                                            bound.details.name
                                         ),
-                                        termDescriptor(node.value)
+                                        node.value
                                     );
 
                                     // TODO: We might not want to do this if it's not the definition?
@@ -1201,17 +1162,14 @@ export class TreeVisitor extends ParseTreeWalker {
                     }
                 }
 
-                return ScipSymbol.global(
-                    this.getScipSymbol(enclosingSuite || parent),
-                    termDescriptor((node as NameNode).value)
-                );
+                return Symbols.makeTerm(this.getScipSymbol(enclosingSuite || parent), (node as NameNode).value);
             }
             case ParseNodeType.TypeAnnotation: {
                 switch (node.valueExpression.nodeType) {
                     case ParseNodeType.Name: {
-                        return ScipSymbol.global(
+                        return Symbols.makeTerm(
                             this.getScipSymbol(ParseTreeUtils.getEnclosingSuite(node) || node.parent!),
-                            termDescriptor(node.valueExpression.value)
+                            node.valueExpression.value
                         );
                     }
                     default: {
@@ -1221,10 +1179,10 @@ export class TreeVisitor extends ParseTreeWalker {
                 }
             }
             case ParseNodeType.FunctionAnnotation: {
-                return ScipSymbol.global(
+                return Symbols.makeTerm(
                     this.getScipSymbol(node.parent!),
                     // Descriptor.term((node as TypeAnnotationNode).typeAnnotation)
-                    termDescriptor('FuncAnnotation')
+                    'FuncAnnotation'
                 );
             }
             case ParseNodeType.Decorator: {
@@ -1246,7 +1204,7 @@ export class TreeVisitor extends ParseTreeWalker {
                 return this.getScipSymbol(node.parent!);
             }
             case ParseNodeType.ImportAs: {
-                return Symbols.pythonModule(pythonPackage, moduleName);
+                return Symbols.makeModuleInit(pythonPackage, moduleName);
             }
             case ParseNodeType.ImportFrom: {
                 const importPackage = this.moduleNameNodeToPythonPackage(node.module);
@@ -1285,9 +1243,9 @@ export class TreeVisitor extends ParseTreeWalker {
                                     const pythonPackage =
                                         this.moduleNameNodeToPythonPackage(parent.module) || this.projectPackage;
 
-                                    return Symbols.makeModule(
-                                        [...parent.module.nameParts, node.name].map((part) => part.value).join('.'),
-                                        pythonPackage
+                                    return Symbols.makeModuleInit(
+                                        pythonPackage,
+                                        [...parent.module.nameParts, node.name].map((part) => part.value).join('.')
                                     );
                                 }
                             }
@@ -1346,6 +1304,9 @@ export class TreeVisitor extends ParseTreeWalker {
     // Take a `Type` from pyright and turn that into an LSIF symbol.
     private typeToSymbol(node: NameNode, declNode: ParseNode, typeObj: Type): ScipSymbol {
         if (Types.isFunction(typeObj)) {
+            // TODO: Possibly worth checking for parent declarations.
+            //  I'm not sure if that will actually work though for types.
+
             const decl = typeObj.details.declaration;
             if (!decl) {
                 // throw 'Unhandled missing declaration for type: function';
@@ -1371,18 +1332,12 @@ export class TreeVisitor extends ParseTreeWalker {
                         classType.details.name
                     );
 
-                    return ScipSymbol.global(symbol, methodDescriptor(node.value));
+                    return Symbols.makeMethod(symbol, node.value);
                 }
-                // return ScipSymbol.global(this.makeScipSymbol(
+
                 return ScipSymbol.local(this.counter.next());
             } else {
-                return ScipSymbol.global(
-                    ScipSymbol.global(
-                        ScipSymbol.package(pythonPackage?.name, pythonPackage?.version),
-                        packageDescriptor(typeObj.details.moduleName)
-                    ),
-                    methodDescriptor(node.value)
-                );
+                return Symbols.makeMethod(Symbols.makeModule(pythonPackage, typeObj.details.moduleName), node.value);
             }
         } else if (Types.isClass(typeObj)) {
             const pythonPackage = this.getPackageInfo(node, typeObj.details.moduleName)!;
@@ -1395,10 +1350,7 @@ export class TreeVisitor extends ParseTreeWalker {
             throw 'typevar';
         } else if (Types.isModule(typeObj)) {
             const pythonPackage = this.getPackageInfo(node, typeObj.moduleName)!;
-            return ScipSymbol.global(
-                ScipSymbol.package(typeObj.moduleName, pythonPackage.version),
-                metaDescriptor('__init__')
-            );
+            return Symbols.makeModuleInit(pythonPackage, typeObj.moduleName);
         } else if (Types.isOverloadedFunction(typeObj)) {
             if (!typeObj.overloads) {
                 softAssert(false, "Didn't think it would be possible to have overloaded w/ no overloads");

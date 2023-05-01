@@ -29,11 +29,23 @@ $ #     more information at https://github.com/sourcegraph/src-cli
 $ src code-intel upload
 ```
 
+### target-only
+
 To run scip-python over only a particular directory, you can use the `--target-only` flag. Example:
 
 ```
 $ scip-python index . --project-name=$MY_PROJECT --target-only=src/subdir
 ```
+
+### project-namespace
+
+Additionally, if your project is loaded with some prefix, you can use the `--project-namespace` to put a namespace before all the generated symbols for this project.
+
+```
+$ scip-python index . --project-name=$MY_PROJECT --project-namespace=implicit.namespace
+```
+
+Now all symbols will have `implicit.namespace` prepended to their symbol, so that you can use it for cross repository navigation, even if the directory structure in your current project does not explicitly show `implicit/namespace/myproject/__init__.py`.
 
 ## Environment
 
@@ -72,6 +84,12 @@ The environment file should be a list of these packages:
   { "name": "pytorch", "version": "3.0", "files": [..] },
   ...
 ]
+```
+
+To use the environment file, you should call scip-python like so:
+
+```
+$ scip-python index --project-name=$MY_PROJECT --environment=path/to/env.json
 ```
 
 If you're just using pip, this should not be required. We should calculate this from the pip environment. If you experience any bugs, please report them. The goal is that we support standard pip installation without additional configuration. If there is other python tooling that can generate this information, you can file an issue and we'll see if we can support it as well.
