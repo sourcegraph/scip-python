@@ -193,6 +193,8 @@ export class TreeVisitor extends ParseTreeWalker {
 
         log.info('=> Working file:', config.sourceFile.getFilePath(), '<==');
 
+        // TODO: This should happen earlier, a bit weird to throw an error this deep
+        // in the traversal
         if (!this.config.scipConfig.projectName) {
             throw 'Must have project name';
         }

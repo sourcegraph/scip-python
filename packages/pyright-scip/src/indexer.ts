@@ -5,21 +5,19 @@ import { Program } from 'pyright-internal/analyzer/program';
 import { ImportResolver } from 'pyright-internal/analyzer/importResolver';
 import { createFromRealFileSystem } from 'pyright-internal/common/realFileSystem';
 import { ConfigOptions } from 'pyright-internal/common/configOptions';
-import { IndexResults } from 'pyright-internal/languageService/documentSymbolProvider';
 import { TreeVisitor } from './treeVisitor';
 import { FullAccessHost } from 'pyright-internal/common/fullAccessHost';
 import * as url from 'url';
 import { ScipConfig } from './lib';
 import { SourceFile } from 'pyright-internal/analyzer/sourceFile';
 import { Counter } from './lsif-typescript/Counter';
-import { getTypeShedFallbackPath } from 'pyright-internal/analyzer/pythonPathUtils';
 import { PyrightFileSystem } from 'pyright-internal/pyrightFileSystem';
 import getEnvironment from './virtualenv/environment';
 import { version } from 'package.json';
-import { getFileSpec } from 'pyright-internal/common/pathUtils';
 import { FileMatcher } from './FileMatcher';
 import { sendStatus, StatusUpdater, withStatus } from './status';
 import { scip } from './scip';
+import { ScipPyrightConfig } from './config';
 
 export class Indexer {
     program: Program;
@@ -39,30 +37,27 @@ export class Indexer {
         //  have the same methods of configuring, you might just want to change the include/exclude)
         //
         // private _getConfigOptions(host: Host, commandLineOptions: CommandLineOptions): ConfigOptions {
-        this.pyrightConfig = new ConfigOptions(scipConfig.projectRoot);
-        this.pyrightConfig.checkOnlyOpenFiles = false;
-        this.pyrightConfig.indexing = true;
-        this.pyrightConfig.useLibraryCodeForTypes = true;
+        let fs = new PyrightFileSystem(createFromRealFileSystem());
 
-        const fs = new PyrightFileSystem(createFromRealFileSystem());
-        this.pyrightConfig.typeshedPath = getTypeShedFallbackPath(fs);
-
-        if (this.scipConfig.include) {
-            this.pyrightConfig.include = this.scipConfig.include
-                .split(',')
-                .map((pathspec) => getFileSpec(fs, process.cwd(), pathspec));
-        } else {
-            this.pyrightConfig.include = [getFileSpec(fs, process.cwd(), '.')];
-        }
-
-        if (this.scipConfig.exclude) {
-            this.pyrightConfig.exclude = this.scipConfig.exclude
-                .split(',')
-                .map((pathspec) => getFileSpec(fs, process.cwd(), pathspec));
-        }
+        let config = new ScipPyrightConfig(scipConfig, fs);
+        this.pyrightConfig = config.getConfigOptions();
 
         const matcher = new FileMatcher(this.pyrightConfig, fs);
+
         this.projectFiles = new Set(matcher.matchFiles(this.pyrightConfig.include, this.pyrightConfig.exclude));
+        if (scipConfig.targetOnly) {
+            const target = path.resolve(scipConfig.targetOnly);
+            const targetFiles: Set<string> = new Set();
+            for (const file of this.projectFiles) {
+                if (file.startsWith(target)) {
+                    targetFiles.add(file);
+                }
+            }
+
+            this.projectFiles = targetFiles;
+        }
+
+        console.log('Total Project Files', this.projectFiles.size);
 
         const host = new FullAccessHost(fs);
         this.importResolver = new ImportResolver(fs, this.pyrightConfig, host);

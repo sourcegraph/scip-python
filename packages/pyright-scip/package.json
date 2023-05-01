@@ -8,7 +8,7 @@
     "clean": "shx rm -rf ./dist ./out README.md LICENSE.txt",
     "prepack": "npm run clean && shx cp ../../README.md . && shx cp ../../LICENSE.txt . && npm run build",
     "check-snapshots": "npm run update-snapshots -- --check",
-    "update-snapshots": "node ./index.js snapshot-dir snapshots --environment snapshots/testEnv.json --no-progress-bar",
+    "update-snapshots": "node ./index.js snapshot-dir snapshots --environment snapshots/testEnv.json --quiet",
     "test": "jest --forceExit --detectOpenHandles",
     "webpack": "webpack --mode development --progress",
     "watch": "webpack --mode development --progress --watch"
@@ -24,6 +24,7 @@
     "@sourcegraph/eslint-config": "0.26.0",
     "@sourcegraph/prettierrc": "3.0.3",
     "@sourcegraph/tsconfig": "4.0.1",
+    "@types/command-line-args": "^5.2.0",
     "@types/diff": "^5.0.2",
     "@types/glob": "^7.2.0",
     "@types/google-protobuf": "^3.15.5",
@@ -42,6 +43,8 @@
     "webpack-cli": "^4.9.1"
   },
   "dependencies": {
+    "@iarna/toml": "2.2.5",
+    "command-line-args": "^5.2.1",
     "commander": "^9.2.0",
     "diff": "^5.0.0",
     "glob": "^7.2.0",
