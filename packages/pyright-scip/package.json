@@ -24,7 +24,6 @@
     "@sourcegraph/eslint-config": "0.26.0",
     "@sourcegraph/prettierrc": "3.0.3",
     "@sourcegraph/tsconfig": "4.0.1",
-    "@types/command-line-args": "^5.2.0",
     "@types/diff": "^5.0.2",
     "@types/glob": "^7.2.0",
     "@types/google-protobuf": "^3.15.5",
@@ -44,7 +43,6 @@
   },
   "dependencies": {
     "@iarna/toml": "2.2.5",
-    "command-line-args": "^5.2.1",
     "commander": "^9.2.0",
     "diff": "^5.0.0",
     "glob": "^7.2.0",
