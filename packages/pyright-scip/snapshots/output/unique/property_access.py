@@ -84,6 +84,12 @@ def usage(xs: Sequence[PropertyClass]):
 #                   > ```
         for x in xs:
 #           ^ definition local 0
+#           external documentation ```python
+#                       > (function) def len(
+#                       >     __obj: Sized,
+#                       >     /
+#                       > ) -> int
+#                       > ```
 #                ^^ reference  snapshot-util 0.1 property_access/usage().(xs)
             print(x.prop_ref)
 #           ^^^^^ reference  python-stdlib 3.11 builtins/print().

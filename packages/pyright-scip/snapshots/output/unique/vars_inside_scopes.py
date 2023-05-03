@@ -57,6 +57,12 @@ class X:
 #               ^^^^ definition  snapshot-util 0.1 vars_inside_scopes/X#my_func().(self)
         for x in self.items:
 #           ^ definition local 0
+#           external documentation ```python
+#                       > (function) def len(
+#                       >     __obj: Sized,
+#                       >     /
+#                       > ) -> int
+#                       > ```
 #                ^^^^ reference  snapshot-util 0.1 vars_inside_scopes/X#my_func().(self)
 #                     ^^^^^ reference  snapshot-util 0.1 vars_inside_scopes/X#items.
             y = x + 1
