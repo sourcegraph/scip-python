@@ -10,7 +10,7 @@ on:
       - 'Dockerfile.autoindex'
 
 jobs:
-  release-image:
+  build-image:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
