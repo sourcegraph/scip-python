@@ -77,8 +77,26 @@ export class Indexer {
             onCancellationRequested: Event.None,
         };
 
+        let failedAnalysis = 0;
+        let safe_analyze = () => {
+            try {
+                return this.program.analyze({ openFilesTimeInMs: 10000, noOpenFilesTimeInMs: 10000 });
+            } catch (e) {
+                // Allow 100 failed attempts before we give up analysis.
+                //  This shouldn't happen often because it means there's a bug in pyright that
+                //  completely stops execution. You'll at least get some output even if it is failing.
+                sendStatus(`  Analysis partially failed with (${failedAnalysis}/100): ${e}`);
+                if (failedAnalysis++ < 100) {
+                    return true;
+                } else {
+                    sendStatus(`  Cancelling analysis, but continuing to write index. Please file an issue`);
+                    return false;
+                }
+            }
+        };
+
         const analyzer_fn = (progress: StatusUpdater) => {
-            while (this.program.analyze({ openFilesTimeInMs: 10000, noOpenFilesTimeInMs: 10000 })) {
+            while (safe_analyze()) {
                 const filesCompleted = this.program.getFileCount() - this.program.getFilesToAnalyzeCount();
                 const filesTotal = this.program.getFileCount();
                 progress.message(`${filesCompleted} / ${filesTotal}`);
