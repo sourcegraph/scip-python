@@ -13,18 +13,86 @@ $ npm install -g @sourcegraph/scip-python
 
 scip-python requires Node v16 or newer. See the [Dockerfile](https://github.com/sourcegraph/scip-python/blob/scip/Dockerfile.autoindex) for an exact SHA that is tested.
 
+scip-python uses `pip` to attempt to determine the versions and names of the packages available in your environment. If you do not use pip to install the packages, you can instead use the `--environment` flag to supply a list of packages to use as the environment. This will skip any calls out to pip to determine the state of your env. See [Environment](##-environment) for more information.
+
+
 ## Usage
 
 ```
 $ npm install @sourcegraph/scip-python
 
 $ # NOTE: make sure to activate your virtual environment before running
-$ scip-python index . --project-name $MY_PROJECT
+$ scip-python index . --project-name=$MY_PROJECT
 
 $ # Make sure to point towards the sourcegraph instance you're interested in uploading to.
 $ #     more information at https://github.com/sourcegraph/src-cli
 $ src code-intel upload
 ```
+
+### target-only
+
+To run scip-python over only a particular directory, you can use the `--target-only` flag. Example:
+
+```
+$ scip-python index . --project-name=$MY_PROJECT --target-only=src/subdir
+```
+
+### project-namespace
+
+Additionally, if your project is loaded with some prefix, you can use the `--project-namespace` to put a namespace before all the generated symbols for this project.
+
+```
+$ scip-python index . --project-name=$MY_PROJECT --project-namespace=implicit.namespace
+```
+
+Now all symbols will have `implicit.namespace` prepended to their symbol, so that you can use it for cross repository navigation, even if the directory structure in your current project does not explicitly show `implicit/namespace/myproject/__init__.py`.
+
+## Environment
+
+The environment file format is a JSON list of `PythonPackage`s. The `PythonPackage` has the following form:
+
+```json
+{
+    "name": "PyYAML",
+    "version": "6.0",
+    "files": [
+      "PyYAML-6.0.dist-info/INSTALLER",
+      ...
+      "yaml/__init__.py",
+      "yaml/composer.py",
+      "yaml/tokens.py",
+      ...
+    ]
+},
+```
+
+Where:
+- `name`:
+  - The name of the package. Often times this is the same as the module, but is not always the case.
+  - For example, `PyYAML` is the name of the package, but the module is `yaml` (i.e. `import yaml`).
+- `version`:
+  - The vesion of the package. This is used to generate stable references to external packages.
+- `files`:
+  - A list of all the files that are a member of this package.
+  - Some packages declare multiple modules, so these should all be included.
+
+The environment file should be a list of these packages:
+
+```json
+[
+  { "name": "PyYAML", "version": "6.0", "files": [...] },
+  { "name": "pytorch", "version": "3.0", "files": [..] },
+  ...
+]
+```
+
+To use the environment file, you should call scip-python like so:
+
+```
+$ scip-python index --project-name=$MY_PROJECT --environment=path/to/env.json
+```
+
+If you're just using pip, this should not be required. We should calculate this from the pip environment. If you experience any bugs, please report them. The goal is that we support standard pip installation without additional configuration. If there is other python tooling that can generate this information, you can file an issue and we'll see if we can support it as well.
 
 ## Sourcegraph Example Configuration
 

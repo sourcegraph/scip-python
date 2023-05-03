@@ -32,7 +32,7 @@ from typing import Any
 #                              > ```
 
 print(Any)
-#^^^^ reference  python-stdlib 3.11 builtins/__init__:print().
+#^^^^ reference  python-stdlib 3.11 builtins/print().
 #external documentation ```python
 #            > (function) def print(
 #            >     *values: object,

@@ -8,7 +8,7 @@ if __name__ == '__main__':
 #              > __name__: str
 #              > ```
     print("main")
-#   ^^^^^ reference  python-stdlib 3.11 builtins/__init__:print().
+#   ^^^^^ reference  python-stdlib 3.11 builtins/print().
 #   external documentation ```python
 #               > (function) def print(
 #               >     *values: object,

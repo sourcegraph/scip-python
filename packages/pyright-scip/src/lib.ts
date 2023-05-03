@@ -10,7 +10,7 @@ import { IndexOptions } from './MainCommand';
 
 export interface ScipConfig extends IndexOptions {
     /**
-     * The directory where to generate the dump.lsif-typed file.
+     * The directory where to generate the index.scip file.
      *
      * All `Document.relative_path` fields will be relative paths to this directory.
      */

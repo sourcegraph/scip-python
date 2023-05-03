@@ -86,7 +86,7 @@ def usage(xs: Sequence[PropertyClass]):
 #           ^ definition local 0
 #                ^^ reference  snapshot-util 0.1 property_access/usage().(xs)
             print(x.prop_ref)
-#           ^^^^^ reference  python-stdlib 3.11 builtins/__init__:print().
+#           ^^^^^ reference  python-stdlib 3.11 builtins/print().
 #           external documentation ```python
 #                       > (function) def print(
 #                       >     *values: object,

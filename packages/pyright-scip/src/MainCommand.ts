@@ -5,13 +5,13 @@ export interface IndexOptions {
     project: string;
     projectName: string;
     projectVersion: string;
+    projectNamespace?: string;
     snapshotDir: string;
     environment?: string;
     dev: boolean;
-    include: string;
-    exclude: string;
     output: string;
     cwd: string;
+    targetOnly?: string;
 
     // Progress reporting configuration
     quiet: boolean;
@@ -55,10 +55,11 @@ export function mainCommand(
         .command('index')
         .requiredOption('--project-name <name>', 'the name of the current project, pypi name if applicable')
         .option('--project-version <version>', 'the version of the current project, defaults to git revision')
+        .option('--project-namespace <namespace>', 'A prefix to prepend to all module definitions in the current index')
         .option('--cwd <path>', 'working directory for executing scip-python', process.cwd())
+        .option('--target-only <path>', 'limit analysis to the following path')
         .option('--output <path>', 'path to the output file', DEFAULT_OUTPUT_FILE)
         .option('--snapshot-dir <path>', 'the directory to output a snapshot of the SCIP dump')
-        .option('--no-progress-bar', '(deprecated, use "--quiet")')
         .option('--quiet', 'run without logging and status information', false)
         .option(
             '--show-progress-rate-limit <limit>',
@@ -66,8 +67,6 @@ export function mainCommand(
             parseOptionalNum
         )
         .option('--environment <json-file>', 'the environment json file (experimental)')
-        .option('--include <pattern>', 'comma-separated list of patterns to include (experimental)')
-        .option('--exclude <pattern>', 'comma-separated list of patterns to exclude (experimental)')
         .option('--dev', 'run in developer mode (experimental)', false)
         .action((parsedOptions) => {
             indexAction(parsedOptions as IndexOptions);
@@ -83,7 +82,6 @@ export function mainCommand(
         .option('--output <path>', 'path to the output file', DEFAULT_OUTPUT_FILE)
         .option('--environment <json-file>', 'the environment json file (experimental)')
         .option('--no-index', 'skip indexing (use existing index.scip)')
-        .option('--no-progress-bar', '(deprecated, use "--quiet")')
         .option('--quiet', 'run without logging and status information', false)
         .option(
             '--show-progress-rate-limit <limit>',

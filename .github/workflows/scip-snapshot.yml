@@ -1,8 +1,5 @@
 name: scip-snapshots
 
-env:
-  NODE_VERSION: '16.7.0'
-
 on:
   push:
     branches:
@@ -16,15 +13,20 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v2
-      - uses: actions/setup-node@v2
+      - name: Install asdf.
+        uses: asdf-vm/actions/setup@v2.1.0
+      - name: Cache asdf and asdf-managed tools.
+        uses: actions/cache@v3.3.1
+        id: asdf-cache
         with:
-          node-version: ${{ env.NODE_VERSION }}
-          registry-url: 'https://registry.npmjs.org'
-
+          path: ${{ env.ASDF_DIR }}
+          key: asdf-${{ runner.os}}-${{ hashFiles('**/.tool-versions') }}
+      - name: Install asdf tools (if not cached).
+        if: steps.asdf-cache.outputs.cache-hit != 'true'
+        uses: asdf-vm/actions/install@v2.1.0
       - name: Get npm cache directory
         id: npm-cache
-        run: |
-          echo "::set-output name=dir::$(npm config get cache)"
+        run: echo "dir=$(npm config get cache)" >> $GITHUB_OUTPUT
       - uses: actions/cache@v2
         with:
           path: ${{ steps.npm-cache.outputs.dir }}
@@ -33,9 +35,6 @@ jobs:
             ${{ runner.os }}-node-
 
       - run: npm install
-
       - run: cd ./packages/pyright-scip/ && npm install && npm run build
-
       - run: python --version
-
       - run: cd ./packages/pyright-scip/ && npm run check-snapshots

@@ -75,7 +75,7 @@ for var in asdf:
 #   ^^^ definition  snapshot-util 0.1 comp/var.
 #          ^^^^ reference  snapshot-util 0.1 comp/asdf.
     print(var)
-#   ^^^^^ reference  python-stdlib 3.11 builtins/__init__:print().
+#   ^^^^^ reference  python-stdlib 3.11 builtins/print().
 #   external documentation ```python
 #               > (function) def print(
 #               >     *values: object,

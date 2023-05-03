@@ -5,7 +5,7 @@ import requests
 #      ^^^^^^^^ reference  requests 2.0.0 requests/__init__:
 
 print(requests.get("https://sourcegraph.com"))
-#^^^^ reference  python-stdlib 3.11 builtins/__init__:print().
+#^^^^ reference  python-stdlib 3.11 builtins/print().
 #external documentation ```python
 #            > (function) def print(
 #            >     *values: object,

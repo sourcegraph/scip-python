@@ -5,21 +5,20 @@ import { Program } from 'pyright-internal/analyzer/program';
 import { ImportResolver } from 'pyright-internal/analyzer/importResolver';
 import { createFromRealFileSystem } from 'pyright-internal/common/realFileSystem';
 import { ConfigOptions } from 'pyright-internal/common/configOptions';
-import { IndexResults } from 'pyright-internal/languageService/documentSymbolProvider';
 import { TreeVisitor } from './treeVisitor';
 import { FullAccessHost } from 'pyright-internal/common/fullAccessHost';
 import * as url from 'url';
 import { ScipConfig } from './lib';
 import { SourceFile } from 'pyright-internal/analyzer/sourceFile';
 import { Counter } from './lsif-typescript/Counter';
-import { getTypeShedFallbackPath } from 'pyright-internal/analyzer/pythonPathUtils';
 import { PyrightFileSystem } from 'pyright-internal/pyrightFileSystem';
 import getEnvironment from './virtualenv/environment';
 import { version } from 'package.json';
-import { getFileSpec } from 'pyright-internal/common/pathUtils';
 import { FileMatcher } from './FileMatcher';
 import { sendStatus, StatusUpdater, withStatus } from './status';
 import { scip } from './scip';
+import { ScipPyrightConfig } from './config';
+import { setProjectNamespace } from './symbols';
 
 export class Indexer {
     program: Program;
@@ -39,36 +38,37 @@ export class Indexer {
         //  have the same methods of configuring, you might just want to change the include/exclude)
         //
         // private _getConfigOptions(host: Host, commandLineOptions: CommandLineOptions): ConfigOptions {
-        this.pyrightConfig = new ConfigOptions(scipConfig.projectRoot);
-        this.pyrightConfig.checkOnlyOpenFiles = false;
-        this.pyrightConfig.indexing = true;
-        this.pyrightConfig.useLibraryCodeForTypes = true;
+        let fs = new PyrightFileSystem(createFromRealFileSystem());
 
-        const fs = new PyrightFileSystem(createFromRealFileSystem());
-        this.pyrightConfig.typeshedPath = getTypeShedFallbackPath(fs);
-
-        if (this.scipConfig.include) {
-            this.pyrightConfig.include = this.scipConfig.include
-                .split(',')
-                .map((pathspec) => getFileSpec(fs, process.cwd(), pathspec));
-        } else {
-            this.pyrightConfig.include = [getFileSpec(fs, process.cwd(), '.')];
-        }
-
-        if (this.scipConfig.exclude) {
-            this.pyrightConfig.exclude = this.scipConfig.exclude
-                .split(',')
-                .map((pathspec) => getFileSpec(fs, process.cwd(), pathspec));
-        }
+        let config = new ScipPyrightConfig(scipConfig, fs);
+        this.pyrightConfig = config.getConfigOptions();
 
         const matcher = new FileMatcher(this.pyrightConfig, fs);
+
         this.projectFiles = new Set(matcher.matchFiles(this.pyrightConfig.include, this.pyrightConfig.exclude));
+        if (scipConfig.targetOnly) {
+            scipConfig.targetOnly = path.resolve(scipConfig.targetOnly);
+            const targetFiles: Set<string> = new Set();
+            for (const file of this.projectFiles) {
+                if (file.startsWith(scipConfig.targetOnly)) {
+                    targetFiles.add(file);
+                }
+            }
+
+            this.projectFiles = targetFiles;
+        }
+
+        console.log('Total Project Files', this.projectFiles.size);
 
         const host = new FullAccessHost(fs);
         this.importResolver = new ImportResolver(fs, this.pyrightConfig, host);
 
         this.program = new Program(this.importResolver, this.pyrightConfig);
         this.program.setTrackedFiles([...this.projectFiles]);
+
+        if (scipConfig.projectNamespace) {
+            setProjectNamespace(scipConfig.projectName, this.scipConfig.projectNamespace!);
+        }
     }
 
     public index(): void {
@@ -77,8 +77,26 @@ export class Indexer {
             onCancellationRequested: Event.None,
         };
 
+        let failedAnalysis = 0;
+        let safe_analyze = () => {
+            try {
+                return this.program.analyze({ openFilesTimeInMs: 10000, noOpenFilesTimeInMs: 10000 });
+            } catch (e) {
+                // Allow 100 failed attempts before we give up analysis.
+                //  This shouldn't happen often because it means there's a bug in pyright that
+                //  completely stops execution. You'll at least get some output even if it is failing.
+                sendStatus(`  Analysis partially failed with (${failedAnalysis}/100): ${e}`);
+                if (failedAnalysis++ < 100) {
+                    return true;
+                } else {
+                    sendStatus(`  Cancelling analysis, but continuing to write index. Please file an issue`);
+                    return false;
+                }
+            }
+        };
+
         const analyzer_fn = (progress: StatusUpdater) => {
-            while (this.program.analyze({ openFilesTimeInMs: 10000, noOpenFilesTimeInMs: 10000 })) {
+            while (safe_analyze()) {
                 const filesCompleted = this.program.getFileCount() - this.program.getFilesToAnalyzeCount();
                 const filesTotal = this.program.getFileCount();
                 progress.message(`${filesCompleted} / ${filesTotal}`);
@@ -97,7 +115,7 @@ export class Indexer {
         this.scipConfig.writeIndex(
             new scip.Index({
                 metadata: new scip.Metadata({
-                    project_root: url.pathToFileURL(this.scipConfig.workspaceRoot).toString(),
+                    project_root: url.pathToFileURL(this.getProjectRoot()).toString(),
                     text_document_encoding: scip.TextEncoding.UTF8,
                     tool_info: new scip.ToolInfo({
                         name: 'scip-python',
@@ -148,7 +166,7 @@ export class Indexer {
 
                 const filepath = sourceFile.getFilePath();
                 let doc = new scip.Document({
-                    relative_path: path.relative(this.scipConfig.workspaceRoot, filepath),
+                    relative_path: path.relative(this.getProjectRoot(), filepath),
                 });
 
                 const parseResults = sourceFile.getParseResults();
@@ -195,5 +213,13 @@ export class Indexer {
         });
 
         sendStatus(`Sucessfully wrote SCIP index to ${this.scipConfig.output}`);
+    }
+
+    private getProjectRoot(): string {
+        if (this.scipConfig.targetOnly && this.scipConfig.targetOnly !== '') {
+            return this.scipConfig.targetOnly;
+        } else {
+            return this.scipConfig.workspaceRoot;
+        }
     }
 }

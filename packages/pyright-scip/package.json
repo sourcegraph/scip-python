@@ -8,7 +8,7 @@
     "clean": "shx rm -rf ./dist ./out README.md LICENSE.txt",
     "prepack": "npm run clean && shx cp ../../README.md . && shx cp ../../LICENSE.txt . && npm run build",
     "check-snapshots": "npm run update-snapshots -- --check",
-    "update-snapshots": "node ./index.js snapshot-dir snapshots --environment snapshots/testEnv.json --no-progress-bar",
+    "update-snapshots": "node ./index.js snapshot-dir snapshots --environment snapshots/testEnv.json --quiet",
     "test": "jest --forceExit --detectOpenHandles",
     "webpack": "webpack --mode development --progress",
     "watch": "webpack --mode development --progress --watch"
@@ -42,6 +42,7 @@
     "webpack-cli": "^4.9.1"
   },
   "dependencies": {
+    "@iarna/toml": "2.2.5",
     "commander": "^9.2.0",
     "diff": "^5.0.0",
     "glob": "^7.2.0",

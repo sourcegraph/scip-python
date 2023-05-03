@@ -53,7 +53,7 @@ class Example:
 #                   > ```
 #                 ^^^^ definition  snapshot-util 0.1 class_nohint/Example#something().(self)
         print(self.x)
-#       ^^^^^ reference  python-stdlib 3.11 builtins/__init__:print().
+#       ^^^^^ reference  python-stdlib 3.11 builtins/print().
 #       external documentation ```python
 #                   > (function) def print(
 #                   >     *values: object,
@@ -66,7 +66,7 @@ class Example:
 #             ^^^^ reference  snapshot-util 0.1 class_nohint/Example#something().(self)
 #                  ^ reference  snapshot-util 0.1 class_nohint/Example#x.
         print(self.y)
-#       ^^^^^ reference  python-stdlib 3.11 builtins/__init__:print().
+#       ^^^^^ reference  python-stdlib 3.11 builtins/print().
 #             ^^^^ reference  snapshot-util 0.1 class_nohint/Example#something().(self)
 #                  ^ reference  snapshot-util 0.1 class_nohint/Example#y.
 
