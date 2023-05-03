@@ -13,7 +13,21 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v2
-      - uses: asdf-vm/actions/install@v2
+      - name: Install asdf.
+        uses: asdf-vm/actions/setup@v2.1.0
+      - name: Cache asdf and asdf-managed tools.
+        uses: actions/cache@v3.3.1
+        id: asdf-cache
+        with:
+          path: ${{ env.ASDF_DIR }}
+          key: asdf-${{ runner.os}}-${{ hashFiles('**/.tool-versions') }}
+      - name: Install asdf tools (if not cached).
+        if: steps.asdf-cache.outputs.cache-hit != 'true'
+        uses: asdf-vm/actions/install@v2.1.0
+      - name: Get npm cache directory
+        id: npm-cache
+        run: |
+          echo "::set-output name=dir::$(npm config get cache)"
       - uses: actions/cache@v2
         with:
           path: ${{ steps.npm-cache.outputs.dir }}
