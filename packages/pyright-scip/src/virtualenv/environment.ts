@@ -3,6 +3,7 @@ import * as child_process from 'child_process';
 import PythonPackage from './PythonPackage';
 import PythonEnvironment from './PythonEnvironment';
 import { withStatus } from 'src/status';
+import { sync as commandExistsSync } from 'command-exists';
 
 // Some future improvements:
 //  - Could use `importlib` and execute some stuff from Python
@@ -12,14 +13,29 @@ interface PipInformation {
     version: string;
 }
 
+let pipCommand: string | undefined;
+let getPipCommand = () => {
+    if (pipCommand === undefined) {
+        if (commandExistsSync('pip3')) {
+            pipCommand = 'pip3';
+        } else if (commandExistsSync('pip')) {
+            pipCommand = 'pip';
+        } else {
+            throw new Error('Could not find valid pip command');
+        }
+    }
+
+    return pipCommand;
+};
+
 function pipList(): PipInformation[] {
-    return JSON.parse(child_process.execSync('pip list --format=json').toString()) as PipInformation[];
+    return JSON.parse(child_process.execSync(`${getPipCommand()} list --format=json`).toString()) as PipInformation[];
 }
 
 function pipBulkShow(names: string[]): string[] {
     // TODO: This probably breaks with enough names. Should batch them into 512 or whatever the max for bash would be
     return child_process
-        .execSync(`pip show -f ${names.join(' ')}`)
+        .execSync(`${getPipCommand()} show -f ${names.join(' ')}`)
         .toString()
         .split('---');
 }
