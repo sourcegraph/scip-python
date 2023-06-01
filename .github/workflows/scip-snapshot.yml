@@ -14,7 +14,7 @@ jobs:
     steps:
       - uses: actions/checkout@v3
       - name: Install asdf.
-        uses: asdf-vm/actions/setup@v2.1.0
+        uses: asdf-vm/actions/setup@v2.2.0
       - name: Cache asdf and asdf-managed tools.
         uses: actions/cache@v3.3.1
         id: asdf-cache
@@ -23,7 +23,7 @@ jobs:
           key: asdf-${{ runner.os}}-${{ hashFiles('**/.tool-versions') }}
       - name: Install asdf tools (if not cached).
         if: steps.asdf-cache.outputs.cache-hit != 'true'
-        uses: asdf-vm/actions/install@v2.1.0
+        uses: asdf-vm/actions/install@v2.2.0
       - name: Get npm cache directory
         id: npm-cache
         run: echo "dir=$(npm config get cache)" >> $GITHUB_OUTPUT
