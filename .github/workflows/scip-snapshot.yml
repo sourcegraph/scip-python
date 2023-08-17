@@ -33,7 +33,18 @@ jobs:
           key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
           restore-keys: |
             ${{ runner.os }}-node-
-
+      - name: 'Check package-lock.json up-to-date'
+        run: |
+          CMD="cd ./packages/pyright-scip && npm install --package-lock-only --ignore-scripts"
+          bash -c "$CMD"
+          if ! git diff --quiet; then
+            git diff
+            echo ""
+            echo "----------------------------------------------------------------------------------------------"
+            echo "Re-run $CMD and push"
+            echo "----------------------------------------------------------------------------------------------"
+            exit 1
+          fi
       - run: npm install
       - run: cd ./packages/pyright-scip/ && npm install && npm run build
       - run: python --version
