@@ -8,7 +8,7 @@
     "clean": "shx rm -rf ./dist ./out README.md LICENSE.txt",
     "prepack": "npm run clean && shx cp ../../README.md . && shx cp ../../LICENSE.txt . && npm run build",
     "check-snapshots": "npm run update-snapshots -- --check",
-    "update-snapshots": "node ./index.js snapshot-dir snapshots --environment snapshots/testEnv.json --quiet",
+    "update-snapshots": "node --enable-source-maps ./index.js snapshot-dir snapshots --environment snapshots/testEnv.json --quiet",
     "test": "jest --forceExit --detectOpenHandles",
     "webpack": "webpack --mode development --progress",
     "watch": "webpack --mode development --progress --watch"
