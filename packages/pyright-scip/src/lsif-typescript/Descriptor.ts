@@ -6,7 +6,10 @@ type Suffix = scip.Descriptor.Suffix;
 const Suffix = scip.Descriptor.Suffix;
 
 export function packageDescriptor(name: string): Descriptor {
-    return new Descriptor({ name, suffix: Suffix.Package });
+    if (name === '') {
+        throw new Error('Package name cannot be empty');
+    }
+    return new Descriptor({ name, suffix: Suffix.Namespace });
 }
 
 export function typeDescriptor(name: string): Descriptor {
@@ -35,7 +38,7 @@ export function typeParameterDescriptor(name: string): Descriptor {
 
 export function descriptorString(desc: Descriptor): string {
     switch (desc.suffix) {
-        case Suffix.Package:
+        case Suffix.Namespace:
             return escapedName(desc) + '/';
         case Suffix.Type:
             return escapedName(desc) + '#';

@@ -25,6 +25,10 @@ export class LsifSymbol {
     }
 
     public static global(owner: LsifSymbol, descriptor: scip.Descriptor): LsifSymbol {
-        return new LsifSymbol(owner.value + descriptorString(descriptor));
+        const s = descriptorString(descriptor);
+        if (s.indexOf('SuchNestedMuchWow') !== -1) {
+            throw new Error('Got problematic descriptor with owner: ' + owner.value);
+        }
+        return new LsifSymbol(owner.value + s);
     }
 }

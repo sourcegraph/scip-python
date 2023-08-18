@@ -10,6 +10,10 @@ export class ScipSymbol extends TypescriptScipSymbol {
         name = name.replace(/\./, '/');
         name = name.trim();
 
+        if (name === '.' || name === '/') {
+            throw new Error('Package name cannot be "." or "/"');
+        }
+
         // @ts-ignore
         return new TypescriptScipSymbol(`scip-python python ${name} ${version} `);
     }

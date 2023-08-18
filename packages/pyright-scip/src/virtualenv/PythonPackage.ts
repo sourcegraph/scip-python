@@ -3,7 +3,11 @@ import * as path from 'path';
 const validExtensions = new Set(['.py', '.pyi']);
 
 export default class PythonPackage {
-    constructor(public name: string, public version: string, public files: string[]) {}
+    constructor(public name: string, public version: string, public files: string[]) {
+        if (name === '.' || name === '/') {
+            throw new Error('Package name cannot be "." or "/"');
+        }
+    }
 
     static fromPipShow(output: string): PythonPackage {
         let name = '';
