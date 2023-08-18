@@ -1,6 +1,7 @@
 import { ParseNode } from 'pyright-internal/parser/parseNodes';
 import { Counter } from './lsif-typescript/Counter';
 import {
+    descriptorString,
     metaDescriptor,
     methodDescriptor,
     packageDescriptor,
@@ -74,7 +75,17 @@ export function makeMethod(parent: ScipSymbol, name: string): ScipSymbol {
 }
 
 export function makeType(parent: ScipSymbol, name: string): ScipSymbol {
-    return ScipSymbol.global(parent, typeDescriptor(name));
+    const desc = typeDescriptor(name);
+    const descString = descriptorString(desc);
+    if (descString.indexOf('SuchNestedMuchWow') !== -1) {
+        throw new Error(
+            'Got problematic descriptor with owner: ' +
+                parent.value +
+                ', namespaces: ' +
+                JSON.stringify(Object.fromEntries(namespaces))
+        );
+    }
+    return ScipSymbol.global(parent, desc);
 }
 
 export function makeTerm(parent: ScipSymbol, name: string): ScipSymbol {
