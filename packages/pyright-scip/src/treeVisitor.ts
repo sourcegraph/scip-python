@@ -894,9 +894,16 @@ export class TreeVisitor extends ParseTreeWalker {
         }
     }
 
-    private getScipSymbol(node: ParseNode, opts: ScipSymbolOptions | undefined = undefined): ScipSymbol {
+    private getScipSymbol(
+        node: ParseNode,
+        debug: boolean = false,
+        opts: ScipSymbolOptions | undefined = undefined
+    ): ScipSymbol {
         const existing = this.rawGetLsifSymbol(node);
         if (existing) {
+            if (debug) {
+                console.log('got existing');
+            }
             return existing;
         }
 
@@ -922,6 +929,9 @@ export class TreeVisitor extends ParseTreeWalker {
             }
 
             moduleName = nodeFileInfo.moduleName;
+            if (debug) {
+                console.log(`moduleName = ${moduleName}`);
+            }
             if (moduleName == 'builtins') {
                 return this.emitBuiltinScipSymbol(node);
             } else if (Hardcoded.stdlib_module_names.has(moduleName)) {
@@ -1092,11 +1102,14 @@ export class TreeVisitor extends ParseTreeWalker {
             }
             case ParseNodeType.Class: {
                 const x = (node as ClassNode).name.value;
-                const parentSym = this.getScipSymbol(node.parent!);
+                const parentSym =
+                    x.indexOf('SuchNestedMuchWow') !== -1
+                        ? this.getScipSymbol(node.parent!, true)
+                        : this.getScipSymbol(node.parent!);
                 if (x.indexOf('SuchNestedMuchWow') !== -1) {
                     console.log(`parentSym = ${parentSym.value} for SuchNestedMuchWow`);
                 }
-                return Symbols.makeType(parentSym, x);
+                return Symbols.makeType(parentSym, x); // Varun: bad call here
             }
             case ParseNodeType.Function: {
                 let cls = ParseTreeUtils.getEnclosingClass(node, false);
