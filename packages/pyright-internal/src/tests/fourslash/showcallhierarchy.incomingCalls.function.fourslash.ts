@@ -21,22 +21,23 @@
 
 {
     const ranges = helper.getRanges();
+    const references = ranges.map((range) => {
+        return { path: range.fileName, range: helper.convertPositionRange(range) };
+    });
+    const itemList = [
+        { filePath: references[0].path, range: references[0].range, name: 'callByName' },
+        { filePath: references[1].path, range: references[1].range, name: 'callByName2' },
+    ];
 
     helper.verifyShowCallHierarchyGetIncomingCalls({
         marker1: {
-            references: ranges.map((r) => {
-                return { path: r.fileName, range: helper.convertPositionRange(r) };
-            }),
+            items: itemList,
         },
         marker2: {
-            references: ranges.map((r) => {
-                return { path: r.fileName, range: helper.convertPositionRange(r) };
-            }),
+            items: itemList,
         },
         marker3: {
-            references: ranges.map((r) => {
-                return { path: r.fileName, range: helper.convertPositionRange(r) };
-            }),
+            items: itemList,
         },
     });
 }

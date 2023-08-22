@@ -1,7 +1,7 @@
 # This sample validates that parameter types specified for "self"
 # and "cls" parameters are compatible with the containing class.
 
-from typing import Iterator, Type, TypeVar
+from typing import Iterator, TypeVar
 
 
 class Parent:
@@ -21,14 +21,14 @@ class Child1:
         ...
 
     # This should generate an error.
-    def m3(self: Type["Child1"]):
+    def m3(self: type["Child1"]):
         ...
 
     def m4(self: _TChild1) -> _TChild1:
         ...
 
     # This should generate an error.
-    def m5(self: Type[_TChild1]) -> _TChild1:
+    def m5(self: type[_TChild1]) -> _TChild1:
         ...
 
     def m6(self: _T) -> _T:
@@ -39,9 +39,10 @@ class Child1:
         ...
 
     @classmethod
-    def cm1(cls: Type["Child1"]):
+    def cm1(cls: type["Child1"]):
         ...
 
+    # This should generate an error.
     @classmethod
     # This should generate an error.
     def cm2(cls: "Child1"):
@@ -49,23 +50,24 @@ class Child1:
 
     @classmethod
     # This should generate an error.
-    def cm3(cls: Type[Parent]):
+    def cm3(cls: type[Parent]):
         ...
 
     @classmethod
-    def cm4(cls: Type[_TChild1]) -> _TChild1:
+    def cm4(cls: type[_TChild1]) -> _TChild1:
         ...
 
+    # This should generate an error.
     @classmethod
     # This should generate an error.
     def cm5(cls: _TChild1) -> _TChild1:
         ...
 
     @classmethod
-    def cm6(cls: Type[_T]) -> _T:
+    def cm6(cls: type[_T]) -> _T:
         ...
 
 
 class MyMeta(type):
-    def m1(self: Type[_T]) -> Iterator[_T]:
+    def m1(self: type[_T]) -> Iterator[_T]:
         ...

@@ -10,17 +10,12 @@
 import { Dirent, ReadStream, WriteStream } from 'fs';
 import { URI } from 'vscode-uri';
 
-import {
-    FileSystem,
-    FileWatcher,
-    FileWatcherEventHandler,
-    MkDirOptions,
-    TmpfileOptions,
-} from '../../../common/fileSystem';
+import { FileSystem, MkDirOptions, TmpfileOptions } from '../../../common/fileSystem';
+import { FileWatcher, FileWatcherEventHandler, FileWatcherEventType } from '../../../common/fileWatcher';
 import * as pathUtil from '../../../common/pathUtils';
 import { bufferFrom, createIOError } from '../utils';
-import { closeIterator, getIterator, Metadata, nextResult, SortedMap } from './../utils';
-import { validate, ValidationFlags } from './pathValidation';
+import { Metadata, SortedMap, closeIterator, getIterator, nextResult } from './../utils';
+import { ValidationFlags, validate } from './pathValidation';
 
 export const MODULE_PATH = pathUtil.normalizeSlashes('/');
 
@@ -29,6 +24,25 @@ let inoCount = 0; // A monotonically increasing count of inodes
 
 export interface DiffOptions {
     includeChangedFileWithSameContent?: boolean;
+}
+
+export class TestFileSystemWatcher implements FileWatcher {
+    private _paths: string[] = [];
+    constructor(paths: string[], private _listener: FileWatcherEventHandler) {
+        this._paths = paths.map((p) => pathUtil.normalizePath(p));
+    }
+    close() {
+        // Do nothing.
+    }
+
+    fireFileChange(path: string, eventType: FileWatcherEventType): boolean {
+        const normalized = pathUtil.normalizePath(path);
+        if (this._paths.some((p) => normalized.startsWith(p))) {
+            this._listener(eventType, normalized);
+            return true;
+        }
+        return false;
+    }
 }
 
 /**
@@ -53,8 +67,12 @@ export class TestFileSystem implements FileSystem {
     private _shadowRoot: TestFileSystem | undefined;
     private _dirStack: string[] | undefined;
     private _tmpfileCounter = 0;
+    private _watchers: TestFileSystemWatcher[] = [];
+    private _id: number;
+    private static _nextId = 1;
 
     constructor(ignoreCase: boolean, options: FileSystemOptions = {}) {
+        this._id = TestFileSystem._nextId++;
         const { time = -1, files, meta } = options;
         this.ignoreCase = ignoreCase;
         this.stringComparer = this.ignoreCase
@@ -69,7 +87,7 @@ export class TestFileSystem implements FileSystem {
         }
 
         if (files) {
-            this._applyFiles(files, /*dirname*/ '');
+            this._applyFiles(files, /* dirname */ '');
         }
 
         let cwd = options.cwd;
@@ -112,18 +130,18 @@ export class TestFileSystem implements FileSystem {
     }
 
     /**
+     * Gets the file system shadowed by this file system.
+     */
+    get shadowRoot() {
+        return this._shadowRoot;
+    }
+
+    /**
      * Makes the file system read-only.
      */
     makeReadonly() {
         Object.freeze(this);
         return this;
-    }
-
-    /**
-     * Gets the file system shadowed by this file system.
-     */
-    get shadowRoot() {
-        return this._shadowRoot;
     }
 
     /**
@@ -199,14 +217,6 @@ export class TestFileSystem implements FileSystem {
             throw createIOError('ENOENT');
         }
         return this._filemeta(node);
-    }
-
-    private _filemeta(node: Inode): Metadata {
-        if (!node.meta) {
-            const parentMeta = node.shadowRoot && this._shadowRoot && this._shadowRoot._filemeta(node.shadowRoot);
-            node.meta = new Metadata(parentMeta);
-        }
-        return node.meta;
     }
 
     /**
@@ -298,7 +308,7 @@ export class TestFileSystem implements FileSystem {
     scanSync(path: string, axis: Axis, traversal: Traversal) {
         path = this._resolve(path);
         const results: string[] = [];
-        this._scan(path, this._stat(this._walk(path)), axis, traversal, /*noFollow*/ false, results);
+        this._scan(path, this._stat(this._walk(path)), axis, traversal, /* noFollow */ false, results);
         return results;
     }
 
@@ -311,16 +321,29 @@ export class TestFileSystem implements FileSystem {
     lscanSync(path: string, axis: Axis, traversal: Traversal) {
         path = this._resolve(path);
         const results: string[] = [];
-        this._scan(path, this._stat(this._walk(path, /*noFollow*/ true)), axis, traversal, /*noFollow*/ true, results);
+        this._scan(
+            path,
+            this._stat(this._walk(path, /* noFollow */ true)),
+            axis,
+            traversal,
+            /* noFollow */ true,
+            results
+        );
         return results;
     }
 
     createFileSystemWatcher(paths: string[], listener: FileWatcherEventHandler): FileWatcher {
-        return {
-            close: () => {
-                /* left empty */
-            },
-        };
+        const watcher = new TestFileSystemWatcher(paths, listener);
+        this._watchers.push(watcher);
+        return watcher;
+    }
+
+    fireFileWatcherEvent(path: string, event: FileWatcherEventType) {
+        for (const watcher of this._watchers) {
+            if (watcher.fireFileChange(path, event)) {
+                break;
+            }
+        }
     }
 
     getModulePath(): string {
@@ -364,40 +387,6 @@ export class TestFileSystem implements FileSystem {
         return URI.file(path).toString();
     }
 
-    private _scan(path: string, stats: Stats, axis: Axis, traversal: Traversal, noFollow: boolean, results: string[]) {
-        if (axis === 'ancestors-or-self' || axis === 'self' || axis === 'descendants-or-self') {
-            if (!traversal.accept || traversal.accept(path, stats)) {
-                results.push(path);
-            }
-        }
-        if (axis === 'ancestors-or-self' || axis === 'ancestors') {
-            const dirname = pathUtil.getDirectoryPath(path);
-            if (dirname !== path) {
-                try {
-                    const stats = this._stat(this._walk(dirname, noFollow));
-                    if (!traversal.traverse || traversal.traverse(dirname, stats)) {
-                        this._scan(dirname, stats, 'ancestors-or-self', traversal, noFollow, results);
-                    }
-                } catch {
-                    /*ignored*/
-                }
-            }
-        }
-        if (axis === 'descendants-or-self' || axis === 'descendants') {
-            if (stats.isDirectory() && (!traversal.traverse || traversal.traverse(path, stats))) {
-                for (const file of this.readdirSync(path)) {
-                    try {
-                        const childpath = pathUtil.combinePaths(path, file);
-                        const stats = this._stat(this._walk(childpath, noFollow));
-                        this._scan(childpath, stats, 'descendants-or-self', traversal, noFollow, results);
-                    } catch {
-                        /*ignored*/
-                    }
-                }
-            }
-        }
-    }
-
     /**
      * Mounts a physical or virtual file system at a location in this virtual file system.
      *
@@ -412,13 +401,13 @@ export class TestFileSystem implements FileSystem {
 
         source = validate(source, ValidationFlags.Absolute);
 
-        const { parent, links, node: existingNode, basename } = this._walk(this._resolve(target), /*noFollow*/ true);
+        const { parent, links, node: existingNode, basename } = this._walk(this._resolve(target), /* noFollow */ true);
         if (existingNode) {
             throw createIOError('EEXIST');
         }
 
         const time = this.time();
-        const node = this._mknod(parent ? parent.dev : ++devCount, S_IFDIR, /*mode*/ 0o777, time);
+        const node = this._mknod(parent ? parent.dev : ++devCount, S_IFDIR, /* mode */ 0o777, time);
         node.source = source;
         node.resolver = resolver;
         this._addLink(parent, links, basename, node, time);
@@ -451,7 +440,7 @@ export class TestFileSystem implements FileSystem {
      */
     mkdirpSync(path: string) {
         path = this._resolve(path);
-        const result = this._walk(path, /*noFollow*/ true, (error, result) => {
+        const result = this._walk(path, /* noFollow */ true, (error, result) => {
             if (error.code === 'ENOENT') {
                 this._mkdir(result);
                 return 'retry';
@@ -464,8 +453,15 @@ export class TestFileSystem implements FileSystem {
         }
     }
 
-    getFileListing(): string {
+    getFileListing(filter?: (p: string) => boolean): string {
         let result = '';
+
+        const addToResult = (path: string, add: string) => {
+            if (!filter || filter(path)) {
+                result += add;
+            }
+        };
+
         const printLinks = (dirname: string | undefined, links: SortedMap<string, Inode>) => {
             const iterator = getIterator(links);
             try {
@@ -474,31 +470,31 @@ export class TestFileSystem implements FileSystem {
                     const path = dirname ? pathUtil.combinePaths(dirname, name) : name;
                     const marker = pathUtil.comparePaths(this._cwd, path, this.ignoreCase) === 0 ? '*' : ' ';
                     if (result) {
-                        result += '\n';
+                        addToResult(path, '\n');
                     }
-                    result += marker;
+                    addToResult(path, marker);
                     if (isDirectory(node)) {
-                        result += pathUtil.ensureTrailingDirectorySeparator(path);
+                        addToResult(path, pathUtil.ensureTrailingDirectorySeparator(path));
                         printLinks(path, this._getLinks(node));
                     } else if (isFile(node)) {
-                        result += path;
+                        addToResult(path, path);
                     } else if (isSymlink(node)) {
-                        result += `${path} -> ${node.symlink}`;
+                        addToResult(path, `${path} -> ${node.symlink}`);
                     }
                 }
             } finally {
                 closeIterator(iterator);
             }
         };
-        printLinks(/*dirname*/ undefined, this._getRootLinks());
+        printLinks(/* dirname */ undefined, this._getRootLinks());
         return result;
     }
 
     /**
      * Print diagnostic information about the structure of the file system to the console.
      */
-    debugPrint(): void {
-        console.log(this.getFileListing());
+    debugPrint(filter?: (p: string) => boolean): void {
+        console.log(this.getFileListing(filter));
     }
 
     // POSIX API (aligns with NodeJS "fs" module API)
@@ -507,7 +503,7 @@ export class TestFileSystem implements FileSystem {
      * Determines whether a path exists.
      */
     existsSync(path: string) {
-        const result = this._walk(this._resolve(path), /*noFollow*/ true, () => 'stop');
+        const result = this._walk(this._resolve(path), /* noFollow */ true, () => 'stop');
         return result !== undefined && result.node !== undefined;
     }
 
@@ -552,28 +548,7 @@ export class TestFileSystem implements FileSystem {
      * NOTE: do not rename this method as it is intended to align with the same named export of the "fs" module.
      */
     lstatSync(path: string) {
-        return this._stat(this._walk(this._resolve(path), /*noFollow*/ true));
-    }
-
-    private _stat(entry: WalkResult) {
-        const node = entry.node;
-        if (!node) {
-            throw createIOError(`ENOENT`, entry.realpath);
-        }
-        return new Stats(
-            node.dev,
-            node.ino,
-            node.mode,
-            node.nlink,
-            /*rdev*/ 0,
-            /*size*/ isFile(node) ? this._getSize(node) : isSymlink(node) ? node.symlink.length : 0,
-            /*blksize*/ 4096,
-            /*blocks*/ 0,
-            node.atimeMs,
-            node.mtimeMs,
-            node.ctimeMs,
-            node.birthtimeMs
-        );
+        return this._stat(this._walk(this._resolve(path), /* noFollow */ true));
     }
 
     /**
@@ -630,16 +605,7 @@ export class TestFileSystem implements FileSystem {
             return;
         }
 
-        this._mkdir(this._walk(this._resolve(path), /*noFollow*/ true));
-    }
-
-    private _mkdir({ parent, links, node: existingNode, basename }: WalkResult) {
-        if (existingNode) {
-            throw createIOError('EEXIST');
-        }
-        const time = this.time();
-        const node = this._mknod(parent ? parent.dev : ++devCount, S_IFDIR, /*mode*/ 0o777, time);
-        this._addLink(parent, links, basename, node, time);
+        this._mkdir(this._walk(this._resolve(path), /* noFollow */ true));
     }
 
     /**
@@ -655,7 +621,7 @@ export class TestFileSystem implements FileSystem {
         }
         path = this._resolve(path);
 
-        const { parent, links, node, basename } = this._walk(path, /*noFollow*/ true);
+        const { parent, links, node, basename } = this._walk(path, /* noFollow */ true);
         if (!parent) {
             throw createIOError('EPERM');
         }
@@ -689,7 +655,7 @@ export class TestFileSystem implements FileSystem {
             throw createIOError('EPERM');
         }
 
-        const { parent, links, basename, node: existingNode } = this._walk(this._resolve(newpath), /*noFollow*/ true);
+        const { parent, links, basename, node: existingNode } = this._walk(this._resolve(newpath), /* noFollow */ true);
         if (!parent) {
             throw createIOError('EPERM');
         }
@@ -712,7 +678,7 @@ export class TestFileSystem implements FileSystem {
             throw createIOError('EROFS');
         }
 
-        const { parent, links, node, basename } = this._walk(this._resolve(path), /*noFollow*/ true);
+        const { parent, links, node, basename } = this._walk(this._resolve(path), /* noFollow */ true);
         if (!parent) {
             throw createIOError('EPERM');
         }
@@ -743,7 +709,7 @@ export class TestFileSystem implements FileSystem {
             links: oldParentLinks,
             node,
             basename: oldBasename,
-        } = this._walk(this._resolve(oldpath), /*noFollow*/ true);
+        } = this._walk(this._resolve(oldpath), /* noFollow */ true);
 
         if (!oldParent) {
             throw createIOError('EPERM');
@@ -757,7 +723,7 @@ export class TestFileSystem implements FileSystem {
             links: newParentLinks,
             node: existingNode,
             basename: newBasename,
-        } = this._walk(this._resolve(newpath), /*noFollow*/ true);
+        } = this._walk(this._resolve(newpath), /* noFollow */ true);
 
         if (!newParent) {
             throw createIOError('EPERM');
@@ -795,7 +761,12 @@ export class TestFileSystem implements FileSystem {
             throw createIOError('EROFS');
         }
 
-        const { parent, links, node: existingNode, basename } = this._walk(this._resolve(linkpath), /*noFollow*/ true);
+        const {
+            parent,
+            links,
+            node: existingNode,
+            basename,
+        } = this._walk(this._resolve(linkpath), /* noFollow */ true);
         if (!parent) {
             throw createIOError('EPERM');
         }
@@ -804,7 +775,7 @@ export class TestFileSystem implements FileSystem {
         }
 
         const time = this.time();
-        const node = this._mknod(parent.dev, S_IFLNK, /*mode*/ 0o666, time);
+        const node = this._mknod(parent.dev, S_IFLNK, /* mode */ 0o666, time);
         node.symlink = validate(target, ValidationFlags.RelativeOrAbsolute);
         this._addLink(parent, links, basename, node, time);
     }
@@ -865,7 +836,7 @@ export class TestFileSystem implements FileSystem {
             throw createIOError('EROFS');
         }
 
-        const { parent, links, node: existingNode, basename } = this._walk(this._resolve(path), /*noFollow*/ false);
+        const { parent, links, node: existingNode, basename } = this._walk(this._resolve(path), /* noFollow */ false);
         if (!parent) {
             throw createIOError('EPERM');
         }
@@ -929,12 +900,84 @@ export class TestFileSystem implements FileSystem {
         return TestFileSystem._rootDiff(differences, changed, base, options) ? differences : undefined;
     }
 
-    isInZipOrEgg(path: string): boolean {
+    isInZip(path: string): boolean {
         return false;
     }
 
     dispose(): void {
         // Do Nothing
+    }
+
+    private _mkdir({ parent, links, node: existingNode, basename }: WalkResult) {
+        if (existingNode) {
+            throw createIOError('EEXIST');
+        }
+        const time = this.time();
+        const node = this._mknod(parent ? parent.dev : ++devCount, S_IFDIR, /* mode */ 0o777, time);
+        this._addLink(parent, links, basename, node, time);
+    }
+
+    private _filemeta(node: Inode): Metadata {
+        if (!node.meta) {
+            const parentMeta = node.shadowRoot && this._shadowRoot && this._shadowRoot._filemeta(node.shadowRoot);
+            node.meta = new Metadata(parentMeta);
+        }
+        return node.meta;
+    }
+
+    private _scan(path: string, stats: Stats, axis: Axis, traversal: Traversal, noFollow: boolean, results: string[]) {
+        if (axis === 'ancestors-or-self' || axis === 'self' || axis === 'descendants-or-self') {
+            if (!traversal.accept || traversal.accept(path, stats)) {
+                results.push(path);
+            }
+        }
+        if (axis === 'ancestors-or-self' || axis === 'ancestors') {
+            const dirname = pathUtil.getDirectoryPath(path);
+            if (dirname !== path) {
+                try {
+                    const stats = this._stat(this._walk(dirname, noFollow));
+                    if (!traversal.traverse || traversal.traverse(dirname, stats)) {
+                        this._scan(dirname, stats, 'ancestors-or-self', traversal, noFollow, results);
+                    }
+                } catch {
+                    /* ignored */
+                }
+            }
+        }
+        if (axis === 'descendants-or-self' || axis === 'descendants') {
+            if (stats.isDirectory() && (!traversal.traverse || traversal.traverse(path, stats))) {
+                for (const file of this.readdirSync(path)) {
+                    try {
+                        const childpath = pathUtil.combinePaths(path, file);
+                        const stats = this._stat(this._walk(childpath, noFollow));
+                        this._scan(childpath, stats, 'descendants-or-self', traversal, noFollow, results);
+                    } catch {
+                        /* ignored */
+                    }
+                }
+            }
+        }
+    }
+
+    private _stat(entry: WalkResult) {
+        const node = entry.node;
+        if (!node) {
+            throw createIOError(`ENOENT`, entry.realpath);
+        }
+        return new Stats(
+            node.dev,
+            node.ino,
+            node.mode,
+            node.nlink,
+            /* rdev */ 0,
+            /* size */ isFile(node) ? this._getSize(node) : isSymlink(node) ? node.symlink.length : 0,
+            /* blksize */ 4096,
+            /* blocks */ 0,
+            node.atimeMs,
+            node.mtimeMs,
+            node.ctimeMs,
+            node.birthtimeMs
+        );
     }
 
     private static _diffWorker(
@@ -1014,7 +1057,7 @@ export class TestFileSystem implements FileSystem {
             return false;
         }
 
-        // no difference if the root links are empty and unshadowed
+        // no difference if the root links are empty and not shadowed
         if (!changed._lazy.links && !changed._shadowRoot && !base._lazy.links && !base._shadowRoot) {
             return false;
         }

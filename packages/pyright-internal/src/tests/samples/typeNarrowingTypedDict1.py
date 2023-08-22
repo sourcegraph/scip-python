@@ -1,68 +1,60 @@
 # This sample tests type narrowing for TypedDict types based
 # on whether a key is in or not in the dict.
 
-from typing import TypedDict, Union, final
+from typing import TypedDict
 
 
-@final
 class TD1(TypedDict):
     a: str
     b: int
 
 
-@final
 class TD2(TypedDict):
     a: int
     c: str
 
 
-@final
 class TD3(TypedDict, total=False):
     a: int
     d: str
 
 
-class TD4(TypedDict):
-    a: int
-    c: str
-
-
-def f1(p: Union[TD1, TD2]):
+def f1(p: TD1 | TD2):
     if "b" in p:
         reveal_type(p, expected_text="TD1")
     else:
         reveal_type(p, expected_text="TD2")
 
 
-def f2(p: Union[TD1, TD2]):
+def f2(p: TD1 | TD2):
     if "b" not in p:
         reveal_type(p, expected_text="TD2")
     else:
         reveal_type(p, expected_text="TD1")
 
 
-def f3(p: Union[TD1, TD3]):
+def f3(p: TD1 | TD3):
     if "d" in p:
         reveal_type(p, expected_text="TD3")
     else:
         reveal_type(p, expected_text="TD1 | TD3")
 
 
-def f4(p: Union[TD1, TD3]):
+def f4(p: TD1 | TD3):
     if "d" not in p:
         reveal_type(p, expected_text="TD1 | TD3")
     else:
         reveal_type(p, expected_text="TD3")
 
 
-def f5(p: Union[TD1, TD3]):
+def f5(p: TD1 | TD3):
     if "a" in p:
         reveal_type(p, expected_text="TD1 | TD3")
     else:
         reveal_type(p, expected_text="TD3")
 
 
-def f6(p: Union[TD1, TD2, TD3]):
+def f6(p: TD1 | TD2 | TD3):
     # This should generate an error for TD3.
     v1 = p["a"]
 
@@ -91,10 +83,3 @@ def f7(p: TD3):
 def f8(p: TD3):
     if "a" in p:
         f7(p)
-
-
-def f9(p: Union[TD1, TD4]):
-    if "b" in p:
-        reveal_type(p, expected_text="TD1 | TD4")
-    else:
-        reveal_type(p, expected_text="TD4")

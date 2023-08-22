@@ -13,15 +13,18 @@ import {
     FunctionParameter,
     FunctionType,
     isClassInstance,
+    isPositionOnlySeparator,
+    isTypeVar,
     isUnpackedClass,
     isVariadicTypeVar,
     Type,
+    TypeVarType,
 } from './types';
 import { partiallySpecializeType } from './typeUtils';
 
 export function isTypedKwargs(param: FunctionParameter): boolean {
     return (
-        param.category === ParameterCategory.VarArgDictionary &&
+        param.category === ParameterCategory.KwargsDict &&
         isClassInstance(param.type) &&
         isUnpackedClass(param.type) &&
         ClassType.isTypedDictClass(param.type) &&
@@ -60,6 +63,8 @@ export interface ParameterListDetails {
     // Other information
     hasUnpackedVariadicTypeVar: boolean;
     hasUnpackedTypedDict: boolean;
+    unpackedKwargsTypedDictType?: ClassType;
+    paramSpec?: TypeVarType;
 }
 
 // Examines the input parameters within a function signature and creates a
@@ -73,11 +78,10 @@ export function getParameterListDetails(type: FunctionType): ParameterListDetail
         params: [],
         hasUnpackedVariadicTypeVar: false,
         hasUnpackedTypedDict: false,
+        paramSpec: type.details.paramSpec,
     };
 
-    let positionOnlyIndex = type.details.parameters.findIndex(
-        (p) => p.category === ParameterCategory.Simple && !p.name
-    );
+    let positionOnlyIndex = type.details.parameters.findIndex((p) => isPositionOnlySeparator(p));
 
     // Handle the old (pre Python 3.8) way of specifying positional-only
     // parameters by naming them with "__".
@@ -93,7 +97,12 @@ export function getParameterListDetails(type: FunctionType): ParameterListDetail
             }
 
             if (isDunderName(p.name) || !p.name.startsWith('__')) {
-                break;
+                // We exempt "self" and "cls" in class and instance methods.
+                if (i > 0 || FunctionType.isStaticMethod(type)) {
+                    break;
+                }
+
+                continue;
             }
 
             positionOnlyIndex = i + 1;
@@ -125,7 +134,7 @@ export function getParameterListDetails(type: FunctionType): ParameterListDetail
             let source: ParameterSource;
             if (sourceOverride !== undefined) {
                 source = sourceOverride;
-            } else if (param.category === ParameterCategory.VarArgList) {
+            } else if (param.category === ParameterCategory.ArgsList) {
                 source = ParameterSource.PositionOnly;
             } else if (sawKeywordOnlySeparator) {
                 source = ParameterSource.KeywordOnly;
@@ -146,7 +155,7 @@ export function getParameterListDetails(type: FunctionType): ParameterListDetail
     };
 
     type.details.parameters.forEach((param, index) => {
-        if (param.category === ParameterCategory.VarArgList) {
+        if (param.category === ParameterCategory.ArgsList) {
             // If this is an unpacked tuple, expand the entries.
             const paramType = FunctionType.getEffectiveParameterType(type, index);
             if (param.name && isUnpackedClass(paramType) && paramType.tupleTypeArguments) {
@@ -155,10 +164,10 @@ export function getParameterListDetails(type: FunctionType): ParameterListDetail
                 paramType.tupleTypeArguments.forEach((tupleArg, tupleIndex) => {
                     const category =
                         isVariadicTypeVar(tupleArg.type) || tupleArg.isUnbounded
-                            ? ParameterCategory.VarArgList
+                            ? ParameterCategory.ArgsList
                             : ParameterCategory.Simple;
 
-                    if (category === ParameterCategory.VarArgList) {
+                    if (category === ParameterCategory.ArgsList) {
                         result.argsIndex = result.params.length;
                     }
 
@@ -220,7 +229,7 @@ export function getParameterListDetails(type: FunctionType): ParameterListDetail
 
                 addVirtualParameter(param, index);
             }
-        } else if (param.category === ParameterCategory.VarArgDictionary) {
+        } else if (param.category === ParameterCategory.KwargsDict) {
             sawKeywordOnlySeparator = true;
 
             const paramType = FunctionType.getEffectiveParameterType(type, index);
@@ -249,6 +258,7 @@ export function getParameterListDetails(type: FunctionType): ParameterListDetail
                 });
 
                 result.hasUnpackedTypedDict = true;
+                result.unpackedKwargsTypedDictType = paramType;
             } else if (param.name) {
                 if (result.kwargsIndex === undefined) {
                     result.kwargsIndex = result.params.length;
@@ -275,6 +285,24 @@ export function getParameterListDetails(type: FunctionType): ParameterListDetail
             );
         }
     });
+
+    // If the signature ends in `*args: P.args, **kwargs: P.kwargs`,
+    // extract the ParamSpec P.
+    if (result.params.length >= 2) {
+        const secondLastParam = result.params[result.params.length - 2].param;
+        const lastParam = result.params[result.params.length - 1].param;
+
+        if (
+            secondLastParam.category === ParameterCategory.ArgsList &&
+            isTypeVar(secondLastParam.type) &&
+            secondLastParam.type.paramSpecAccess === 'args' &&
+            lastParam.category === ParameterCategory.KwargsDict &&
+            isTypeVar(lastParam.type) &&
+            lastParam.type.paramSpecAccess === 'kwargs'
+        ) {
+            result.paramSpec = TypeVarType.cloneForParamSpecAccess(secondLastParam.type, undefined);
+        }
+    }
 
     return result;
 }

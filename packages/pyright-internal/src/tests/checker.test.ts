@@ -113,6 +113,12 @@ test('AbstractClass9', () => {
     TestUtils.validateResults(analysisResults, 0);
 });
 
+test('AbstractClass10', () => {
+    const analysisResults = TestUtils.typeAnalyzeSampleFiles(['abstractClass10.py']);
+
+    TestUtils.validateResults(analysisResults, 6);
+});
+
 test('Constants1', () => {
     const analysisResults = TestUtils.typeAnalyzeSampleFiles(['constants1.py']);
 
@@ -122,7 +128,7 @@ test('Constants1', () => {
 test('NoReturn1', () => {
     const analysisResults = TestUtils.typeAnalyzeSampleFiles(['noreturn1.py']);
 
-    TestUtils.validateResults(analysisResults, 5);
+    TestUtils.validateResults(analysisResults, 4);
 });
 
 test('NoReturn2', () => {
@@ -158,7 +164,7 @@ test('With2', () => {
 test('With3', () => {
     const analysisResults = TestUtils.typeAnalyzeSampleFiles(['with3.py']);
 
-    TestUtils.validateResults(analysisResults, 4);
+    TestUtils.validateResults(analysisResults, 5);
 });
 
 test('With4', () => {
@@ -255,7 +261,7 @@ test('UnnecessaryCast1', () => {
     // Turn on errors.
     configOptions.diagnosticRuleSet.reportUnnecessaryCast = 'error';
     analysisResults = TestUtils.typeAnalyzeSampleFiles(['unnecessaryCast1.py'], configOptions);
-    TestUtils.validateResults(analysisResults, 1);
+    TestUtils.validateResults(analysisResults, 6);
 });
 
 test('UnnecessaryContains1', () => {
@@ -350,7 +356,7 @@ test('PyrightComment1', () => {
     const configOptions = new ConfigOptions('.');
 
     const analysisResults = TestUtils.typeAnalyzeSampleFiles(['pyrightComment1.py'], configOptions);
-    TestUtils.validateResults(analysisResults, 7);
+    TestUtils.validateResults(analysisResults, 9);
 });
 
 test('DuplicateImports1', () => {
@@ -383,7 +389,7 @@ test('ParamNames1', () => {
 
 test('ParamType1', () => {
     const analysisResults = TestUtils.typeAnalyzeSampleFiles(['paramType1.py']);
-    TestUtils.validateResults(analysisResults, 7);
+    TestUtils.validateResults(analysisResults, 9);
 });
 
 test('Python2', () => {
@@ -473,7 +479,20 @@ test('UninitializedVariable1', () => {
     // Enable it as an error.
     configOptions.diagnosticRuleSet.reportUninitializedInstanceVariable = 'error';
     analysisResults = TestUtils.typeAnalyzeSampleFiles(['uninitializedVariable1.py'], configOptions);
-    TestUtils.validateResults(analysisResults, 1);
+    TestUtils.validateResults(analysisResults, 3);
+});
+
+test('UninitializedVariable2', () => {
+    const configOptions = new ConfigOptions('.');
+
+    // By default, this is off.
+    let analysisResults = TestUtils.typeAnalyzeSampleFiles(['uninitializedVariable2.py'], configOptions);
+    TestUtils.validateResults(analysisResults, 0);
+
+    // Enable it as an error.
+    configOptions.diagnosticRuleSet.reportUninitializedInstanceVariable = 'error';
+    analysisResults = TestUtils.typeAnalyzeSampleFiles(['uninitializedVariable2.py'], configOptions);
+    TestUtils.validateResults(analysisResults, 2);
 });
 
 test('RegionComments1', () => {
