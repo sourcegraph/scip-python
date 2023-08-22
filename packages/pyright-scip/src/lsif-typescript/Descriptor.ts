@@ -6,9 +6,9 @@ type Suffix = scip.Descriptor.Suffix;
 const Suffix = scip.Descriptor.Suffix;
 
 export function packageDescriptor(name: string): Descriptor {
-    if (name === '') {
-        throw new Error('Package name cannot be empty');
-    }
+    // if (name === '') {
+    //     throw new Error('Package name cannot be empty');
+    // }
     return new Descriptor({ name, suffix: Suffix.Namespace });
 }
 

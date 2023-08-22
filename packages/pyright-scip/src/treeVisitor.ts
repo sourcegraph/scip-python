@@ -1091,7 +1091,12 @@ export class TreeVisitor extends ParseTreeWalker {
                 return Symbols.makeParameter(this.getScipSymbol(node.parent!), node.name.value);
             }
             case ParseNodeType.Class: {
-                return Symbols.makeType(this.getScipSymbol(node.parent!), (node as ClassNode).name.value);
+                const x = (node as ClassNode).name.value;
+                const parentSym = this.getScipSymbol(node.parent!);
+                if (x.indexOf('SuchNestedMuchWow') !== -1) {
+                    console.log(`parentSym = ${parentSym.value} for SuchNestedMuchWow`);
+                }
+                return Symbols.makeType(parentSym, x);
             }
             case ParseNodeType.Function: {
                 let cls = ParseTreeUtils.getEnclosingClass(node, false);

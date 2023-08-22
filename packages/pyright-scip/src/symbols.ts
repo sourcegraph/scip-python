@@ -27,13 +27,13 @@ export function makeModule(pythonPackage: PythonPackage, moduleName: string): Sc
     if (ns) {
         moduleName = ns + '.' + moduleName;
     }
-    if (moduleName === '') {
-        throw new Error(
-            `Module name is empty namespace = ${ns}, pkgname = ${pythonPackage.name}, map = ${JSON.stringify(
-                Object.fromEntries(namespaces)
-            )}`
-        );
-    }
+    // if (moduleName === '') {
+    //     throw new Error(
+    //         `Module name is empty namespace = ${ns}, pkgname = ${pythonPackage.name}, map = ${JSON.stringify(
+    //             Object.fromEntries(namespaces)
+    //         )}`
+    //     );
+    // }
 
     return ScipSymbol.global(makePackage(pythonPackage), packageDescriptor(moduleName));
 }
