@@ -931,6 +931,7 @@ export class TreeVisitor extends ParseTreeWalker {
             moduleName = nodeFileInfo.moduleName;
             if (debug) {
                 console.log(`moduleName = ${moduleName}`);
+                console.log(`filePath = ${nodeFileInfo.filePath}`);
             }
             if (moduleName == 'builtins') {
                 return this.emitBuiltinScipSymbol(node);
