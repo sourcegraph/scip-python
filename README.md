@@ -138,3 +138,7 @@ The only changes that are inside there at this point are:
 - Not bail out of indexing if it's taking a long time
 - Not throw away indexed files if memory usage gets high
 - Allow parsing of some additional files
+
+## Contributing
+
+See [pyright-scip/CONTRIBUTING.md](./packages/pyright-scip/CONTRIBUTING.md).
