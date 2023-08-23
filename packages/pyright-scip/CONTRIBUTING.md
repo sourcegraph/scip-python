@@ -18,6 +18,15 @@
     # Install appropriate Node and Python versions based on .tool-versions
     asdf install
     ````
+   You may need to restart your shell for the changes to take effect.
+
+   NOTE: On Linux, ASDF may try to install Python from source instead of
+   using prebuilt binaries. In that case, you need to install a bunch of
+   other dependencies first:
+   ```bash
+   sudo apt update
+   sudo apt install -y build-essential zlib1g-dev libssl-dev libbz2-dev libsqlite3-dev libncurses-dev libffi-dev readline-common libreadline-dev liblzma-dev
+   ```
 3. Install dependencies:
    ```bash
    # From the root of the repo
