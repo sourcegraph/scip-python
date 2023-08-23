@@ -7,10 +7,21 @@ export class ScipSymbol extends TypescriptScipSymbol {
     }
 
     public static override package(name: string, version: string): TypescriptScipSymbol {
-        name = name.replace(/\./, '/');
-        name = name.trim();
+        name = normalizeNameOrVersion(name);
+        version = normalizeNameOrVersion(version);
 
         // @ts-ignore
         return new TypescriptScipSymbol(`scip-python python ${name} ${version} `);
     }
+}
+
+// See https://github.com/sourcegraph/scip/blob/main/scip.proto#L118-L121
+function normalizeNameOrVersion(s: string): string {
+    if (s === '') {
+        return '.';
+    }
+    if (s.indexOf(' ') === -1) {
+        return s;
+    }
+    return s.replace(/ /g, '  ');
 }
