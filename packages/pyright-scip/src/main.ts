@@ -1,3 +1,1 @@
-import { main } from './mainImpl';
-
-main(process.argv);
+export { main } from './mainImpl';
