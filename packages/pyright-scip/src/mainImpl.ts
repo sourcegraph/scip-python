@@ -174,5 +174,3 @@ export function main(argv: string[]): void {
     });
     command.parse(argv);
 }
-
-main(process.argv);
