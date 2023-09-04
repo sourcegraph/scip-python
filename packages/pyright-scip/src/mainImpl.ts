@@ -175,12 +175,4 @@ export function main(argv: string[]): void {
     command.parse(argv);
 }
 
-export function testMain(mode: 'check' | 'update'): void {
-    const argv = ['./index.js', 'snapshot-dir', 'snapshots', '--environment', 'snapshots/testEnv.json', '--quiet'];
-    if (mode === 'check') {
-        argv.push('--check');
-    }
-    main(argv);
-}
-
 main(process.argv);
