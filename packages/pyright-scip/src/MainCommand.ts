@@ -48,7 +48,6 @@ export function mainCommand(
     snapshotAction: (dir: string, options: SnapshotOptions) => void,
     environmentAction?: (options: EnvironmentOptions) => void
 ): Command {
-    console.log('indexAction', indexAction);
     const command = new Command();
     command.name('scip-python').version(packageJson.version).description('SCIP indexer for Python');
 
