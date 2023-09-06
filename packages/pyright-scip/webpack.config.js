@@ -27,9 +27,6 @@ module.exports = (_, { mode }) => {
         output: {
             filename: '[name].js',
             path: outPath,
-            library: {
-                type: 'commonjs2',
-            },
             devtoolModuleFilenameTemplate:
                 mode === 'development' ? '../[resource-path]' : monorepoResourceNameMapper('scip-python'),
             clean: true,
