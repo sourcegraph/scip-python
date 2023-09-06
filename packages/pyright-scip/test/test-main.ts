@@ -1,4 +1,4 @@
-const { main } = require('../dist/scip-python-lib');
+import { main } from '../src/mainImpl';
 import path from 'node:path';
 
 function testMain(mode: 'check' | 'update'): void {

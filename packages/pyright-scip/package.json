@@ -7,10 +7,10 @@
     "build": "webpack --mode production --progress",
     "clean": "shx rm -rf ./dist ./out README.md LICENSE.txt",
     "prepack": "npm run clean && shx cp ../../README.md . && shx cp ../../LICENSE.txt . && npm run build",
-    "check-snapshots-new": "uvu ./test -r ts-node/register --check",
-    "update-snapshots-new": "uvu ./test -r ts-node/register --ignore dist",
     "check-snapshots": "npm run update-snapshots -- --check",
     "update-snapshots": "node --enable-source-maps ./index.js snapshot-dir snapshots --environment snapshots/testEnv.json --quiet",
+    "check-snapshots-new": "npm run update-snapshots-new -- --check",
+    "update-snapshots-new": "node --enable-source-maps ./index-test.js",
     "test": "jest --forceExit --detectOpenHandles",
     "webpack": "webpack --mode development --progress",
     "watch": "webpack --mode development --progress --watch"
@@ -41,7 +41,6 @@
     "ts-loader": "^9.2.6",
     "tsconfig-paths-webpack-plugin": "^3.5.2",
     "typescript": "^4.5.4",
-    "uvu": "^0.5.6",
     "webpack": "^5.65.0",
     "webpack-cli": "^4.9.1"
   },
