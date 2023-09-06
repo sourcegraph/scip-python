@@ -1,4 +1,4 @@
-import { main } from '../src/mainImpl';
+import { main } from '../src/main-impl';
 import * as path from 'path';
 
 function testMain(mode: 'check' | 'update'): void {
