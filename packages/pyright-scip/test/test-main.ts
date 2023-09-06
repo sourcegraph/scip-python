@@ -1,5 +1,5 @@
 import { main } from '../src/mainImpl';
-import path from 'node:path';
+import * as path from 'path';
 
 function testMain(mode: 'check' | 'update'): void {
     const nodePath = process.argv[0];
