@@ -26,10 +26,6 @@ function indexAction(options: IndexOptions): void {
 
     // TODO: use setup.py / poetry to determine better projectName
     const projectName = options.projectName;
-    if (!projectName || projectName == '') {
-        console.warn('Must pass `--project-name`');
-        return;
-    }
 
     // TODO: Use setup.py / poetry to determine better projectVersion
     //  for now, the current hash works OK
@@ -39,8 +35,7 @@ function indexAction(options: IndexOptions): void {
         try {
             projectVersion = child_process.execSync('git rev-parse HEAD').toString().trim();
         } catch (e) {
-            console.warn('Must either pass `--project-version` or run from within a git repository');
-            return;
+            projectVersion = '';
         }
     }
 
