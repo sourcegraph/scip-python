@@ -5,9 +5,18 @@ import * as fs from 'fs';
 function testMain(mode: 'check' | 'update'): void {
     const nodePath = process.argv[0];
     // Returns list of subdir names, not absolute paths.
-    const subdirNames = fs.readdirSync('./snapshots/input');
+    const inputDir = path.join('.', 'snapshots', 'input');
+    const subdirNames = fs.readdirSync(inputDir);
     for (const subdirName of subdirNames) {
-        console.assert(subdirName.includes('/') === false);
+        console.assert(path.dirname(subdirName) === '');
+        const projectInfoPath = path.join(inputDir, subdirName, 'project-info.json');
+        let projectName = 'snapshot-util';
+        let projectVersion = '0.1';
+        if (fs.existsSync(projectInfoPath)) {
+            const projectInfo = JSON.parse(fs.readFileSync(projectInfoPath).toString());
+            projectName = projectInfo['name'];
+            projectVersion = projectInfo['version'];
+        }
         const argv = [
             nodePath,
             path.resolve('./index.js'),
@@ -17,9 +26,9 @@ function testMain(mode: 'check' | 'update'): void {
             'snapshots/testEnv.json',
             '--quiet',
             '--project-name',
-            'snapshot-util',
+            projectName,
             '--project-version',
-            '0.1',
+            projectVersion,
             '--only',
             subdirName,
         ];
