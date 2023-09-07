@@ -53,8 +53,15 @@ export function mainCommand(
 
     command
         .command('index')
-        .requiredOption('--project-name <name>', 'the name of the current project, pypi name if applicable')
-        .option('--project-version <version>', 'the version of the current project, defaults to git revision')
+        .option(
+            '--project-name <name>',
+            'The name of the current project, pypi name if applicable. The default empty project name only supports repository-local code navigation in Sourcegraph.',
+            ''
+        )
+        .option(
+            '--project-version <version>',
+            'The version of the current project. If not provided, defaults to the current git revision (if found).'
+        )
         .option('--project-namespace <namespace>', 'A prefix to prepend to all module definitions in the current index')
         .option('--cwd <path>', 'working directory for executing scip-python', process.cwd())
         .option('--target-only <path>', 'limit analysis to the following path')
