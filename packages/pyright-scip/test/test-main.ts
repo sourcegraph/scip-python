@@ -11,6 +11,10 @@ function testMain(mode: 'check' | 'update'): void {
         '--environment',
         'snapshots/testEnv.json',
         '--quiet',
+        '--project-name',
+        'snapshot-util',
+        '--project-version',
+        '0.1',
     ];
     if (mode === 'check') {
         argv.push('--check');

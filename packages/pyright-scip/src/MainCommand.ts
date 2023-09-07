@@ -74,11 +74,12 @@ export function mainCommand(
 
     command
         .command('snapshot-dir')
+        .addHelpText('before', '[Unstable implementation detail, use at your own risk!]')
         .argument('<path>', 'the directory containing `input` directories')
         .option('--check', 'whether to update or check', false)
         .option('--only <name>', 'only generate snapshots for <name>')
-        .option('--project-name <name>', 'the name of the current project, pypi name if applicable', 'snapshot-util')
-        .option('--project-version <version>', 'the name of the current project, pypi name if applicable', '0.1')
+        .requiredOption('--project-name <name>', 'the name of the current project, pypi name if applicable')
+        .requiredOption('--project-version <version>', 'the name of the current project, pypi name if applicable')
         .option('--output <path>', 'path to the output file', DEFAULT_OUTPUT_FILE)
         .option('--environment <json-file>', 'the environment json file (experimental)')
         .option('--no-index', 'skip indexing (use existing index.scip)')
