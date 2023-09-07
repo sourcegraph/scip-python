@@ -1,0 +1,12 @@
+{
+  "default": {
+    "name": "snapshot-util",
+    "version": "0.1"
+  },
+  "special": {
+    "odd_pkg_name_1": {
+      "name": "package with space",
+      "version": "0.1"
+    }
+  }
+}

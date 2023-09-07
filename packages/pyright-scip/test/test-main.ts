@@ -1,25 +1,45 @@
 import { main } from '../src/main-impl';
 import * as path from 'path';
+import * as fs from 'fs';
 
 function testMain(mode: 'check' | 'update'): void {
     const nodePath = process.argv[0];
-    const argv = [
-        nodePath,
-        path.resolve('./index.js'),
-        'snapshot-dir',
-        './snapshots',
-        '--environment',
-        'snapshots/testEnv.json',
-        '--quiet',
-        '--project-name',
-        'snapshot-util',
-        '--project-version',
-        '0.1',
-    ];
-    if (mode === 'check') {
-        argv.push('--check');
+    const startCwd = process.cwd();
+    // Returns list of subdir names, not absolute paths.
+    const inputDir = path.join('.', 'snapshots', 'input');
+    const subdirNames = fs.readdirSync(inputDir);
+    const packageInfoPath = path.join('.', 'snapshots', 'packageInfo.json');
+    const packageInfo = JSON.parse(fs.readFileSync(packageInfoPath, 'utf8'));
+    for (const subdirName of subdirNames) {
+        console.assert(!subdirName.includes(path.sep));
+        let projectName = packageInfo['default']['name'];
+        let projectVersion = packageInfo['default']['version'];
+        if (subdirName in packageInfo['special']) {
+            projectName = packageInfo['special'][subdirName]['name'];
+            projectVersion = packageInfo['special'][subdirName]['version'];
+        }
+        const argv = [
+            nodePath,
+            path.resolve('./index.js'),
+            'snapshot-dir',
+            './snapshots',
+            '--environment',
+            'snapshots/testEnv.json',
+            '--quiet',
+            '--project-name',
+            projectName,
+            '--project-version',
+            projectVersion,
+            '--only',
+            subdirName,
+        ];
+        if (mode === 'check') {
+            argv.push('--check');
+        }
+        main(argv);
+        // main changes the working directory; reset it.
+        process.chdir(startCwd);
     }
-    main(argv);
 }
 
 if (process.argv.indexOf('--check') !== -1) {
