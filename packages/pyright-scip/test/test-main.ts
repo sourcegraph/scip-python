@@ -7,15 +7,15 @@ function testMain(mode: 'check' | 'update'): void {
     // Returns list of subdir names, not absolute paths.
     const inputDir = path.join('.', 'snapshots', 'input');
     const subdirNames = fs.readdirSync(inputDir);
+    const packageInfoPath = path.join('.', 'snapshots', 'packageInfo.json');
+    const packageInfo = JSON.parse(fs.readFileSync(packageInfoPath, 'utf8'));
     for (const subdirName of subdirNames) {
-        console.assert(path.dirname(subdirName) === '');
-        const projectInfoPath = path.join(inputDir, subdirName, 'project-info.json');
-        let projectName = 'snapshot-util';
-        let projectVersion = '0.1';
-        if (fs.existsSync(projectInfoPath)) {
-            const projectInfo = JSON.parse(fs.readFileSync(projectInfoPath).toString());
-            projectName = projectInfo['name'];
-            projectVersion = projectInfo['version'];
+        console.assert(path.dirname(subdirName) === '.');
+        let projectName = packageInfo['default']['name'];
+        let projectVersion = packageInfo['default']['version'];
+        if (subdirName in packageInfo['special']) {
+            projectName = packageInfo['special'][subdirName]['name'];
+            projectVersion = packageInfo['special'][subdirName]['version'];
         }
         const argv = [
             nodePath,
