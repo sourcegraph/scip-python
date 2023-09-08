@@ -110,7 +110,7 @@ export class ScipPyrightConfig {
             pyprojectFilePath = this._findPyprojectTomlFile(projectRoot);
 
             if (!pyprojectFilePath && !commandLineOptions.fromVsCodeExtension) {
-                pyprojectFilePath = this._findPyprojectTomlFileHereOrUp(projectRoot);
+                pyprojectFilePath = this.findPyprojectTomlFileHereOrUp(projectRoot);
             }
 
             if (pyprojectFilePath) {
@@ -364,7 +364,7 @@ export class ScipPyrightConfig {
         return undefined;
     }
 
-    private _findPyprojectTomlFileHereOrUp(searchPath: string): string | undefined {
+    public findPyprojectTomlFileHereOrUp(searchPath: string): string | undefined {
         return forEachAncestorDirectory(searchPath, (ancestor) => this._findPyprojectTomlFile(ancestor));
     }
 
