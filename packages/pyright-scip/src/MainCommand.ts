@@ -2,7 +2,6 @@ import { Command, InvalidArgumentError } from 'commander';
 import packageJson from '../package.json';
 
 export interface IndexOptions {
-    project: string;
     projectName: string;
     projectVersion: string;
     projectNamespace?: string;
