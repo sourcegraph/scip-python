@@ -37,8 +37,6 @@ function testMain(mode: 'check' | 'update'): void {
             argv.push('--check');
         }
         main(argv);
-        // main changes the working directory; reset it.
-        process.chdir(startCwd);
     }
 }
 
