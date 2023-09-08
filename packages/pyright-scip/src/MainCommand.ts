@@ -5,7 +5,6 @@ export interface IndexOptions {
     projectName: string;
     projectVersion: string;
     projectNamespace?: string;
-    snapshotDir: string;
     environment?: string;
     dev: boolean;
     output: string;
@@ -65,7 +64,6 @@ export function mainCommand(
         .option('--cwd <path>', 'working directory for executing scip-python', process.cwd())
         .option('--target-only <path>', 'limit analysis to the following path')
         .option('--output <path>', 'path to the output file', DEFAULT_OUTPUT_FILE)
-        .option('--snapshot-dir <path>', 'the directory to output a snapshot of the SCIP dump')
         .option('--quiet', 'run without logging and status information', false)
         .option(
             '--show-progress-rate-limit <limit>',

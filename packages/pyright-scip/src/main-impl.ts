@@ -17,7 +17,6 @@ function indexAction(options: IndexOptions): void {
     }
 
     const projectRoot = options.cwd;
-    const snapshotDir = options.snapshotDir;
     const environment = options.environment;
 
     const originalWorkdir = process.cwd();
@@ -50,25 +49,6 @@ function indexAction(options: IndexOptions): void {
     }
 
     fs.close(output);
-
-    if (snapshotDir) {
-        sendStatus(`Writing snapshot from index: ${outputFile}`);
-
-        const scipIndex = scip.Index.deserializeBinary(fs.readFileSync(outputFile));
-        for (const doc of scipIndex.documents) {
-            if (doc.relative_path.startsWith('..')) {
-                console.log('Skipping Doc:', doc.relative_path);
-                continue;
-            }
-
-            const inputPath = path.join(projectRoot, doc.relative_path);
-            const input = Input.fromFile(inputPath);
-            const obtained = formatSnapshot(input, doc, scipIndex.external_symbols);
-            const relativeToInputDirectory = path.relative(projectRoot, inputPath);
-            const outputPath = path.resolve(snapshotDir, relativeToInputDirectory);
-            writeSnapshot(outputPath, obtained);
-        }
-    }
 
     process.chdir(originalWorkdir);
 }
