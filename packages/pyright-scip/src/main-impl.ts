@@ -20,6 +20,7 @@ function indexAction(options: IndexOptions): void {
     const snapshotDir = options.snapshotDir;
     const environment = options.environment;
 
+    const originalWorkdir = process.cwd();
     process.chdir(projectRoot);
 
     const outputFile = path.join(projectRoot, options.output);
@@ -44,6 +45,7 @@ function indexAction(options: IndexOptions): void {
             '\n\nExperienced Fatal Error While Indexing:\nPlease create an issue at github.com/sourcegraph/scip-python:',
             e
         );
+        process.chdir(originalWorkdir);
         exit(1);
     }
 
@@ -67,6 +69,8 @@ function indexAction(options: IndexOptions): void {
             writeSnapshot(outputPath, obtained);
         }
     }
+
+    process.chdir(originalWorkdir);
 }
 
 function snapshotAction(snapshotRoot: string, options: SnapshotOptions): void {
@@ -96,6 +100,7 @@ function snapshotAction(snapshotRoot: string, options: SnapshotOptions): void {
         }
 
         projectRoot = path.resolve(projectRoot);
+        const originalWorkdir = process.cwd();
         process.chdir(projectRoot);
 
         const scipBinaryFile = path.join(projectRoot, options.output);
@@ -135,6 +140,8 @@ function snapshotAction(snapshotRoot: string, options: SnapshotOptions): void {
                 writeSnapshot(outputPath, obtained);
             }
         }
+
+        process.chdir(originalWorkdir);
     }
 }
 
