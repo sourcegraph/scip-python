@@ -1,6 +1,5 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import * as child_process from 'child_process';
 
 import { scip } from './scip';
 import { diffSnapshot, formatSnapshot, writeSnapshot } from './lib';
@@ -24,38 +23,22 @@ function indexAction(options: IndexOptions): void {
     const projectRoot = workspaceRoot;
     process.chdir(workspaceRoot);
 
-    // TODO: use setup.py / poetry to determine better projectName
-    const projectName = options.projectName;
-
-    // TODO: Use setup.py / poetry to determine better projectVersion
-    //  for now, the current hash works OK
-    let projectVersion = options.projectVersion;
-    if (!projectVersion || projectVersion === '') {
-        // Default to current git hash
-        try {
-            projectVersion = child_process.execSync('git rev-parse HEAD').toString().trim();
-        } catch (e) {
-            projectVersion = '';
-        }
-    }
-
     const outputFile = path.join(projectRoot, options.output);
     const output = fs.openSync(outputFile, 'w');
-
-    sendStatus(`Indexing ${projectRoot} with version ${projectVersion}`);
 
     try {
         let indexer = new Indexer({
             ...options,
             workspaceRoot,
             projectRoot,
-            projectName,
-            projectVersion,
             environment,
+            infer: { projectVersionFromCommit: true },
             writeIndex: (partialIndex: scip.Index): void => {
                 fs.writeSync(output, partialIndex.serializeBinary());
             },
         });
+
+        sendStatus(`Indexing ${projectRoot} with version ${indexer.scipConfig.projectVersion}`);
 
         indexer.index();
     } catch (e) {
@@ -95,8 +78,6 @@ function snapshotAction(snapshotRoot: string, options: SnapshotOptions): void {
     }
 
     console.log('... Snapshotting ... ');
-    const projectName = options.projectName;
-    const projectVersion = options.projectVersion;
     const environment = options.environment ? path.resolve(options.environment) : undefined;
 
     const snapshotOnly = options.only;
@@ -127,9 +108,8 @@ function snapshotAction(snapshotRoot: string, options: SnapshotOptions): void {
                 ...options,
                 workspaceRoot: projectRoot,
                 projectRoot,
-                projectName,
-                projectVersion,
                 environment,
+                infer: { projectVersionFromCommit: false },
                 writeIndex: (partialIndex: any): void => {
                     fs.writeSync(output, partialIndex.serializeBinary());
                 },

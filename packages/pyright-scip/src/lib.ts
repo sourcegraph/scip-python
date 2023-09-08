@@ -18,6 +18,8 @@ export interface ScipConfig extends IndexOptions {
 
     projectRoot: string;
 
+    infer: { projectVersionFromCommit: boolean };
+
     writeIndex: (index: scip.Index) => void;
 }
 

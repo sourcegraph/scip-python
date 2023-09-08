@@ -1,3 +1,4 @@
+import * as child_process from 'child_process';
 import * as path from 'path';
 import { Event } from 'vscode-languageserver/lib/common/api';
 
@@ -39,6 +40,17 @@ export class Indexer {
         //
         // private _getConfigOptions(host: Host, commandLineOptions: CommandLineOptions): ConfigOptions {
         let fs = new PyrightFileSystem(createFromRealFileSystem());
+
+        if (
+            scipConfig.infer.projectVersionFromCommit &&
+            (!scipConfig.projectVersion || scipConfig.projectVersion === '')
+        ) {
+            try {
+                scipConfig.projectVersion = child_process.execSync('git rev-parse HEAD').toString().trim();
+            } catch (e) {
+                scipConfig.projectVersion = '';
+            }
+        }
 
         let config = new ScipPyrightConfig(scipConfig, fs);
         this.pyrightConfig = config.getConfigOptions();
