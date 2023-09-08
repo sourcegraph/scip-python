@@ -30,7 +30,7 @@ function indexAction(options: IndexOptions): void {
             ...options,
             projectRoot,
             environment,
-            infer: { projectVersionFromCommit: true },
+            infer: options.infer ?? { projectVersionFromCommit: true },
             writeIndex: (partialIndex: scip.Index): void => {
                 fs.writeSync(output, partialIndex.serializeBinary());
             },
@@ -54,55 +54,37 @@ function indexAction(options: IndexOptions): void {
 }
 
 function snapshotAction(snapshotRoot: string, options: SnapshotOptions): void {
-    setQuiet(options.quiet);
-    if (options.showProgressRateLimit !== undefined) {
-        setShowProgressRateLimit(options.showProgressRateLimit);
-    }
-
-    console.log('... Snapshotting ... ');
-    const environment = options.environment ? path.resolve(options.environment) : undefined;
-
-    const snapshotOnly = options.only;
-
+    const subdir: string = options.only;
     const inputDirectory = path.resolve(join(snapshotRoot, 'input'));
     const outputDirectory = path.resolve(join(snapshotRoot, 'output'));
 
-    // Either read all the directories or just the one passed in by name
     let snapshotDirectories = fs.readdirSync(inputDirectory);
-    if (snapshotOnly) {
-        snapshotDirectories = [snapshotOnly];
+    if (subdir) {
+        console.assert(snapshotDirectories.find((val) => val === subdir) !== undefined);
+        snapshotDirectories = [subdir];
     }
 
     for (const snapshotDir of snapshotDirectories) {
         let projectRoot = join(inputDirectory, snapshotDir);
-        if (!fs.lstatSync(projectRoot).isDirectory()) {
-            continue;
-        }
+        console.assert(fs.lstatSync(projectRoot).isDirectory());
+        console.log(`Output path = ${options.output}`);
 
-        projectRoot = path.resolve(projectRoot);
-        const originalWorkdir = process.cwd();
-        process.chdir(projectRoot);
+        indexAction({
+            projectName: options.projectName,
+            projectVersion: options.projectVersion,
+            projectNamespace: options.projectNamespace,
+            environment: options.environment ? path.resolve(options.environment) : undefined,
+            dev: options.dev,
+            output: options.output,
+            cwd: projectRoot,
+            targetOnly: options.targetOnly,
+            infer: { projectVersionFromCommit: false },
+            quiet: options.quiet,
+            showProgressRateLimit: undefined,
+        });
 
-        const scipBinaryFile = path.join(projectRoot, options.output);
-        const output = fs.openSync(scipBinaryFile, 'w');
-
-        if (options.index) {
-            let indexer = new Indexer({
-                ...options,
-                projectRoot,
-                environment,
-                infer: { projectVersionFromCommit: false },
-                writeIndex: (partialIndex: any): void => {
-                    fs.writeSync(output, partialIndex.serializeBinary());
-                },
-            });
-            indexer.index();
-            fs.close(output);
-        }
-
-        const contents = fs.readFileSync(scipBinaryFile);
-        const scipIndex = scip.Index.deserializeBinary(contents);
-
+        const scipIndexPath = path.join(projectRoot, options.output);
+        const scipIndex = scip.Index.deserializeBinary(fs.readFileSync(scipIndexPath));
         for (const doc of scipIndex.documents) {
             if (doc.relative_path.startsWith('..')) {
                 continue;
@@ -120,8 +102,6 @@ function snapshotAction(snapshotRoot: string, options: SnapshotOptions): void {
                 writeSnapshot(outputPath, obtained);
             }
         }
-
-        process.chdir(originalWorkdir);
     }
 }
 
