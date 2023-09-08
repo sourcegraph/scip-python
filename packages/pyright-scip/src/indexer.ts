@@ -231,7 +231,7 @@ export class Indexer {
         if (this.scipConfig.targetOnly && this.scipConfig.targetOnly !== '') {
             return this.scipConfig.targetOnly;
         } else {
-            return this.scipConfig.workspaceRoot;
+            return this.scipConfig.projectRoot;
         }
     }
 }

@@ -14,8 +14,6 @@ export interface ScipConfig extends IndexOptions {
      *
      * All `Document.relative_path` fields will be relative paths to this directory.
      */
-    workspaceRoot: string;
-
     projectRoot: string;
 
     infer: { projectVersionFromCommit: boolean };

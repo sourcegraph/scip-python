@@ -16,12 +16,11 @@ function indexAction(options: IndexOptions): void {
         setShowProgressRateLimit(options.showProgressRateLimit);
     }
 
-    const workspaceRoot = options.cwd;
+    const projectRoot = options.cwd;
     const snapshotDir = options.snapshotDir;
     const environment = options.environment;
 
-    const projectRoot = workspaceRoot;
-    process.chdir(workspaceRoot);
+    process.chdir(projectRoot);
 
     const outputFile = path.join(projectRoot, options.output);
     const output = fs.openSync(outputFile, 'w');
@@ -29,7 +28,6 @@ function indexAction(options: IndexOptions): void {
     try {
         let indexer = new Indexer({
             ...options,
-            workspaceRoot,
             projectRoot,
             environment,
             infer: { projectVersionFromCommit: true },
@@ -106,7 +104,6 @@ function snapshotAction(snapshotRoot: string, options: SnapshotOptions): void {
         if (options.index) {
             let indexer = new Indexer({
                 ...options,
-                workspaceRoot: projectRoot,
                 projectRoot,
                 environment,
                 infer: { projectVersionFromCommit: false },
