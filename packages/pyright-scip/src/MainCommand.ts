@@ -64,7 +64,11 @@ export function mainCommand(
         .option('--project-namespace <namespace>', 'A prefix to prepend to all module definitions in the current index')
         .option('--cwd <path>', 'working directory for executing scip-python', process.cwd())
         .option('--target-only <path>', 'limit analysis to the following path')
-        .option('--output <path>', 'path to the output file', DEFAULT_OUTPUT_FILE)
+        .option(
+            '--output <path>',
+            'Path to the output file. If this path is relative, it is interpreted relative to the value for --cwd.',
+            DEFAULT_OUTPUT_FILE
+        )
         .option('--quiet', 'run without logging and status information', false)
         .option(
             '--show-progress-rate-limit <limit>',
@@ -85,7 +89,11 @@ export function mainCommand(
         .option('--only <name>', 'only generate snapshots for <name>')
         .requiredOption('--project-name <name>', 'the name of the current project, pypi name if applicable')
         .requiredOption('--project-version <version>', 'the name of the current project, pypi name if applicable')
-        .option('--output <path>', 'path to the output file', DEFAULT_OUTPUT_FILE)
+        .option(
+            '--output <path>',
+            'Path to the output file. If this path is relative, it is interpreted relative to the value for --cwd.',
+            DEFAULT_OUTPUT_FILE
+        )
         .option('--environment <json-file>', 'the environment json file (experimental)')
         .option('--no-index', 'skip indexing (use existing index.scip)')
         .option('--quiet', 'run without logging and status information', false)
