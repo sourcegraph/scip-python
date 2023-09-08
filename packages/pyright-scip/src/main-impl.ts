@@ -22,7 +22,13 @@ function indexAction(options: IndexOptions): void {
     const originalWorkdir = process.cwd();
     process.chdir(projectRoot);
 
-    const outputFile = path.isAbsolute(options.output) ? options.output : path.join(originalWorkdir, options.output);
+    // In the relative path case, we use projectRoot rather than
+    // originalWorkdir because:
+    // 1. To preserve back-compat in case anyone is relying on projectRoot
+    // 2. The actual CLI flag for specifying the project root is --cwd,
+    //    which may lead to the expectation that output is considered
+    //    relative to the project root.
+    const outputFile = path.isAbsolute(options.output) ? options.output : path.join(projectRoot, options.output);
     const output = fs.openSync(outputFile, 'w');
 
     try {
