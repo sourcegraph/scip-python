@@ -10,6 +10,7 @@ export interface IndexOptions {
     output: string;
     cwd: string;
     targetOnly?: string;
+    infer?: { projectVersionFromCommit: boolean };
 
     // Progress reporting configuration
     quiet: boolean;

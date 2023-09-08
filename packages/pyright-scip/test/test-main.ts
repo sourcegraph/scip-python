@@ -32,7 +32,7 @@ function testMain(mode: 'check' | 'update'): void {
             projectVersion,
             '--only',
             subdirName,
-        ];
+        ]; // FIXME: This should pass with a --dev flag
         if (mode === 'check') {
             argv.push('--check');
         }
