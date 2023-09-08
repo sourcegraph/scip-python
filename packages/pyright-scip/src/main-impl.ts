@@ -22,7 +22,7 @@ function indexAction(options: IndexOptions): void {
     const originalWorkdir = process.cwd();
     process.chdir(projectRoot);
 
-    const outputFile = path.join(projectRoot, options.output);
+    const outputFile = path.isAbsolute(options.output) ? options.output : path.join(originalWorkdir, options.output);
     const output = fs.openSync(outputFile, 'w');
 
     try {
@@ -75,7 +75,7 @@ function snapshotAction(snapshotRoot: string, options: SnapshotOptions): void {
             projectNamespace: options.projectNamespace,
             environment: options.environment ? path.resolve(options.environment) : undefined,
             dev: options.dev,
-            output: options.output,
+            output: path.join(projectRoot, options.output),
             cwd: projectRoot,
             targetOnly: options.targetOnly,
             infer: { projectVersionFromCommit: false },
