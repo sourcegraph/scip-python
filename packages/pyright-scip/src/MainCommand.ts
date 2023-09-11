@@ -87,8 +87,8 @@ export function mainCommand(
         .argument('<path>', 'the directory containing `input` directories')
         .option('--check', 'whether to update or check', false)
         .option('--only <name>', 'only generate snapshots for <name>')
-        .requiredOption('--project-name <name>', 'the name of the current project, pypi name if applicable')
-        .requiredOption('--project-version <version>', 'the name of the current project, pypi name if applicable')
+        .option('--project-name <name>', 'the name of the current project, pypi name if applicable', '')
+        .option('--project-version <version>', 'the name of the current project, pypi name if applicable', '')
         .option(
             '--output <path>',
             'Path to the output file. If this path is relative, it is interpreted relative to the value for --cwd.',

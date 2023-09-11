@@ -1,5 +1,6 @@
 import * as child_process from 'child_process';
 import * as path from 'path';
+import * as TOML from '@iarna/toml';
 import { Event } from 'vscode-languageserver/lib/common/api';
 
 import { Program } from 'pyright-internal/analyzer/program';
@@ -28,6 +29,45 @@ export class Indexer {
     pyrightConfig: ConfigOptions;
     projectFiles: Set<string>;
 
+    public static inferProjectInfo(
+        inferProjectVersionFromCommit: boolean,
+        getPyprojectTomlContents: () => string | undefined
+    ): { name: string | undefined; version: string | undefined } {
+        let name = undefined;
+        let version = undefined;
+        try {
+            const pyprojectTomlContents = getPyprojectTomlContents();
+            if (pyprojectTomlContents) {
+                const tomlMap = TOML.parse(pyprojectTomlContents);
+                // See: https://packaging.python.org/en/latest/specifications/declaring-project-metadata/#specification
+                let project = tomlMap['project'] as TOML.JsonMap | undefined;
+                if (project) {
+                    name = project['name'];
+                    version = project['version'];
+                }
+                if (!name || !version) {
+                    // See: https://python-poetry.org/docs/pyproject/
+                    let tool = tomlMap['tool'] as TOML.JsonMap | undefined;
+                    if (tool) {
+                        let toolPoetry = tool['poetry'] as TOML.JsonMap | undefined;
+                        if (toolPoetry) {
+                            name = name ?? toolPoetry['name'];
+                            version = version ?? toolPoetry['version'];
+                        }
+                    }
+                }
+            }
+        } catch (_) {}
+        name = typeof name === 'string' ? name : undefined;
+        version = typeof version === 'string' ? version : undefined;
+        if (!version && inferProjectVersionFromCommit) {
+            try {
+                version = child_process.execSync('git rev-parse HEAD').toString().trim();
+            } catch (_) {}
+        }
+        return { name, version };
+    }
+
     constructor(public scipConfig: ScipConfig) {
         this.counter = new Counter();
 
@@ -40,23 +80,29 @@ export class Indexer {
         //
         // private _getConfigOptions(host: Host, commandLineOptions: CommandLineOptions): ConfigOptions {
         let fs = new PyrightFileSystem(createFromRealFileSystem());
-
-        if (
-            scipConfig.infer.projectVersionFromCommit &&
-            (!scipConfig.projectVersion || scipConfig.projectVersion === '')
-        ) {
-            try {
-                scipConfig.projectVersion = child_process.execSync('git rev-parse HEAD').toString().trim();
-            } catch (e) {
-                scipConfig.projectVersion = '';
-            }
-        }
-
         let config = new ScipPyrightConfig(scipConfig, fs);
         this.pyrightConfig = config.getConfigOptions();
 
-        const matcher = new FileMatcher(this.pyrightConfig, fs);
+        if (!scipConfig.projectName || !scipConfig.projectVersion) {
+            const { name, version } = Indexer.inferProjectInfo(
+                scipConfig.infer.projectVersionFromCommit,
+                (): string | undefined => {
+                    const tomlPath = config.findPyprojectTomlFileHereOrUp(scipConfig.projectRoot);
+                    if (tomlPath) {
+                        return fs.readFileSync(tomlPath, 'utf8');
+                    }
+                    return undefined;
+                }
+            );
+            if (!scipConfig.projectName && name) {
+                scipConfig.projectName = name;
+            }
+            if (!scipConfig.projectVersion && version) {
+                scipConfig.projectVersion = version;
+            }
+        }
 
+        const matcher = new FileMatcher(this.pyrightConfig, fs);
         this.projectFiles = new Set(matcher.matchFiles(this.pyrightConfig.include, this.pyrightConfig.exclude));
         if (scipConfig.targetOnly) {
             scipConfig.targetOnly = path.resolve(scipConfig.targetOnly);
