@@ -475,7 +475,7 @@ export class TreeVisitor extends ParseTreeWalker {
         const symbol = this.getScipSymbol(node);
         this.document.occurrences.push(
             new scip.Occurrence({
-                symbol_roles: scip.SymbolRole.ReadAccess,
+                symbol_roles: scip.SymbolRole.Import | scip.SymbolRole.ReadAccess,
                 symbol: symbol.value,
                 range: parseNodeToRange(node.module, this.fileInfo!.lines).toLsif(),
             })
@@ -490,7 +490,8 @@ export class TreeVisitor extends ParseTreeWalker {
     }
 
     override visitImportFromAs(node: ImportFromAsNode): boolean {
-        this.pushNewOccurrence(node, this.getScipSymbol(node));
+        const roles = scip.SymbolRole.Import | scip.SymbolRole.ReadAccess;
+        this.pushNewOccurrence(node, this.getScipSymbol(node), roles);
         return false;
     }
 
@@ -500,19 +501,20 @@ export class TreeVisitor extends ParseTreeWalker {
     override visitImportAs(node: ImportAsNode): boolean {
         const moduleName = _formatModuleName(node.module);
         const importInfo = getImportInfo(node.module);
+        const roles = scip.SymbolRole.Import | scip.SymbolRole.ReadAccess;
         if (
             importInfo &&
             importInfo.resolvedPaths[0] &&
             path.resolve(importInfo.resolvedPaths[0]).startsWith(this.cwd)
         ) {
             const symbol = Symbols.makeModuleInit(this.projectPackage, moduleName);
-            this.pushNewOccurrence(node.module, symbol);
+            this.pushNewOccurrence(node.module, symbol, roles);
         } else {
             const pythonPackage = this.moduleNameNodeToPythonPackage(node.module);
 
             if (pythonPackage) {
                 const symbol = Symbols.makeModuleInit(pythonPackage, moduleName);
-                this.pushNewOccurrence(node.module, symbol);
+                this.pushNewOccurrence(node.module, symbol, roles);
             } else {
                 // For python packages & modules that we cannot resolve,
                 // we'll just make a local for the file and note that we could not resolve this module.
@@ -524,7 +526,7 @@ export class TreeVisitor extends ParseTreeWalker {
                 const symbol = this.getLocalForDeclaration(node, [
                     `(module): ${moduleName} [unable to resolve module]`,
                 ]);
-                this.pushNewOccurrence(node.module, symbol);
+                this.pushNewOccurrence(node.module, symbol, roles);
             }
         }
 
