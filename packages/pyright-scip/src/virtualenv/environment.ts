@@ -33,10 +33,10 @@ function pipList(): PipInformation[] {
 }
 
 function pipBulkShow(names: string[]): string[] {
-    // TODO: This probably breaks with enough names. Should batch them into 512 or whatever the max for bash would be
+    const maxBuffer = 1024 * 1024 * 10; // 10MB
     return child_process
-        .execSync(`${getPipCommand()} show -f ${names.join(' ')}`)
-        .toString()
+        .spawnSync(getPipCommand(), ['show', '-f', `${names.join(' ')}`], {maxBuffer})
+        .stdout.toString()
         .split('---');
 }
 
