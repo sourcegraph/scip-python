@@ -37,7 +37,7 @@ function pipBulkShow(names: string[]): string[] {
     return child_process
         .execSync(`${getPipCommand()} show -f ${names.join(' ')}`)
         .toString()
-        .split('---');
+        .split('\n---');
 }
 
 export default function getEnvironment(
