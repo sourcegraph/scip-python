@@ -189,6 +189,9 @@ export function formatSnapshot(
             const isDefinition = (occurrence.symbol_roles & scip.SymbolRole.Definition) > 0;
             out.push(isDefinition ? 'definition' : 'reference');
             out.push(' ');
+            if (occurrence.enclosing_range.length) {
+                out.push('<enclosing ' + occurrence.enclosing_range.join(', ') + '>');
+            }
             const symbol = occurrence.symbol.startsWith(packageName)
                 ? occurrence.symbol.slice(packageName.length)
                 : occurrence.symbol;
