@@ -71,13 +71,24 @@ export function formatSnapshot(
         externalSymbolTable.set(externalSymbol.symbol, externalSymbol);
     }
 
+    const enclosingRanges: { range: Range; symbol: string }[] = [];
     const symbolsWithDefinitions: Set<string> = new Set();
+
     for (let occurrence of doc.occurrences) {
         const isDefinition = (occurrence.symbol_roles & scip.SymbolRole.Definition) > 0;
         if (isDefinition) {
             symbolsWithDefinitions.add(occurrence.symbol);
         }
+
+        if (occurrence.enclosing_range.length > 0) {
+            enclosingRanges.push({
+                range: Range.fromLsif(occurrence.enclosing_range),
+                symbol: occurrence.symbol,
+            });
+        }
     }
+
+    enclosingRanges.sort(enclosingRangesByLine);
 
     const emittedDocstrings: Set<string> = new Set();
     const pushDoc = (range: Range, symbol: string, isDefinition: boolean, isStartOfLine: boolean) => {
@@ -157,8 +168,33 @@ export function formatSnapshot(
         out.push('\n');
     };
 
+    const pushEnclosingRange = (
+        enclosingRange: {
+            range: Range;
+            symbol: string;
+        },
+        end: boolean = false
+    ) => {
+        if (!formatOptions.showRanges) {
+            return;
+        }
+
+        out.push(commentSyntax);
+        out.push(' '.repeat(Math.max(1, enclosingRange.range.start.character - 1)));
+        if (end) {
+            out.push('⌃ end ');
+        } else {
+            out.push('⌄ start ');
+        }
+        out.push('enclosing_range ');
+        out.push(enclosingRange.symbol);
+        out.push('\n');
+    };
+
     doc.occurrences.sort(occurrencesByLine);
     let occurrenceIndex = 0;
+    const openEnclosingRanges = [];
+
     for (const [lineNumber, line] of input.lines.entries()) {
         // Write 0,0 items ABOVE the first line.
         //  This is the only case where we would need to do this.
@@ -180,6 +216,26 @@ export function formatSnapshot(
 
                 occurrenceIndex++;
             }
+        }
+
+        // Check if any enclosing ranges start on this line
+        for (let rangeIndex = 0; rangeIndex < enclosingRanges.length; rangeIndex++) {
+            const enclosingRange = enclosingRanges[rangeIndex];
+
+            if (enclosingRange.range.start.line == lineNumber) {
+                // Switch the range to the open list
+                enclosingRanges.splice(rangeIndex, 1);
+                openEnclosingRanges.push(enclosingRange);
+
+                // Decrement the counter as an item was removed
+                rangeIndex -= 1;
+
+                pushEnclosingRange(enclosingRange);
+
+                continue;
+            }
+
+            break;
         }
 
         out.push('');
@@ -226,6 +282,21 @@ export function formatSnapshot(
 
             pushDoc(range, occurrence.symbol, isDefinition, isStartOfLine);
         }
+
+        for (let openRangeIndex = openEnclosingRanges.length - 1; openRangeIndex >= 0; openRangeIndex--) {
+            const enclosingRange = openEnclosingRanges[openRangeIndex];
+
+            if (enclosingRange.range.end.line == lineNumber) {
+                // Switch the range to the open list
+                openEnclosingRanges.splice(openRangeIndex, 1);
+
+                pushEnclosingRange(enclosingRange, true);
+
+                continue;
+            }
+
+            break;
+        }
     }
     return out.join('');
 }
@@ -260,4 +331,15 @@ export function diffSnapshot(outputPath: string, obtained: string): void {
 
 function occurrencesByLine(a: scip.Occurrence, b: scip.Occurrence): number {
     return Range.fromLsif(a.range).compare(Range.fromLsif(b.range));
+}
+
+function enclosingRangesByLine(a: { range: Range; symbol: string }, b: { range: Range; symbol: string }): number {
+    // Return the range that starts first, and if they start at the same line, the one that ends last (enclosing).
+    const rangeCompare = a.range.compare(b.range);
+
+    if (rangeCompare !== 0) {
+        return rangeCompare;
+    }
+
+    return b.range.end.line - a.range.end.line;
 }
