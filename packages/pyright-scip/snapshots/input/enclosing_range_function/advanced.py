@@ -1,3 +1,4 @@
+# format-options: showRanges
 def decorator(func):
     def wrapper(*args, **kwargs):
         return func(*args, **kwargs)

@@ -1,3 +1,4 @@
+# format-options: showRanges
 def class_decorator(cls):
     def wrapper(*args, **kwargs):
         return cls(*args, **kwargs)

@@ -1,14 +1,11 @@
 # < definition scip-python python snapshot-util 0.1 simple/__init__:
-#documentation (module) simple
 
+# format-options: showRanges
+# ⌄ start enclosing_range scip-python python snapshot-util 0.1 simple/simple().
 def simple(x):
-#   ^^^^^^ definition <enclosing 0, 0, 1, 10> snapshot-util 0.1 simple/simple().
-#   documentation ```python
-#               > def simple(
-#               >   x
-#               > ):
-#               > ```
+#   ^^^^^^ definition  snapshot-util 0.1 simple/simple().
 #          ^ definition  snapshot-util 0.1 simple/simple().(x)
   return x
 #        ^ reference  snapshot-util 0.1 simple/simple().(x)
+# ⌃ end enclosing_range scip-python python snapshot-util 0.1 simple/simple().
 

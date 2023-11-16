@@ -1,11 +1,10 @@
 # < definition scip-python python snapshot-util 0.1 simple/__init__:
-#documentation (module) simple
 
+# format-options: showRanges
+# ⌄ start enclosing_range scip-python python snapshot-util 0.1 simple/Test#
 class Test():
-#     ^^^^ definition <enclosing 0, 0, 1, 6> snapshot-util 0.1 simple/Test#
-#     documentation ```python
-#                 > class Test:
-#                 > ```
+#     ^^^^ definition  snapshot-util 0.1 simple/Test#
 #     ^^^^ definition  snapshot-util 0.1 simple/Test#
   pass
+# ⌃ end enclosing_range scip-python python snapshot-util 0.1 simple/Test#
 
