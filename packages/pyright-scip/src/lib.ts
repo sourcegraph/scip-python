@@ -40,6 +40,32 @@ export function formatSnapshot(
     const out: string[] = [];
     const symbolTable = getSymbolTable(doc);
 
+    const formatOptionsPrefix = '# format-options:';
+    const formatOptions = {
+        showDocs: false,
+        showRanges: false,
+    };
+
+    for (let line of input.lines) {
+        if (!line.startsWith(formatOptionsPrefix)) {
+            continue;
+        }
+
+        const options = line.slice(formatOptionsPrefix.length).trim().split(',');
+
+        for (let option of options) {
+            const optionName = option.trim();
+
+            if (!(optionName in formatOptions)) {
+                throw new Error(`Invalid format option: ${optionName}`);
+            }
+
+            formatOptions[optionName as keyof typeof formatOptions] = true;
+        }
+
+        break;
+    }
+
     const externalSymbolTable: Map<string, scip.SymbolInformation> = new Map();
     for (let externalSymbol of externalSymbols) {
         externalSymbolTable.set(externalSymbol.symbol, externalSymbol);
@@ -75,6 +101,10 @@ export function formatSnapshot(
         }
 
         const pushOneDoc = (docs: string[], external: boolean) => {
+            if (!formatOptions.showDocs) {
+                return;
+            }
+
             for (const documentation of docs) {
                 for (const [idx, line] of documentation.split('\n').entries()) {
                     out.push(prefix);
@@ -189,9 +219,6 @@ export function formatSnapshot(
             const isDefinition = (occurrence.symbol_roles & scip.SymbolRole.Definition) > 0;
             out.push(isDefinition ? 'definition' : 'reference');
             out.push(' ');
-            if (occurrence.enclosing_range.length) {
-                out.push('<enclosing ' + occurrence.enclosing_range.join(', ') + '>');
-            }
             const symbol = occurrence.symbol.startsWith(packageName)
                 ? occurrence.symbol.slice(packageName.length)
                 : occurrence.symbol;
