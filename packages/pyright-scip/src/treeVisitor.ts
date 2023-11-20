@@ -1392,7 +1392,7 @@ export class TreeVisitor extends ParseTreeWalker {
         node: ParseNode,
         symbol: ScipSymbol,
         role: number = scip.SymbolRole.ReadAccess,
-        // TODO: should lambda have an enclosing range?
+        // TODO(issue: https://github.com/sourcegraph/scip-python/issues/134)
         decl?: FunctionNode | ClassNode
     ): void {
         softAssert(symbol.value.trim() == symbol.value, `Invalid symbol ${node} -> ${symbol.value}`);
