@@ -719,7 +719,8 @@ export class TreeVisitor extends ParseTreeWalker {
         }
 
         if (isDefinition) {
-            switch (parent.nodeType) {
+            // In this case, decl.node == node.parent
+            switch (decl.node.nodeType) {
                 case ParseNodeType.Class: {
                     const symbol = this.getScipSymbol(parent);
 
@@ -729,7 +730,7 @@ export class TreeVisitor extends ParseTreeWalker {
                         documentation.push('```python\n' + stub.join('\n') + '\n```');
                     }
 
-                    const doc = ParseTreeUtils.getDocString(parent.suite.statements)?.trim();
+                    const doc = ParseTreeUtils.getDocString(decl.node.suite.statements)?.trim();
                     if (doc) {
                         documentation.push(convertDocStringToMarkdown(doc));
                     }
@@ -787,7 +788,7 @@ export class TreeVisitor extends ParseTreeWalker {
                         })
                     );
 
-                    this.pushNewOccurrence(node, this.getScipSymbol(decl.node), scip.SymbolRole.Definition, parent);
+                    this.pushNewOccurrence(node, this.getScipSymbol(decl.node), scip.SymbolRole.Definition, decl.node);
                 }
                 default: {
                     this.pushNewOccurrence(node, this.getScipSymbol(decl.node), scip.SymbolRole.Definition);
