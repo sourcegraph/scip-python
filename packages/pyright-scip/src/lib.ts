@@ -189,10 +189,19 @@ export function formatSnapshot(
 
         out.push(commentSyntax);
         out.push(' '.repeat(Math.max(1, enclosingRange.range.start.character - 1)));
-        if (end) {
-            out.push('⌃ end ');
+
+        if (enclosingRange.range.start.character < 2) {
+            out.push('<');
+        } else if (end) {
+            out.push('^');
         } else {
-            out.push('⌄ start ');
+            out.push('⌄');
+        }
+
+        if (end) {
+            out.push(' end ');
+        } else {
+            out.push(' start ');
         }
         out.push('enclosing_range ');
         out.push(enclosingRange.symbol);
