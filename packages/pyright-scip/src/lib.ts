@@ -80,7 +80,7 @@ export function formatSnapshot(
             symbolsWithDefinitions.add(occurrence.symbol);
         }
 
-        if (occurrence.enclosing_range.length > 0) {
+        if (formatOptions.showRanges && occurrence.enclosing_range.length > 0) {
             enclosingRanges.push({
                 range: Range.fromLsif(occurrence.enclosing_range),
                 symbol: occurrence.symbol,
@@ -89,6 +89,14 @@ export function formatSnapshot(
     }
 
     enclosingRanges.sort(enclosingRangesByLine);
+
+    const enclosingRangeStarts: (typeof enclosingRanges)[number][][] = Array.from(Array(input.lines.length), () => []);
+    const enclosingRangeEnds: (typeof enclosingRanges)[number][][] = Array.from(Array(input.lines.length), () => []);
+
+    for (const enclosingRange of enclosingRanges) {
+        enclosingRangeStarts[enclosingRange.range.start.line].push(enclosingRange);
+        enclosingRangeEnds[enclosingRange.range.end.line].unshift(enclosingRange);
+    }
 
     const emittedDocstrings: Set<string> = new Set();
     const pushDoc = (range: Range, symbol: string, isDefinition: boolean, isStartOfLine: boolean) => {
@@ -193,7 +201,6 @@ export function formatSnapshot(
 
     doc.occurrences.sort(occurrencesByLine);
     let occurrenceIndex = 0;
-    const openEnclosingRanges = [];
 
     for (const [lineNumber, line] of input.lines.entries()) {
         // Write 0,0 items ABOVE the first line.
@@ -219,23 +226,8 @@ export function formatSnapshot(
         }
 
         // Check if any enclosing ranges start on this line
-        for (let rangeIndex = 0; rangeIndex < enclosingRanges.length; rangeIndex++) {
-            const enclosingRange = enclosingRanges[rangeIndex];
-
-            if (enclosingRange.range.start.line == lineNumber) {
-                // Switch the range to the open list
-                enclosingRanges.splice(rangeIndex, 1);
-                openEnclosingRanges.push(enclosingRange);
-
-                // Decrement the counter as an item was removed
-                rangeIndex -= 1;
-
-                pushEnclosingRange(enclosingRange);
-
-                continue;
-            }
-
-            break;
+        for (const enclosingRange of enclosingRangeStarts[lineNumber]) {
+            pushEnclosingRange(enclosingRange);
         }
 
         out.push('');
@@ -283,19 +275,9 @@ export function formatSnapshot(
             pushDoc(range, occurrence.symbol, isDefinition, isStartOfLine);
         }
 
-        for (let openRangeIndex = openEnclosingRanges.length - 1; openRangeIndex >= 0; openRangeIndex--) {
-            const enclosingRange = openEnclosingRanges[openRangeIndex];
-
-            if (enclosingRange.range.end.line == lineNumber) {
-                // Switch the range to the open list
-                openEnclosingRanges.splice(openRangeIndex, 1);
-
-                pushEnclosingRange(enclosingRange, true);
-
-                continue;
-            }
-
-            break;
+        // Check if any enclosing ranges end on this line
+        for (const enclosingRange of enclosingRangeEnds[lineNumber]) {
+            pushEnclosingRange(enclosingRange, true);
         }
     }
     return out.join('');
