@@ -31,22 +31,18 @@ function getSymbolTable(doc: scip.Document): Map<string, scip.SymbolInformation>
 
 const packageName = 'scip-python python';
 const commentSyntax = '#';
+const formatOptionsPrefix = '# format-options:';
 
-export function formatSnapshot(
-    input: Input,
-    doc: scip.Document,
-    externalSymbols: scip.SymbolInformation[] = []
-): string {
-    const out: string[] = [];
-    const symbolTable = getSymbolTable(doc);
-
-    const formatOptionsPrefix = '# format-options:';
+function parseOptions(lines: string[]): {
+    showDocs: boolean;
+    showRanges: boolean;
+} {
     const formatOptions = {
         showDocs: false,
         showRanges: false,
     };
 
-    for (let line of input.lines) {
+    for (let line of lines) {
         if (!line.startsWith(formatOptionsPrefix)) {
             continue;
         }
@@ -66,6 +62,17 @@ export function formatSnapshot(
         break;
     }
 
+    return formatOptions;
+}
+
+export function formatSnapshot(
+    input: Input,
+    doc: scip.Document,
+    externalSymbols: scip.SymbolInformation[] = []
+): string {
+    const out: string[] = [];
+    const symbolTable = getSymbolTable(doc);
+
     const externalSymbolTable: Map<string, scip.SymbolInformation> = new Map();
     for (let externalSymbol of externalSymbols) {
         externalSymbolTable.set(externalSymbol.symbol, externalSymbol);
@@ -73,6 +80,8 @@ export function formatSnapshot(
 
     const enclosingRanges: { range: Range; symbol: string }[] = [];
     const symbolsWithDefinitions: Set<string> = new Set();
+
+    const formatOptions = parseOptions(input.lines);
 
     for (let occurrence of doc.occurrences) {
         const isDefinition = (occurrence.symbol_roles & scip.SymbolRole.Definition) > 0;
