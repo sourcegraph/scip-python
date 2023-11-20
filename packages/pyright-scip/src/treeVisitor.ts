@@ -574,7 +574,6 @@ export class TreeVisitor extends ParseTreeWalker {
         const existingSymbol = this.rawGetLsifSymbol(decl.node);
         if (existingSymbol) {
             if (decl.node.id === parent.id || decl.node.id === node.id) {
-                // Check if the declaration is a function
                 switch (decl.node.nodeType) {
                     case ParseNodeType.Function:
                     case ParseNodeType.Class:
