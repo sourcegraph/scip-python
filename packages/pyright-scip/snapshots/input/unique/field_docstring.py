@@ -1,3 +1,5 @@
+# format-options: showDocs
+
 class ClassWithField:
 
     a: int

@@ -1,5 +1,4 @@
 # < definition scip-python python snapshot-util 0.1 bar/__init__:
-#documentation (module) bar
 
 from .foo import exported_function
 #    ^^^^ reference  snapshot-util 0.1 foo/__init__:

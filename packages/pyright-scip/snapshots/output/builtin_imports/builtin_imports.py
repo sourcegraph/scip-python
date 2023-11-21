@@ -1,6 +1,8 @@
 # < definition scip-python python snapshot-util 0.1 builtin_imports/__init__:
 #documentation (module) builtin_imports
 
+# format-options: showDocs
+
 import re
 #      ^^ reference  python-stdlib 3.11 re/__init__:
 from typing import Callable, Optional
