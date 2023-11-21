@@ -6,7 +6,6 @@ def exported_function():
 
 class MyClass:
 #     ^^^^^^^ definition  snapshot-util 0.1 foo/MyClass#
-#     ^^^^^^^ definition  snapshot-util 0.1 foo/MyClass#
     """This is a class and it is cool"""
 
     def __init__(self):

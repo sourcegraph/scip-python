@@ -2,7 +2,6 @@
 
 class Left:
 #     ^^^^ definition  snapshot-util 0.1 multiinherits_test/Left#
-#     ^^^^ definition  snapshot-util 0.1 multiinherits_test/Left#
     def one(self) -> int:
 #       ^^^ definition  snapshot-util 0.1 multiinherits_test/Left#one().
 #           ^^^^ definition  snapshot-util 0.1 multiinherits_test/Left#one().(self)
@@ -16,7 +15,6 @@ class Left:
         return False
 
 class Right:
-#     ^^^^^ definition  snapshot-util 0.1 multiinherits_test/Right#
 #     ^^^^^ definition  snapshot-util 0.1 multiinherits_test/Right#
     def two(self):
 #       ^^^ definition  snapshot-util 0.1 multiinherits_test/Right#two().
@@ -33,7 +31,6 @@ class Multi(Left, Right):
 #     ^^^^^ definition  snapshot-util 0.1 multiinherits_test/Multi#
 #     relationship implementation scip-python python snapshot-util 0.1 multiinherits_test/Left#
 #     relationship implementation scip-python python snapshot-util 0.1 multiinherits_test/Right#
-#     ^^^^^ definition  snapshot-util 0.1 multiinherits_test/Multi#
 #           ^^^^ reference  snapshot-util 0.1 multiinherits_test/Left#
 #                 ^^^^^ reference  snapshot-util 0.1 multiinherits_test/Right#
     def one(self) -> int:

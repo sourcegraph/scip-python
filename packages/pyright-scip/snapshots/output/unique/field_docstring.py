@@ -8,7 +8,6 @@ class ClassWithField:
 #     documentation ```python
 #                 > class ClassWithField:
 #                 > ```
-#     ^^^^^^^^^^^^^^ definition  snapshot-util 0.1 field_docstring/ClassWithField#
 
     a: int
 #   ^ definition  snapshot-util 0.1 field_docstring/ClassWithField#a.

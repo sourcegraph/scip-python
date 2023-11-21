@@ -2,7 +2,6 @@
 
 class ExampleClass:
 #     ^^^^^^^^^^^^ definition  snapshot-util 0.1 `src.single_class`/ExampleClass#
-#     ^^^^^^^^^^^^ definition  snapshot-util 0.1 `src.single_class`/ExampleClass#
     a: int
 #   ^ definition  snapshot-util 0.1 `src.single_class`/ExampleClass#a.
 #      ^^^ reference  python-stdlib 3.11 builtins/int#

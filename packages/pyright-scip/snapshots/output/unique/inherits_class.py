@@ -2,7 +2,6 @@
 
 class A:
 #     ^ definition  snapshot-util 0.1 inherits_class/A#
-#     ^ definition  snapshot-util 0.1 inherits_class/A#
     def x(self) -> int:
 #       ^ definition  snapshot-util 0.1 inherits_class/A#x().
 #         ^^^^ definition  snapshot-util 0.1 inherits_class/A#x().(self)
@@ -20,7 +19,6 @@ class A:
 class B(A):
 #     ^ definition  snapshot-util 0.1 inherits_class/B#
 #     relationship implementation scip-python python snapshot-util 0.1 inherits_class/A#
-#     ^ definition  snapshot-util 0.1 inherits_class/B#
 #       ^ reference  snapshot-util 0.1 inherits_class/A#
     def x(self) -> int:
 #       ^ definition  snapshot-util 0.1 inherits_class/B#x().

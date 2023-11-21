@@ -6,7 +6,6 @@ from typing import List
 
 class X:
 #     ^ definition  snapshot-util 0.1 vars_inside_scopes/X#
-#     ^ definition  snapshot-util 0.1 vars_inside_scopes/X#
     items: List[int]
 #   ^^^^^ definition  snapshot-util 0.1 vars_inside_scopes/X#items.
 #          ^^^^ reference  python-stdlib 3.11 typing/List.

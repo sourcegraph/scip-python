@@ -8,7 +8,6 @@ class ClassWithInferredField:
 #     documentation ```python
 #                 > class ClassWithInferredField:
 #                 > ```
-#     ^^^^^^^^^^^^^^^^^^^^^^ definition  snapshot-util 0.1 inferred_field_docstring/ClassWithInferredField#
     def __init__(self, b: int):
 #       ^^^^^^^^ definition  snapshot-util 0.1 inferred_field_docstring/ClassWithInferredField#__init__().
 #       documentation ```python

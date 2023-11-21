@@ -24,7 +24,6 @@ def class_decorator(cls):
 #^^^^^^^^^^^^^^^ reference  snapshot-util 0.1 advanced/class_decorator().
 class Test:
 #     ^^^^ definition  snapshot-util 0.1 advanced/Test#
-#     ^^^^ definition  snapshot-util 0.1 advanced/Test#
 #   ⌄ start enclosing_range scip-python python snapshot-util 0.1 advanced/Test#__init__().
     def __init__(self, x: float):
 #       ^^^^^^^^ definition  snapshot-util 0.1 advanced/Test#__init__().

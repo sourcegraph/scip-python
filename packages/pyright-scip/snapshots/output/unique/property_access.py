@@ -6,7 +6,6 @@ from typing import Sequence
 
 class PropertyClass:
 #     ^^^^^^^^^^^^^ definition  snapshot-util 0.1 property_access/PropertyClass#
-#     ^^^^^^^^^^^^^ definition  snapshot-util 0.1 property_access/PropertyClass#
     def __init__(self):
 #       ^^^^^^^^ definition  snapshot-util 0.1 property_access/PropertyClass#__init__().
 #                ^^^^ definition  snapshot-util 0.1 property_access/PropertyClass#__init__().(self)
