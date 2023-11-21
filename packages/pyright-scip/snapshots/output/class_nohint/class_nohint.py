@@ -1,6 +1,8 @@
 # < definition scip-python python snapshot-util 0.1 class_nohint/__init__:
 #documentation (module) class_nohint
 
+# format-options: showDocs
+
 class Example:
 #     ^^^^^^^ definition  snapshot-util 0.1 class_nohint/Example#
 #     documentation ```python

@@ -2,6 +2,8 @@
 #documentation (module) module_docstring
 #documentation This is a docstring for this module
 
+# format-options: showDocs
+
 """
 This is a docstring for this module
 """

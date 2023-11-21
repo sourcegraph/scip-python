@@ -1,6 +1,8 @@
 # < definition scip-python python snapshot-util 0.1 inferred_field_docstring/__init__:
 #documentation (module) inferred_field_docstring
 
+# format-options: showDocs
+
 class ClassWithInferredField:
 #     ^^^^^^^^^^^^^^^^^^^^^^ definition  snapshot-util 0.1 inferred_field_docstring/ClassWithInferredField#
 #     documentation ```python

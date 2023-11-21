@@ -574,7 +574,14 @@ export class TreeVisitor extends ParseTreeWalker {
         const existingSymbol = this.rawGetLsifSymbol(decl.node);
         if (existingSymbol) {
             if (decl.node.id === parent.id || decl.node.id === node.id) {
-                this.pushNewOccurrence(node, existingSymbol, scip.SymbolRole.Definition);
+                switch (decl.node.nodeType) {
+                    case ParseNodeType.Function:
+                    case ParseNodeType.Class:
+                        this.pushNewOccurrence(node, existingSymbol, scip.SymbolRole.Definition, decl.node);
+                        break;
+                    default:
+                        this.pushNewOccurrence(node, existingSymbol, scip.SymbolRole.Definition);
+                }
             } else {
                 this.pushNewOccurrence(node, existingSymbol);
             }
@@ -712,7 +719,8 @@ export class TreeVisitor extends ParseTreeWalker {
         }
 
         if (isDefinition) {
-            switch (parent.nodeType) {
+            // In this case, decl.node == node.parent
+            switch (decl.node.nodeType) {
                 case ParseNodeType.Class: {
                     const symbol = this.getScipSymbol(parent);
 
@@ -722,7 +730,7 @@ export class TreeVisitor extends ParseTreeWalker {
                         documentation.push('```python\n' + stub.join('\n') + '\n```');
                     }
 
-                    const doc = ParseTreeUtils.getDocString(parent.suite.statements)?.trim();
+                    const doc = ParseTreeUtils.getDocString(decl.node.suite.statements)?.trim();
                     if (doc) {
                         documentation.push(convertDocStringToMarkdown(doc));
                     }
@@ -779,10 +787,15 @@ export class TreeVisitor extends ParseTreeWalker {
                             relationships,
                         })
                     );
+
+                    this.pushNewOccurrence(node, this.getScipSymbol(decl.node), scip.SymbolRole.Definition, decl.node);
+                    break;
+                }
+                default: {
+                    this.pushNewOccurrence(node, this.getScipSymbol(decl.node), scip.SymbolRole.Definition);
                 }
             }
 
-            this.pushNewOccurrence(node, this.getScipSymbol(decl.node), scip.SymbolRole.Definition);
             return true;
         }
 
@@ -1377,7 +1390,13 @@ export class TreeVisitor extends ParseTreeWalker {
     }
 
     // Might be the only way we can add new occurrences?
-    private pushNewOccurrence(node: ParseNode, symbol: ScipSymbol, role: number = scip.SymbolRole.ReadAccess): void {
+    private pushNewOccurrence(
+        node: ParseNode,
+        symbol: ScipSymbol,
+        role: number = scip.SymbolRole.ReadAccess,
+        // TODO(issue: https://github.com/sourcegraph/scip-python/issues/134)
+        decl?: FunctionNode | ClassNode
+    ): void {
         softAssert(symbol.value.trim() == symbol.value, `Invalid symbol ${node} -> ${symbol.value}`);
 
         this.document.occurrences.push(
@@ -1385,6 +1404,7 @@ export class TreeVisitor extends ParseTreeWalker {
                 symbol_roles: role,
                 symbol: symbol.value,
                 range: parseNodeToRange(node, this.fileInfo!.lines).toLsif(),
+                enclosing_range: decl && parseNodeToRange(decl, this.fileInfo!.lines).toLsif(),
             })
         );
     }
