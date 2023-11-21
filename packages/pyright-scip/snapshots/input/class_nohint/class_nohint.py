@@ -1,3 +1,5 @@
+# format-options: showDocs
+
 class Example:
     # Note, only y has a type hint
     y: int

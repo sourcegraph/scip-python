@@ -1,11 +1,14 @@
 # < definition scip-python python snapshot-util 0.1 field_docstring/__init__:
 #documentation (module) field_docstring
 
+# format-options: showDocs
+
 class ClassWithField:
 #     ^^^^^^^^^^^^^^ definition  snapshot-util 0.1 field_docstring/ClassWithField#
 #     documentation ```python
 #                 > class ClassWithField:
 #                 > ```
+#     ^^^^^^^^^^^^^^ definition  snapshot-util 0.1 field_docstring/ClassWithField#
 
     a: int
 #   ^ definition  snapshot-util 0.1 field_docstring/ClassWithField#a.

@@ -1,3 +1,5 @@
+# format-options: showDocs
+
 """
 This is a docstring for this module
 """
