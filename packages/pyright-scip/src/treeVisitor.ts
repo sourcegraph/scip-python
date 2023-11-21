@@ -789,6 +789,7 @@ export class TreeVisitor extends ParseTreeWalker {
                     );
 
                     this.pushNewOccurrence(node, this.getScipSymbol(decl.node), scip.SymbolRole.Definition, decl.node);
+                    break;
                 }
                 default: {
                     this.pushNewOccurrence(node, this.getScipSymbol(decl.node), scip.SymbolRole.Definition);
