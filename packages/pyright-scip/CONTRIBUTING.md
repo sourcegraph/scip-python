@@ -80,7 +80,7 @@ in `.tool-versions` may also lead to errors.
 
 ## Publishing releases
 
-1. Change the version in `packages/pyright/package.json`
+1. Change the version in `packages/pyright-scip/package.json`
    to `M.N.P` and land a PR with that.
 2. Add a tag `vM.N.P` to the commit on the `scip` branch
    and push that tag.
