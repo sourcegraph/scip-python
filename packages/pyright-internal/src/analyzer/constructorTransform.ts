@@ -10,15 +10,30 @@
  *
  */
 
+import { appendArray } from '../common/collectionUtils';
 import { DiagnosticAddendum } from '../common/diagnostic';
 import { DiagnosticRule } from '../common/diagnosticRules';
 import { Localizer } from '../localization/localize';
 import { ArgumentCategory, ExpressionNode, ParameterCategory } from '../parser/parseNodes';
 import { getFileInfo } from './analyzerNodeInfo';
+import { createFunctionFromConstructor } from './constructors';
 import { getParameterListDetails, ParameterSource } from './parameterUtils';
 import { Symbol, SymbolFlags } from './symbol';
 import { FunctionArgument, FunctionResult, TypeEvaluator } from './typeEvaluatorTypes';
-import { ClassType, FunctionParameter, FunctionType, isClassInstance, isFunction, isTypeSame } from './types';
+import {
+    ClassType,
+    FunctionParameter,
+    FunctionType,
+    FunctionTypeFlags,
+    isClassInstance,
+    isFunction,
+    isInstantiableClass,
+    isOverloadedFunction,
+    isTypeSame,
+    isTypeVar,
+    OverloadedFunctionType,
+    Type,
+} from './types';
 import {
     applySolvedTypeVars,
     convertToInstance,
@@ -78,22 +93,130 @@ function applyPartialTransform(
     }
 
     const origFunctionTypeResult = evaluator.getTypeOfArgument(argList[0]);
-    const origFunctionType = origFunctionTypeResult.type;
+    let origFunctionType = origFunctionTypeResult.type;
+
+    if (isTypeVar(origFunctionType)) {
+        origFunctionType = evaluator.makeTopLevelTypeVarsConcrete(origFunctionType);
+    }
+
+    if (isInstantiableClass(origFunctionType)) {
+        const constructor = createFunctionFromConstructor(evaluator, origFunctionType);
+        if (constructor) {
+            origFunctionType = constructor;
+        }
+    }
 
     // Evaluate the inferred return type if necessary.
     evaluator.inferReturnTypeIfNecessary(origFunctionType);
-
-    // Make sure the first argument is a simple function.
-    // We don't currently handle overloaded functions.
-    if (!isFunction(origFunctionType)) {
-        return result;
-    }
 
     // We don't currently handle unpacked arguments.
     if (argList.some((arg) => arg.argumentCategory !== ArgumentCategory.Simple)) {
         return result;
     }
 
+    // Make sure the first argument is a simple function.
+    if (isFunction(origFunctionType)) {
+        const transformResult = applyPartialTransformToFunction(
+            evaluator,
+            errorNode,
+            argList,
+            callMemberType,
+            origFunctionType
+        );
+        if (!transformResult) {
+            return result;
+        }
+
+        // Create a new copy of the functools.partial class that overrides the __call__ method.
+        const newPartialClass = ClassType.cloneForSymbolTableUpdate(result.returnType);
+        newPartialClass.details.fields.set(
+            '__call__',
+            Symbol.createWithType(SymbolFlags.ClassMember, transformResult.returnType)
+        );
+
+        return {
+            returnType: newPartialClass,
+            isTypeIncomplete: result.isTypeIncomplete,
+            argumentErrors: transformResult.argumentErrors,
+        };
+    }
+
+    if (isOverloadedFunction(origFunctionType)) {
+        const applicableOverloads: FunctionType[] = [];
+        let sawArgErrors = false;
+
+        // Apply the partial transform to each of the functions in the overload.
+        OverloadedFunctionType.getOverloads(origFunctionType).forEach((overload) => {
+            // Apply the transform to this overload, but don't report errors.
+            const transformResult = applyPartialTransformToFunction(
+                evaluator,
+                /* errorNode */ undefined,
+                argList,
+                callMemberType,
+                overload
+            );
+
+            if (transformResult) {
+                if (transformResult.argumentErrors) {
+                    sawArgErrors = true;
+                } else if (isFunction(transformResult.returnType)) {
+                    applicableOverloads.push(transformResult.returnType);
+                }
+            }
+        });
+
+        if (applicableOverloads.length === 0) {
+            if (sawArgErrors) {
+                evaluator.addDiagnostic(
+                    getFileInfo(errorNode).diagnosticRuleSet.reportGeneralTypeIssues,
+                    DiagnosticRule.reportGeneralTypeIssues,
+                    Localizer.Diagnostic.noOverload().format({
+                        name: origFunctionType.overloads[0].details.name,
+                    }),
+                    errorNode
+                );
+            }
+
+            return result;
+        }
+
+        // Create a new copy of the functools.partial class that overrides the __call__ method.
+        const newPartialClass = ClassType.cloneForSymbolTableUpdate(result.returnType);
+
+        let synthesizedCallType: Type;
+        if (applicableOverloads.length === 1) {
+            synthesizedCallType = applicableOverloads[0];
+        } else {
+            synthesizedCallType = OverloadedFunctionType.create(
+                // Set the "overloaded" flag for each of the __call__ overloads.
+                applicableOverloads.map((overload) =>
+                    FunctionType.cloneWithNewFlags(overload, overload.details.flags | FunctionTypeFlags.Overloaded)
+                )
+            );
+        }
+
+        newPartialClass.details.fields.set(
+            '__call__',
+            Symbol.createWithType(SymbolFlags.ClassMember, synthesizedCallType)
+        );
+
+        return {
+            returnType: newPartialClass,
+            isTypeIncomplete: result.isTypeIncomplete,
+            argumentErrors: false,
+        };
+    }
+
+    return result;
+}
+
+function applyPartialTransformToFunction(
+    evaluator: TypeEvaluator,
+    errorNode: ExpressionNode | undefined,
+    argList: FunctionArgument[],
+    partialCallMemberType: FunctionType,
+    origFunctionType: FunctionType
+): FunctionResult | undefined {
     // Create a map to track which parameters have supplied arguments.
     const paramMap = new Map<string, boolean>();
 
@@ -131,33 +254,37 @@ function applyPartialTransform(
                     );
 
                     if (!evaluator.assignType(paramType, argTypeResult.type, diag, typeVarContext)) {
-                        evaluator.addDiagnostic(
-                            getFileInfo(errorNode).diagnosticRuleSet.reportGeneralTypeIssues,
-                            DiagnosticRule.reportGeneralTypeIssues,
-                            Localizer.Diagnostic.argAssignmentParamFunction().format({
-                                argType: evaluator.printType(argTypeResult.type),
-                                paramType: evaluator.printType(paramType),
-                                functionName: origFunctionType.details.name,
-                                paramName: paramListDetails.params[paramListDetails.argsIndex].param.name ?? '',
-                            }),
-                            arg.valueExpression ?? errorNode
-                        );
+                        if (errorNode) {
+                            evaluator.addDiagnostic(
+                                getFileInfo(errorNode).diagnosticRuleSet.reportGeneralTypeIssues,
+                                DiagnosticRule.reportGeneralTypeIssues,
+                                Localizer.Diagnostic.argAssignmentParamFunction().format({
+                                    argType: evaluator.printType(argTypeResult.type),
+                                    paramType: evaluator.printType(paramType),
+                                    functionName: origFunctionType.details.name,
+                                    paramName: paramListDetails.params[paramListDetails.argsIndex].param.name ?? '',
+                                }),
+                                arg.valueExpression ?? errorNode
+                            );
+                        }
 
                         argumentErrors = true;
                     }
                 } else {
                     // Don't report multiple positional errors.
                     if (!reportedPositionalError) {
-                        evaluator.addDiagnostic(
-                            getFileInfo(errorNode).diagnosticRuleSet.reportGeneralTypeIssues,
-                            DiagnosticRule.reportGeneralTypeIssues,
-                            paramListDetails.positionParamCount === 1
-                                ? Localizer.Diagnostic.argPositionalExpectedOne()
-                                : Localizer.Diagnostic.argPositionalExpectedCount().format({
-                                      expected: paramListDetails.positionParamCount,
-                                  }),
-                            arg.valueExpression ?? errorNode
-                        );
+                        if (errorNode) {
+                            evaluator.addDiagnostic(
+                                getFileInfo(errorNode).diagnosticRuleSet.reportGeneralTypeIssues,
+                                DiagnosticRule.reportGeneralTypeIssues,
+                                paramListDetails.positionParamCount === 1
+                                    ? Localizer.Diagnostic.argPositionalExpectedOne()
+                                    : Localizer.Diagnostic.argPositionalExpectedCount().format({
+                                          expected: paramListDetails.positionParamCount,
+                                      }),
+                                arg.valueExpression ?? errorNode
+                            );
+                        }
                     }
 
                     reportedPositionalError = true;
@@ -175,17 +302,19 @@ function applyPartialTransform(
                 );
 
                 if (!evaluator.assignType(paramType, argTypeResult.type, diag, typeVarContext)) {
-                    evaluator.addDiagnostic(
-                        getFileInfo(errorNode).diagnosticRuleSet.reportGeneralTypeIssues,
-                        DiagnosticRule.reportGeneralTypeIssues,
-                        Localizer.Diagnostic.argAssignmentParamFunction().format({
-                            argType: evaluator.printType(argTypeResult.type),
-                            paramType: evaluator.printType(paramType),
-                            functionName: origFunctionType.details.name,
-                            paramName,
-                        }),
-                        arg.valueExpression ?? errorNode
-                    );
+                    if (errorNode) {
+                        evaluator.addDiagnostic(
+                            getFileInfo(errorNode).diagnosticRuleSet.reportGeneralTypeIssues,
+                            DiagnosticRule.reportGeneralTypeIssues,
+                            Localizer.Diagnostic.argAssignmentParamFunction().format({
+                                argType: evaluator.printType(argTypeResult.type),
+                                paramType: evaluator.printType(paramType),
+                                functionName: origFunctionType.details.name,
+                                paramName,
+                            }),
+                            arg.valueExpression ?? errorNode
+                        );
+                    }
 
                     argumentErrors = true;
                 }
@@ -202,12 +331,14 @@ function applyPartialTransform(
             if (!matchingParam) {
                 // Is there a kwargs parameter?
                 if (paramListDetails.kwargsIndex === undefined) {
-                    evaluator.addDiagnostic(
-                        getFileInfo(errorNode).diagnosticRuleSet.reportGeneralTypeIssues,
-                        DiagnosticRule.reportGeneralTypeIssues,
-                        Localizer.Diagnostic.paramNameMissing().format({ name: arg.name.value }),
-                        arg.name
-                    );
+                    if (errorNode) {
+                        evaluator.addDiagnostic(
+                            getFileInfo(errorNode).diagnosticRuleSet.reportGeneralTypeIssues,
+                            DiagnosticRule.reportGeneralTypeIssues,
+                            Localizer.Diagnostic.paramNameMissing().format({ name: arg.name.value }),
+                            arg.name
+                        );
+                    }
                     argumentErrors = true;
                 } else {
                     const paramType = FunctionType.getEffectiveParameterType(
@@ -223,17 +354,19 @@ function applyPartialTransform(
                     );
 
                     if (!evaluator.assignType(paramType, argTypeResult.type, diag, typeVarContext)) {
-                        evaluator.addDiagnostic(
-                            getFileInfo(errorNode).diagnosticRuleSet.reportGeneralTypeIssues,
-                            DiagnosticRule.reportGeneralTypeIssues,
-                            Localizer.Diagnostic.argAssignmentParamFunction().format({
-                                argType: evaluator.printType(argTypeResult.type),
-                                paramType: evaluator.printType(paramType),
-                                functionName: origFunctionType.details.name,
-                                paramName: paramListDetails.params[paramListDetails.kwargsIndex].param.name ?? '',
-                            }),
-                            arg.valueExpression ?? errorNode
-                        );
+                        if (errorNode) {
+                            evaluator.addDiagnostic(
+                                getFileInfo(errorNode).diagnosticRuleSet.reportGeneralTypeIssues,
+                                DiagnosticRule.reportGeneralTypeIssues,
+                                Localizer.Diagnostic.argAssignmentParamFunction().format({
+                                    argType: evaluator.printType(argTypeResult.type),
+                                    paramType: evaluator.printType(paramType),
+                                    functionName: origFunctionType.details.name,
+                                    paramName: paramListDetails.params[paramListDetails.kwargsIndex].param.name ?? '',
+                                }),
+                                arg.valueExpression ?? errorNode
+                            );
+                        }
 
                         argumentErrors = true;
                     }
@@ -243,12 +376,14 @@ function applyPartialTransform(
                 const paramType = FunctionType.getEffectiveParameterType(origFunctionType, matchingParam.index);
 
                 if (paramMap.has(paramName)) {
-                    evaluator.addDiagnostic(
-                        getFileInfo(errorNode).diagnosticRuleSet.reportGeneralTypeIssues,
-                        DiagnosticRule.reportGeneralTypeIssues,
-                        Localizer.Diagnostic.paramAlreadyAssigned().format({ name: arg.name.value }),
-                        arg.name
-                    );
+                    if (errorNode) {
+                        evaluator.addDiagnostic(
+                            getFileInfo(errorNode).diagnosticRuleSet.reportGeneralTypeIssues,
+                            DiagnosticRule.reportGeneralTypeIssues,
+                            Localizer.Diagnostic.paramAlreadyAssigned().format({ name: arg.name.value }),
+                            arg.name
+                        );
+                    }
 
                     argumentErrors = true;
                 } else {
@@ -261,17 +396,19 @@ function applyPartialTransform(
                     );
 
                     if (!evaluator.assignType(paramType, argTypeResult.type, diag, typeVarContext)) {
-                        evaluator.addDiagnostic(
-                            getFileInfo(errorNode).diagnosticRuleSet.reportGeneralTypeIssues,
-                            DiagnosticRule.reportGeneralTypeIssues,
-                            Localizer.Diagnostic.argAssignmentParamFunction().format({
-                                argType: evaluator.printType(argTypeResult.type),
-                                paramType: evaluator.printType(paramType),
-                                functionName: origFunctionType.details.name,
-                                paramName,
-                            }),
-                            arg.valueExpression ?? errorNode
-                        );
+                        if (errorNode) {
+                            evaluator.addDiagnostic(
+                                getFileInfo(errorNode).diagnosticRuleSet.reportGeneralTypeIssues,
+                                DiagnosticRule.reportGeneralTypeIssues,
+                                Localizer.Diagnostic.argAssignmentParamFunction().format({
+                                    argType: evaluator.printType(argTypeResult.type),
+                                    paramType: evaluator.printType(paramType),
+                                    functionName: origFunctionType.details.name,
+                                    paramName,
+                                }),
+                                arg.valueExpression ?? errorNode
+                            );
+                        }
 
                         argumentErrors = true;
                     }
@@ -283,7 +420,7 @@ function applyPartialTransform(
 
     const specializedFunctionType = applySolvedTypeVars(origFunctionType, typeVarContext);
     if (!isFunction(specializedFunctionType)) {
-        return result;
+        return undefined;
     }
 
     // Create a new parameter list that omits parameters that have been
@@ -300,10 +437,10 @@ function applyPartialTransform(
         return specializedParam;
     });
     const unassignedParamList = updatedParamList.filter((param) => {
-        if (param.category === ParameterCategory.VarArgDictionary) {
+        if (param.category === ParameterCategory.KwargsDict) {
             return false;
         }
-        if (param.category === ParameterCategory.VarArgList) {
+        if (param.category === ParameterCategory.ArgsList) {
             return true;
         }
         return !param.name || !paramMap.has(param.name);
@@ -312,22 +449,25 @@ function applyPartialTransform(
         return param.name && paramMap.get(param.name);
     });
     const kwargsParam = updatedParamList.filter((param) => {
-        return param.category === ParameterCategory.VarArgDictionary;
+        return param.category === ParameterCategory.KwargsDict;
     });
 
-    const newParamList = [...unassignedParamList, ...assignedKeywordParamList, ...kwargsParam];
+    const newParamList: FunctionParameter[] = [];
+    appendArray(newParamList, unassignedParamList);
+    appendArray(newParamList, assignedKeywordParamList);
+    appendArray(newParamList, kwargsParam);
 
     // Create a new __call__ method that uses the remaining parameters.
     const newCallMemberType = FunctionType.createInstance(
-        callMemberType.details.name,
-        callMemberType.details.fullName,
-        callMemberType.details.moduleName,
-        callMemberType.details.flags,
+        partialCallMemberType.details.name,
+        partialCallMemberType.details.fullName,
+        partialCallMemberType.details.moduleName,
+        partialCallMemberType.details.flags,
         specializedFunctionType.details.docString
     );
 
-    if (callMemberType.details.parameters.length > 0) {
-        FunctionType.addParameter(newCallMemberType, callMemberType.details.parameters[0]);
+    if (partialCallMemberType.details.parameters.length > 0) {
+        FunctionType.addParameter(newCallMemberType, partialCallMemberType.details.parameters[0]);
     }
     newParamList.forEach((param) => {
         FunctionType.addParameter(newCallMemberType, param);
@@ -336,16 +476,8 @@ function applyPartialTransform(
     newCallMemberType.details.declaredReturnType = specializedFunctionType.details.declaredReturnType
         ? FunctionType.getSpecializedReturnType(specializedFunctionType)
         : specializedFunctionType.inferredReturnType;
-    newCallMemberType.details.declaration = callMemberType.details.declaration;
+    newCallMemberType.details.declaration = partialCallMemberType.details.declaration;
     newCallMemberType.details.typeVarScopeId = specializedFunctionType.details.typeVarScopeId;
 
-    // Create a new copy of the functools.partial class that overrides the __call__ method.
-    const newPartialClass = ClassType.cloneForSymbolTableUpdate(result.returnType);
-    newPartialClass.details.fields.set('__call__', Symbol.createWithType(SymbolFlags.ClassMember, newCallMemberType));
-
-    return {
-        returnType: newPartialClass,
-        isTypeIncomplete: false,
-        argumentErrors,
-    };
+    return { returnType: newCallMemberType, isTypeIncomplete: false, argumentErrors };
 }

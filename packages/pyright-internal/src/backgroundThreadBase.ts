@@ -10,50 +10,74 @@ import { MessagePort, parentPort, TransferListItem } from 'worker_threads';
 
 import { OperationCanceledException, setCancellationFolderName } from './common/cancellationUtils';
 import { ConfigOptions } from './common/configOptions';
-import { LogLevel } from './common/console';
+import { ConsoleInterface, LogLevel } from './common/console';
 import * as debug from './common/debug';
-import { FileSystem } from './common/fileSystem';
 import { FileSpec } from './common/pathUtils';
 import { createFromRealFileSystem } from './common/realFileSystem';
-import { PyrightFileSystem } from './pyrightFileSystem';
+import { ServiceProvider } from './common/serviceProvider';
+import './common/serviceProviderExtensions';
+import { ServiceKeys } from './common/serviceProviderExtensions';
+
+export class BackgroundConsole implements ConsoleInterface {
+    // We always generate logs in the background. For the foreground,
+    // we'll decide based on user setting whether.
+    get level() {
+        return LogLevel.Log;
+    }
+
+    log(msg: string) {
+        this.post(LogLevel.Log, msg);
+    }
+    info(msg: string) {
+        this.post(LogLevel.Info, msg);
+    }
+    warn(msg: string) {
+        this.post(LogLevel.Warn, msg);
+    }
+    error(msg: string) {
+        this.post(LogLevel.Error, msg);
+    }
+    protected post(level: LogLevel, msg: string) {
+        parentPort?.postMessage({ requestType: 'log', data: { level: level, message: msg } });
+    }
+}
 
 export class BackgroundThreadBase {
-    protected fs: FileSystem;
+    private readonly _serviceProvider: ServiceProvider;
 
-    protected constructor(data: InitializationData) {
+    protected constructor(data: InitializationData, serviceProvider?: ServiceProvider) {
         setCancellationFolderName(data.cancellationFolderName);
 
         // Stash the base directory into a global variable.
         (global as any).__rootDirectory = data.rootDirectory;
 
-        this.fs = new PyrightFileSystem(createFromRealFileSystem(this.getConsole()));
+        // Make sure there's a file system and a console interface.
+        this._serviceProvider = serviceProvider ?? new ServiceProvider();
+        if (!this._serviceProvider.tryGet(ServiceKeys.console)) {
+            this._serviceProvider.add(ServiceKeys.console, new BackgroundConsole());
+        }
+        if (!this._serviceProvider.tryGet(ServiceKeys.fs)) {
+            this._serviceProvider.add(ServiceKeys.fs, createFromRealFileSystem(this.getConsole()));
+        }
+    }
+
+    protected get fs() {
+        return this._serviceProvider.fs();
     }
 
     protected log(level: LogLevel, msg: string) {
-        parentPort?.postMessage({ requestType: 'log', data: { level: level, message: msg } });
+        //parentPort?.postMessage({ requestType: 'log', data: { level: level, message: msg } });
     }
 
     protected getConsole() {
-        return {
-            log: (msg: string) => {
-                this.log(LogLevel.Log, msg);
-            },
-            info: (msg: string) => {
-                this.log(LogLevel.Info, msg);
-            },
-            warn: (msg: string) => {
-                this.log(LogLevel.Warn, msg);
-            },
-            error: (msg: string) => {
-                this.log(LogLevel.Error, msg);
-            },
-            // We always generate logs in the background. For the foreground,
-            // we'll decide decide based on user setting whether.
-            level: LogLevel.Log,
-        };
+        return this._serviceProvider.console();
     }
 
-    protected shutdown() {
+    protected getServiceProvider() {
+        return this._serviceProvider;
+    }
+
+    protected handleShutdown() {
         this.fs.dispose();
         parentPort?.close();
     }
@@ -64,7 +88,7 @@ export function createConfigOptionsFrom(jsonObject: any): ConfigOptions {
     const getFileSpec = (fileSpec: any): FileSpec => {
         return {
             wildcardRoot: fileSpec.wildcardRoot,
-            regExp: new RegExp(fileSpec.regExp.source),
+            regExp: new RegExp(fileSpec.regExp.source, fileSpec.regExp.flags),
             hasDirectoryWildcard: fileSpec.hasDirectoryWildcard,
         };
     };

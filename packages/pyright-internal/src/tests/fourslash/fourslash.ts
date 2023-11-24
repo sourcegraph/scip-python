@@ -50,7 +50,7 @@ declare namespace _ {
         | 24
         | 25;
 
-    type FourSlashCompletionVerificationMode = 'exact' | 'included' | 'excluded';
+    type FourSlashVerificationMode = 'exact' | 'included' | 'excluded';
     interface FourSlashCompletionItem {
         label: string;
         kind: CompletionItemKind | undefined;
@@ -61,6 +61,12 @@ declare namespace _ {
         additionalTextEdits?: TextEdit[];
         detailDescription?: string;
         commitCharacters?: string[];
+    }
+
+    interface FourSlashCallHierarchyItem {
+        filePath: string;
+        name: string;
+        range: PositionRange;
     }
 
     interface TextRange {
@@ -253,12 +259,12 @@ declare namespace _ {
 
         verifyDiagnostics(map?: { [marker: string]: { category: string; message: string | undefined } }): void;
         verifyCodeActions(
+            verifyMode: FourSlashVerificationMode,
             map: {
                 [marker: string]: {
                     codeActions: { title: string; kind: string; command?: Command; edit?: WorkspaceEdit }[];
                 };
-            },
-            verifyCodeActionCount?: boolean
+            }
         ): Promise<any>;
         verifyCommand(command: Command, files: { [filePath: string]: string }): Promise<any>;
         verifyInvokeCodeAction(
@@ -269,7 +275,7 @@ declare namespace _ {
         ): Promise<any>;
         verifyHover(kind: string, map: { [marker: string]: string | null }): void;
         verifyCompletion(
-            verifyMode: FourSlashCompletionVerificationMode,
+            verifyMode: FourSlashVerificationMode,
             docFormat: MarkupKind,
             map: {
                 [marker: string]: {
@@ -305,7 +311,12 @@ declare namespace _ {
         }): void;
         verifyShowCallHierarchyGetIncomingCalls(map: {
             [marker: string]: {
-                references: DocumentRange[];
+                items: FourSlashCallHierarchyItem[];
+            };
+        }): void;
+        verifyShowCallHierarchyGetOutgoingCalls(map: {
+            [marker: string]: {
+                items: FourSlashCallHierarchyItem[];
             };
         }): void;
         verifyHighlightReferences(map: {
@@ -326,12 +337,15 @@ declare namespace _ {
                 definitions: DocumentRange[];
             };
         }): void;
-        verifyRename(map: {
-            [marker: string]: {
-                newName: string;
-                changes: FileEditAction[];
-            };
-        }): void;
+        verifyRename(
+            map: {
+                [marker: string]: {
+                    newName: string;
+                    changes: FileEditAction[];
+                };
+            },
+            isUntitled?: boolean
+        ): void;
 
         /* not tested yet
         paste(text: string): void;

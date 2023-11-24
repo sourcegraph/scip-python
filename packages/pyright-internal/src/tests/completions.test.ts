@@ -8,8 +8,7 @@ import assert from 'assert';
 import { CancellationToken } from 'vscode-languageserver';
 import { CompletionItemKind, MarkupKind } from 'vscode-languageserver-types';
 
-import { ImportFormat } from '../languageService/autoImporter';
-import { CompletionOptions } from '../languageService/completionProvider';
+import { CompletionOptions, CompletionProvider } from '../languageService/completionProvider';
 import { parseAndGetTestState } from './harness/fourslash/testState';
 
 test('completion import statement tooltip', async () => {
@@ -805,24 +804,20 @@ test('completion quote trigger', async () => {
         format: 'markdown',
         snippet: false,
         lazyEdit: false,
-        autoImport: false,
-        extraCommitChars: false,
-        importFormat: ImportFormat.Absolute,
-        includeUserSymbolsInAutoImport: false,
         triggerCharacter: '"',
     };
 
-    const result = await state.workspace.service.getCompletionsForPosition(
+    const result = new CompletionProvider(
+        state.program,
+        state.workspace.rootPath,
         filePath,
         position,
-        state.workspace.rootPath,
         options,
-        undefined,
         CancellationToken.None
-    );
+    ).getCompletions();
 
     assert(result);
-    const item = result.completionList.items.find((a) => a.label === '"USD"');
+    const item = result.items.find((a) => a.label === '"USD"');
     assert(item);
 });
 
@@ -847,23 +842,19 @@ test('completion quote trigger - middle', async () => {
         format: 'markdown',
         snippet: false,
         lazyEdit: false,
-        autoImport: false,
-        extraCommitChars: false,
-        importFormat: ImportFormat.Absolute,
-        includeUserSymbolsInAutoImport: false,
         triggerCharacter: "'",
     };
 
-    const result = await state.workspace.service.getCompletionsForPosition(
+    const result = new CompletionProvider(
+        state.program,
+        state.workspace.rootPath,
         filePath,
         position,
-        state.workspace.rootPath,
         options,
-        undefined,
         CancellationToken.None
-    );
+    ).getCompletions();
 
-    assert.strictEqual(result?.completionList.items.length, 0);
+    assert.strictEqual(result?.items.length, 0);
 });
 
 test('auto import sort text', async () => {
@@ -897,26 +888,287 @@ test('auto import sort text', async () => {
         format: 'markdown',
         snippet: false,
         lazyEdit: false,
-        autoImport: true,
-        extraCommitChars: false,
-        importFormat: ImportFormat.Absolute,
-        includeUserSymbolsInAutoImport: true,
     };
 
-    const result = await state.workspace.service.getCompletionsForPosition(
+    const result = new CompletionProvider(
+        state.program,
+        state.workspace.rootPath,
         filePath,
         position,
-        state.workspace.rootPath,
         options,
-        undefined,
         CancellationToken.None
-    );
+    ).getCompletions();
 
-    const items = result?.completionList.items.filter((i) => i.label === 'os');
+    const items = result?.items.filter((i) => i.label === 'os');
     assert.strictEqual(items?.length, 2);
 
     items.sort((a, b) => a.sortText!.localeCompare(b.sortText!));
 
     assert(!items[0].labelDetails);
     assert.strictEqual(items[1].labelDetails!.description, 'vendored');
+});
+
+test('override generic', async () => {
+    const code = `
+// @filename: test.py
+//// from typing import Generic, TypeVar
+//// from typing_extensions import override
+//// 
+//// T = TypeVar('T')
+//// class A(Generic[T]):
+////     def foo(self, x: list[T]) -> T:
+////         return x
+////     
+//// class B(A[int]):
+////     @override
+////     def [|foo/*marker*/|]
+    `;
+
+    const state = parseAndGetTestState(code).state;
+
+    await state.verifyCompletion('included', 'markdown', {
+        ['marker']: {
+            completions: [
+                {
+                    label: 'foo',
+                    kind: CompletionItemKind.Method,
+                    textEdit: {
+                        range: state.getPositionRange('marker'),
+                        newText: 'foo(self, x: list[T]) -> T:\n    return super().foo(x)',
+                    },
+                },
+            ],
+        },
+    });
+});
+
+test('override generic nested', async () => {
+    const code = `
+// @filename: test.py
+//// from typing import Generic, TypeVar
+//// from typing_extensions import override
+//// 
+//// T = TypeVar('T')
+//// T2 = TypeVar('T2')
+//// class A(Generic[T, T2]):
+////     def foo(self, x: tuple[T, T2]) -> T:
+////         return x
+////     
+//// 
+//// T3 = TypeVar('T3')
+//// class B(A[int, T3]):
+////     @override
+////     def [|foo/*marker1*/|]
+////     
+//// class C(B[int]):
+////     @override
+////     def [|foo/*marker2*/|]
+    `;
+
+    const state = parseAndGetTestState(code).state;
+
+    await state.verifyCompletion('included', 'markdown', {
+        ['marker1']: {
+            completions: [
+                {
+                    label: 'foo',
+                    kind: CompletionItemKind.Method,
+                    textEdit: {
+                        range: state.getPositionRange('marker1'),
+                        newText: 'foo(self, x: tuple[T, T2]) -> T:\n    return super().foo(x)',
+                    },
+                },
+            ],
+        },
+        ['marker2']: {
+            completions: [
+                {
+                    label: 'foo',
+                    kind: CompletionItemKind.Method,
+                    textEdit: {
+                        range: state.getPositionRange('marker2'),
+                        newText: 'foo(self, x: tuple[T, T2]) -> T:\n    return super().foo(x)',
+                    },
+                },
+            ],
+        },
+    });
+});
+
+test('override __call__', async () => {
+    const code = `
+// @filename: test.py
+//// from argparse import Action
+//// 
+//// class MyAction(Action):
+////     def [|__call__/*marker*/|]
+    `;
+
+    const state = parseAndGetTestState(code).state;
+
+    await state.verifyCompletion('included', 'markdown', {
+        ['marker']: {
+            completions: [
+                {
+                    label: '__call__',
+                    kind: CompletionItemKind.Method,
+                    textEdit: {
+                        range: state.getPositionRange('marker'),
+                        newText:
+                            '__call__(self, parser: ArgumentParser, namespace: Namespace, values: str | Sequence[Any] | None, option_string: str | None = None) -> None:\n    return super().__call__(parser, namespace, values, option_string)',
+                    },
+                },
+            ],
+        },
+    });
+});
+
+test('override ParamSpec', async () => {
+    const code = `
+// @filename: test.py
+//// from typing import Callable, ParamSpec
+////
+//// P = ParamSpec("P")
+////
+//// class A:
+////     def foo(self, func: Callable[P, None], *args: P.args, **kwargs: P.kwargs):
+////         pass
+//// 
+//// class B(A):
+////     def [|foo/*marker*/|]
+    `;
+
+    const state = parseAndGetTestState(code).state;
+
+    await state.verifyCompletion('included', 'markdown', {
+        ['marker']: {
+            completions: [
+                {
+                    label: 'foo',
+                    kind: CompletionItemKind.Method,
+                    textEdit: {
+                        range: state.getPositionRange('marker'),
+                        newText:
+                            'foo(self, func: Callable[P, None], *args: P.args, **kwargs: P.kwargs):\n    return super().foo(func, *args, **kwargs)',
+                    },
+                },
+            ],
+        },
+    });
+});
+
+test('annotation using comment', async () => {
+    const code = `
+// @filename: test.py
+//// class A:
+////     def foo(self, a): # type: (int) -> None
+////         pass
+//// 
+//// class B(A):
+////     def [|foo/*marker*/|]
+    `;
+
+    const state = parseAndGetTestState(code).state;
+
+    await state.verifyCompletion('included', 'markdown', {
+        ['marker']: {
+            completions: [
+                {
+                    label: 'foo',
+                    kind: CompletionItemKind.Method,
+                    textEdit: {
+                        range: state.getPositionRange('marker'),
+                        newText: 'foo(self, a: int) -> None:\n    return super().foo(a)',
+                    },
+                },
+            ],
+        },
+    });
+});
+
+test('Complex type arguments', async () => {
+    const code = `
+// @filename: test.py
+//// from typing import Generic, TypeVar, Any, List, Dict, Tuple, Mapping, Union
+//// 
+//// T = TypeVar("T")
+//// 
+//// class A(Generic[T]):
+////     def foo(self, a: T) -> T:
+////         return a
+////
+//// class B(A[Union[Tuple[list, dict], tuple[Mapping[List[A[int]], Dict[str, Any]], float]]]):
+////     pass
+
+// @filename: test1.py
+//// from test import B
+//// 
+//// class U(B):
+////     def [|foo/*marker*/|]
+    `;
+
+    const state = parseAndGetTestState(code).state;
+
+    state.openFiles(state.testData.files.map((f) => f.fileName));
+
+    await state.verifyCompletion('included', 'markdown', {
+        marker: {
+            completions: [
+                {
+                    label: 'foo',
+                    kind: CompletionItemKind.Method,
+                    textEdit: {
+                        range: state.getPositionRange('marker'),
+                        newText: 'foo(self, a: T) -> T:\n    return super().foo(a)',
+                    },
+                },
+            ],
+        },
+    });
+});
+
+test('Enum member', async () => {
+    const code = `
+// @filename: test.py
+//// from enum import Enum
+//// 
+//// class MyEnum(Enum):
+////     this = 1
+////     that = 2
+//// 
+//// print(MyEnum.[|/*marker*/|])
+    `;
+
+    const state = parseAndGetTestState(code).state;
+
+    await state.verifyCompletion('included', 'markdown', {
+        ['marker']: {
+            completions: [
+                {
+                    label: 'this',
+                    kind: CompletionItemKind.EnumMember,
+                    documentation: '```python\nthis: Literal[MyEnum.this]\n```',
+                },
+            ],
+        },
+    });
+});
+
+test('no member of Enum member', async () => {
+    const code = `
+// @filename: test.py
+//// from enum import Enum
+//// 
+//// class MyEnum(Enum):
+////     this = 1
+////     that = 2
+//// 
+//// print(MyEnum.this.[|/*marker*/|])
+    `;
+
+    const state = parseAndGetTestState(code).state;
+
+    await state.verifyCompletion('exact', 'markdown', {
+        ['marker']: { completions: [] },
+    });
 });

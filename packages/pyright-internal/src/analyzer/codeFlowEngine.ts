@@ -37,6 +37,7 @@ import {
 } from './codeFlowTypes';
 import { formatControlFlowGraph } from './codeFlowUtils';
 import { isMatchingExpression, isPartialMatchingExpression, printExpression } from './parseTreeUtils';
+import { getPatternSubtypeNarrowingCallback } from './patternMatching';
 import { SpeculativeTypeTracker } from './typeCacheUtils';
 import { narrowForKeyAssignment } from './typedDicts';
 import { EvaluatorFlags, TypeEvaluator, TypeResult } from './typeEvaluatorTypes';
@@ -64,6 +65,7 @@ import {
 } from './types';
 import {
     ClassMemberLookupFlags,
+    derivesFromStdlibClass,
     doForEachSubtype,
     isIncompleteUnknown,
     isTypeAliasPlaceholder,
@@ -268,7 +270,13 @@ export function getCodeFlowEngine(
             ) {
                 const cachedEntry = flowNodeTypeCache.cache.get(flowNode.id);
                 if (cachedEntry === undefined || !isIncompleteType(cachedEntry)) {
-                    fail('setIncompleteSubtype can be called only on a valid incomplete cache entry');
+                    fail(
+                        'setIncompleteSubtype can be called only on a valid incomplete cache entry: ' +
+                            `prev cache entry?: ${!cachedEntry} ` +
+                            `index=${index} ` +
+                            `isPending=${isPending} ` +
+                            `evaluationCount=${evaluationCount}`
+                    );
                 }
 
                 const incompleteEntries = cachedEntry.incompleteSubtypes;
@@ -737,6 +745,33 @@ export function getCodeFlowEngine(
                                     return setCacheEntry(curFlowNode, typeResult.type, !!typeResult.isIncomplete);
                                 }
                             }
+                        } else if (patternFlowNode.statement.nodeType === ParseNodeType.Case) {
+                            const caseStatement = patternFlowNode.statement;
+
+                            // See if the reference is a subexpression within the subject expression.
+                            const typeNarrowingCallback = getPatternSubtypeNarrowingCallback(
+                                evaluator,
+                                reference,
+                                patternFlowNode.subjectExpression
+                            );
+
+                            if (typeNarrowingCallback) {
+                                const typeResult = evaluator.evaluateTypeForSubnode(caseStatement, () => {
+                                    evaluator.evaluateTypesForCaseStatement(caseStatement);
+                                });
+
+                                if (typeResult) {
+                                    const narrowedTypeResult = typeNarrowingCallback(typeResult.type);
+
+                                    if (narrowedTypeResult) {
+                                        return setCacheEntry(
+                                            curFlowNode,
+                                            narrowedTypeResult.type,
+                                            !!typeResult.isIncomplete || !!narrowedTypeResult.isIncomplete
+                                        );
+                                    }
+                                }
+                            }
                         }
                         curFlowNode = patternFlowNode.antecedent;
                         continue;
@@ -836,11 +871,16 @@ export function getCodeFlowEngine(
                         reference === undefined &&
                         cacheEntry.incompleteSubtypes?.some((subtype) => subtype.type !== undefined);
                     let firstAntecedentTypeIsIncomplete = false;
+                    let firstAntecedentTypeIsPending = false;
 
                     loopNode.antecedents.forEach((antecedent, index) => {
                         // If we've trying to determine reachability and we've already proven
                         // reachability, then we're done.
                         if (reference === undefined && isProvenReachable) {
+                            return;
+                        }
+
+                        if (firstAntecedentTypeIsPending && index > 0) {
                             return;
                         }
 
@@ -855,9 +895,21 @@ export function getCodeFlowEngine(
                             index < cacheEntry.incompleteSubtypes.length &&
                             cacheEntry.incompleteSubtypes[index].isPending
                         ) {
-                            sawIncomplete = true;
-                            sawPending = true;
-                            return;
+                            // In rare circumstances, it's possible for a code flow graph with
+                            // nested loops to hit the case where the first antecedent is marked
+                            // as pending. In this case, we'll evaluate only the first antecedent
+                            // again even though it's pending. We're guaranteed to make forward
+                            // progress with the first antecedent, and that will allow us to establish
+                            // an initial type for this expression, but we don't want to evaluate
+                            // any other antecedents in this case because this could result in
+                            // infinite recursion.
+                            if (index === 0) {
+                                firstAntecedentTypeIsPending = true;
+                            } else {
+                                sawIncomplete = true;
+                                sawPending = true;
+                                return;
+                            }
                         }
 
                         // Have we already been here (i.e. does the entry exist and is
@@ -867,7 +919,11 @@ export function getCodeFlowEngine(
                             cacheEntry.incompleteSubtypes !== undefined && index < cacheEntry.incompleteSubtypes.length
                                 ? cacheEntry.incompleteSubtypes[index]
                                 : undefined;
-                        if (subtypeEntry === undefined || (!subtypeEntry?.isPending && subtypeEntry?.isIncomplete)) {
+                        if (
+                            subtypeEntry === undefined ||
+                            (!subtypeEntry?.isPending && subtypeEntry?.isIncomplete) ||
+                            index === 0
+                        ) {
                             const entryEvaluationCount = subtypeEntry === undefined ? 0 : subtypeEntry.evaluationCount;
 
                             // Set this entry to "pending" to prevent infinite recursion.
@@ -900,16 +956,16 @@ export function getCodeFlowEngine(
                                             ? UnknownType.create(/* isIncomplete */ true)
                                             : NeverType.createNever()),
                                     flowTypeResult.isIncomplete,
-                                    /* isPending */ false,
+                                    /* isPending */ firstAntecedentTypeIsPending,
                                     entryEvaluationCount + 1
                                 );
                             } catch (e) {
-                                setIncompleteSubtype(
+                                cacheEntry = setIncompleteSubtype(
                                     loopNode,
                                     index,
                                     UnknownType.create(/* isIncomplete */ true),
                                     /* isIncomplete */ true,
-                                    /* isPending */ false,
+                                    /* isPending */ firstAntecedentTypeIsPending,
                                     entryEvaluationCount + 1
                                 );
                                 throw e;
@@ -961,6 +1017,12 @@ export function getCodeFlowEngine(
                         // of the cache entry because we'll overwrite the partial result.
                         if (sawPending || sawIncomplete) {
                             return { type: effectiveType, isIncomplete: reportIncomplete };
+                        }
+
+                        // If the first antecedent was pending, we skipped all of the other
+                        // antecedents, so the type is incomplete.
+                        if (firstAntecedentTypeIsPending) {
+                            return { type: effectiveType, isIncomplete: true };
                         }
 
                         return setCacheEntry(loopNode, effectiveType, /* isIncomplete */ false);
@@ -1374,6 +1436,12 @@ export function getCodeFlowEngine(
             return false;
         }
 
+        // Don't attempt to evaluate a lambda call. We need to evaluate these in the
+        // context of its arguments.
+        if (node.leftExpression.nodeType === ParseNodeType.Lambda) {
+            return false;
+        }
+
         // Initially set to false to avoid recursion.
         callIsNoReturnCache.set(node.id, false);
 
@@ -1384,7 +1452,7 @@ export function getCodeFlowEngine(
             let subtypeCount = 0;
 
             // Evaluate the call base type.
-            const callTypeResult = evaluator.getTypeOfExpression(node.leftExpression, EvaluatorFlags.DoNotSpecialize);
+            const callTypeResult = evaluator.getTypeOfExpression(node.leftExpression, EvaluatorFlags.CallBaseDefaults);
             const callType = callTypeResult.type;
 
             doForEachSubtype(callType, (callSubtype) => {
@@ -1559,16 +1627,13 @@ export function getCodeFlowEngine(
                     }
 
                     if (simpleStatement.nodeType === ParseNodeType.Raise && simpleStatement.typeExpression) {
-                        // Check for "raise NotImplementedError" or "raise NotImplementedError()"
-                        const isNotImplementedName = (node: ParseNode) => {
-                            return node?.nodeType === ParseNodeType.Name && node.value === 'NotImplementedError';
-                        };
+                        // Check for a raising about 'NotImplementedError' or a subtype thereof.
+                        const exceptionType = evaluator.getType(simpleStatement.typeExpression);
 
-                        if (isNotImplementedName(simpleStatement.typeExpression)) {
-                            foundRaiseNotImplemented = true;
-                        } else if (
-                            simpleStatement.typeExpression.nodeType === ParseNodeType.Call &&
-                            isNotImplementedName(simpleStatement.typeExpression.leftExpression)
+                        if (
+                            exceptionType &&
+                            isClass(exceptionType) &&
+                            derivesFromStdlibClass(exceptionType, 'NotImplementedError')
                         ) {
                             foundRaiseNotImplemented = true;
                         }
@@ -1625,7 +1690,22 @@ export function getCodeFlowEngine(
                 const exitType = evaluator.getTypeOfObjectMember(node, cmType, exitMethodName)?.type;
 
                 if (exitType && isFunction(exitType) && exitType.details.declaredReturnType) {
-                    const returnType = exitType.details.declaredReturnType;
+                    let returnType = exitType.details.declaredReturnType;
+
+                    // If it's an __aexit__ method, its return type will typically be wrapped
+                    // in a Coroutine, so we need to extract the return type from the third
+                    // type argument.
+                    if (isAsync) {
+                        if (
+                            isClassInstance(returnType) &&
+                            ClassType.isBuiltIn(returnType, 'Coroutine') &&
+                            returnType.typeArguments &&
+                            returnType.typeArguments.length >= 3
+                        ) {
+                            returnType = returnType.typeArguments[2];
+                        }
+                    }
+
                     cmSwallowsExceptions = false;
                     if (isClassInstance(returnType) && ClassType.isBuiltIn(returnType, 'bool')) {
                         if (returnType.literalValue === undefined || returnType.literalValue === true) {

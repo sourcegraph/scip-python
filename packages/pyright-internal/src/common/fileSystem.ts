@@ -10,21 +10,7 @@
 
 // * NOTE * except tests, this should be only file that import "fs"
 import type * as fs from 'fs';
-
-export type FileWatcherEventType = 'add' | 'addDir' | 'change' | 'unlink' | 'unlinkDir';
-export type FileWatcherEventHandler = (eventName: FileWatcherEventType, path: string, stats?: Stats) => void;
-
-export interface FileWatcher {
-    close(): void;
-}
-
-export interface FileWatcherHandler {
-    onFileChange(eventType: FileWatcherEventType, path: string): void;
-}
-
-export interface FileWatcherProvider {
-    createFileWatcher(paths: string[], listener: FileWatcherEventHandler): FileWatcher;
-}
+import { FileWatcher, FileWatcherEventHandler } from './fileWatcher';
 
 export interface Stats {
     size: number;
@@ -51,31 +37,21 @@ export interface TmpfileOptions {
     prefix?: string;
 }
 
-export interface FileSystem {
+export interface ReadOnlyFileSystem {
     existsSync(path: string): boolean;
-    mkdirSync(path: string, options?: MkDirOptions): void;
     chdir(path: string): void;
     readdirEntriesSync(path: string): fs.Dirent[];
     readdirSync(path: string): string[];
     readFileSync(path: string, encoding?: null): Buffer;
     readFileSync(path: string, encoding: BufferEncoding): string;
     readFileSync(path: string, encoding?: BufferEncoding | null): string | Buffer;
-    writeFileSync(path: string, data: string | Buffer, encoding: BufferEncoding | null): void;
+
     statSync(path: string): Stats;
-    unlinkSync(path: string): void;
     realpathSync(path: string): string;
     getModulePath(): string;
-    createFileSystemWatcher(paths: string[], listener: FileWatcherEventHandler): FileWatcher;
-    createReadStream(path: string): fs.ReadStream;
-    createWriteStream(path: string): fs.WriteStream;
-    copyFileSync(src: string, dst: string): void;
     // Async I/O
     readFile(path: string): Promise<Buffer>;
     readFileText(path: string, encoding?: BufferEncoding): Promise<string>;
-    // The directory returned by tmpdir must exist and be the same each time tmpdir is called.
-    tmpdir(): string;
-    tmpfile(options?: TmpfileOptions): string;
-
     // Return path in casing on OS.
     realCasePath(path: string): string;
 
@@ -90,43 +66,26 @@ export interface FileSystem {
 
     getUri(path: string): string;
 
-    isInZipOrEgg(path: string): boolean;
+    isInZip(path: string): boolean;
+}
 
+export interface FileSystem extends ReadOnlyFileSystem {
+    mkdirSync(path: string, options?: MkDirOptions): void;
+    writeFileSync(path: string, data: string | Buffer, encoding: BufferEncoding | null): void;
+
+    unlinkSync(path: string): void;
+    rmdirSync(path: string): void;
+
+    createFileSystemWatcher(paths: string[], listener: FileWatcherEventHandler): FileWatcher;
+    createReadStream(path: string): fs.ReadStream;
+    createWriteStream(path: string): fs.WriteStream;
+    copyFileSync(src: string, dst: string): void;
+
+    // The directory returned by tmpdir must exist and be the same each time tmpdir is called.
+    tmpdir(): string;
+    tmpfile(options?: TmpfileOptions): string;
     dispose(): void;
 }
-
-// File watchers can give "changed" event even for a file open. but for those cases,
-// it will give relative path rather than absolute path. To get rid of such cases,
-// we will drop any event with relative paths. this trick is copied from VS Code
-// (https://github.com/microsoft/vscode/blob/main/src/vs/platform/files/node/watcher/unix/chokidarWatcherService.ts)
-export function ignoredWatchEventFunction(paths: string[]) {
-    const normalizedPaths = paths.map((p) => p.toLowerCase());
-    return (path: string): boolean => {
-        if (!path || path.indexOf('__pycache__') >= 0) {
-            return true;
-        }
-        const normalizedPath = path.toLowerCase();
-        return normalizedPaths.every((p) => normalizedPath.indexOf(p) < 0);
-    };
-}
-
-const nullFileWatcher: FileWatcher = {
-    close() {
-        // empty;
-    },
-};
-
-export const nullFileWatcherHandler: FileWatcherHandler = {
-    onFileChange(_1: FileWatcherEventType, _2: string): void {
-        // do nothing
-    },
-};
-
-export const nullFileWatcherProvider: FileWatcherProvider = {
-    createFileWatcher(_1: string[], _2: FileWatcherEventHandler): FileWatcher {
-        return nullFileWatcher;
-    },
-};
 
 export class VirtualDirent implements fs.Dirent {
     constructor(public name: string, private _file: boolean) {}

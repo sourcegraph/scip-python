@@ -62,6 +62,7 @@ In addition to assignment-based type narrowing, Pyright supports the following t
 * `type(x) is T` and `type(x) is not T`
 * `type(x) == T` and `type(x) != T`
 * `x is E` and `x is not E` (where E is a literal enum or bool)
+* `x is C` and `x is not C` (where C is a class)
 * `x == L` and `x != L` (where L is an expression that evaluates to a literal type)
 * `x.y is None` and `x.y is not None` (where x is a type that is distinguished by a field with a None)
 * `x.y is E` and `x.y is not E` (where E is a literal enum or bool and x is a type that is distinguished by a field with a literal type)
@@ -72,7 +73,7 @@ In addition to assignment-based type narrowing, Pyright supports the following t
 * `x[I] is None` and `x[I] is not None` (where I is a literal expression and x is a known-length tuple that is distinguished by the index indicated by I)
 * `len(x) == L` and `len(x) != L` (where x is tuple and L is a literal integer)
 * `x in y` or `x not in y` (where y is instance of list, set, frozenset, deque, tuple, dict, defaultdict, or OrderedDict)
-* `S in D` and `S not in D` (where S is a string literal and D is a final TypedDict)
+* `S in D` and `S not in D` (where S is a string literal and D is a TypedDict)
 * `isinstance(x, T)` (where T is a type or a tuple of types)
 * `issubclass(x, T)` (where T is a type or a tuple of types)
 * `callable(x)`
@@ -154,6 +155,7 @@ def func4(x: str | None):
 ```
 
 ### Narrowing for Implied Else
+
 When an “if” or “elif” clause is used without a corresponding “else”, Pyright will generally assume that the code can “fall through” without executing the “if” or “elif” block. However, there are cases where the analyzer can determine that a fall-through is not possible because the “if” or “elif” is guaranteed to be executed based on type analysis.
 
 ```python
@@ -195,7 +197,7 @@ def func4(value: str | int) -> str:
 
 If you later added another color to the `Color` enumeration above (e.g. `YELLOW = 4`), Pyright would detect that `func3` no longer exhausts all members of the enumeration and possibly returns `None`, which violates the declared return type. Likewise, if you modify the type of the `value` parameter in `func4` to expand the union, a similar error will be produced.
 
-This “narrowing for implied else” technique works for all narrowing expressions listed above with the exception of simple falsey/truthy statements and type guards. These are excluded because they are not generally used for exhaustive checks, and their inclusion would have a significant impact on analysis performance.
+This “narrowing for implied else” technique works for all narrowing expressions listed above with the exception of simple falsey/truthy statements and type guards. It is also limited to simple names and doesn’t work with member access or index expressions. These are excluded because they are not generally used for exhaustive checks, and their inclusion would have a significant impact on analysis performance.
 
 
 ### Narrowing Any
@@ -221,7 +223,25 @@ b = c
 reveal_type(b) # list[Any]
 ```
 
-### Constrained Type Variables and Conditional Types
+### Narrowing for Captured Variables
+
+If a variable’s type is narrowed in an outer scope and the variable is subsequently captured by an inner-scoped function or lambda, Pyright retains the narrowed type if it can determine that the value of the captured variable is not modified on any code path after the inner-scope function or lambda is defined and is not modified in another scope via a `nonlocal` or `global` binding.
+
+```python
+def func(val: int | None):
+    if val is not None:
+
+        def inner_1() -> None:
+            reveal_type(val)  # int
+            print(val + 1)
+
+        inner_2 = lambda: reveal_type(val) + 1  # int
+
+        inner_1()
+        inner_2()
+```
+
+### Constrained Type Variables
 
 When a TypeVar is defined, it can be constrained to two or more types.
 
@@ -251,7 +271,9 @@ reveal_type(v2) # float
 v3 = add(1.3, "hi") # Error
 ```
 
-When checking the implementation of a function that uses constrained type variables in its signature, the type checker must verify that type consistency is guaranteed. Consider the following example, where the input parameter and return type are both annotated with a constrained type variable. The type checker must verify that if a caller passes an argument of type `str`, then all code paths must return a `str`. Likewise, if a caller passes an argument of type `float`, all code paths must return a `float`.
+### Conditional Types and Type Variables
+
+When checking the implementation of a function that uses type variables in its signature, the type checker must verify that type consistency is guaranteed. Consider the following example, where the input parameter and return type are both annotated with a type variable. The type checker must verify that if a caller passes an argument of type `str`, then all code paths must return a `str`. Likewise, if a caller passes an argument of type `float`, all code paths must return a `float`.
 
 ```python
 def add_one(value: _StrOrFloat) -> _StrOrFloat:
@@ -264,10 +286,10 @@ def add_one(value: _StrOrFloat) -> _StrOrFloat:
     return sum
 ```
 
-Notice that the type of variable `sum` is reported with asterisks (`*`). This indicates that internally the type checker is tracking the type as conditional. In this particular example, it indicates that `sum` is a `str` type if the parameter `value` is a `str` but is a `float` if `value` is a `float`. By tracking these conditional types, the type checker can verify that the return type is consistent with the return type `_StrOrFloat`.
+The type of variable `sum` is reported with a star (`*`). This indicates that internally the type checker is tracking the type as a “conditional” type. In this particular example, it indicates that `sum` is a `str` type if the parameter `value` is a `str` but is a `float` if `value` is a `float`. By tracking these conditional types, the type checker can verify that the return type is consistent with the return type `_StrOrFloat`. Conditional types are a form of _intersection_ type, and they are considered subtypes of both the concrete type and the type variable.
 
 
-### Inferred type of self and cls parameters
+### Inferred Type of “self” and “cls” Parameters
 
 When a type annotation for a method’s `self` or `cls` parameter is omitted, pyright will infer its type based on the class that contains the method. The inferred type is internally represented as a type variable that is bound to the class.
 

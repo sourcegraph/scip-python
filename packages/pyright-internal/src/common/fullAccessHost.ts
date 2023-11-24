@@ -7,8 +7,10 @@
  */
 
 import * as child_process from 'child_process';
+import { CancellationToken } from 'vscode-languageserver';
 
 import { PythonPathResult } from '../analyzer/pythonPathUtils';
+import { OperationCanceledException } from './cancellationUtils';
 import { PythonPlatform } from './configOptions';
 import { assertNever } from './debug';
 import { FileSystem } from './fileSystem';
@@ -58,6 +60,14 @@ export class LimitedAccessHost extends NoAccessHost {
 }
 
 export class FullAccessHost extends LimitedAccessHost {
+    constructor(protected fs: FileSystem) {
+        super();
+    }
+
+    override get kind(): HostKind {
+        return HostKind.FullAccess;
+    }
+
     static createHost(kind: HostKind, fs: FileSystem) {
         switch (kind) {
             case HostKind.NoAccess:
@@ -71,18 +81,10 @@ export class FullAccessHost extends LimitedAccessHost {
         }
     }
 
-    constructor(protected _fs: FileSystem) {
-        super();
-    }
-
-    override get kind(): HostKind {
-        return HostKind.FullAccess;
-    }
-
     override getPythonSearchPaths(pythonPath?: string, logInfo?: string[]): PythonPathResult {
         const importFailureInfo = logInfo ?? [];
         let result = this._executePythonInterpreter(pythonPath, (p) =>
-            this._getSearchPathResultFromInterpreter(this._fs, p, importFailureInfo)
+            this._getSearchPathResultFromInterpreter(this.fs, p, importFailureInfo)
         );
 
         if (!result) {
@@ -129,26 +131,37 @@ export class FullAccessHost extends LimitedAccessHost {
         pythonPath: string | undefined,
         script: string,
         args: string[],
-        cwd: string
+        cwd: string,
+        token: CancellationToken
     ): Promise<ScriptOutput> {
         // What to do about conda here?
         return new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
             let stdout = '';
             let stderr = '';
             const commandLineArgs = [script, ...args];
+
             const child = this._executePythonInterpreter(pythonPath, (p) =>
                 child_process.spawn(p, commandLineArgs, { cwd })
             );
+            const tokenWatch = token.onCancellationRequested(() => {
+                if (child) {
+                    child.kill();
+                }
+                reject(new OperationCanceledException());
+            });
             if (child) {
                 child.stdout.on('data', (d) => (stdout = stdout.concat(d)));
                 child.stderr.on('data', (d) => (stderr = stderr.concat(d)));
                 child.on('error', (e) => {
+                    tokenWatch.dispose();
                     reject(e);
                 });
                 child.on('exit', () => {
+                    tokenWatch.dispose();
                     resolve({ stdout, stderr });
                 });
             } else {
+                tokenWatch.dispose();
                 reject(new Error(`Cannot start python interpreter with script ${script}`));
             }
         });
