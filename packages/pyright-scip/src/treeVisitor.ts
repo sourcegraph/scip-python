@@ -1090,8 +1090,15 @@ export class TreeVisitor extends ParseTreeWalker {
                     log.debug('Paramerter with no name', node);
                     return ScipSymbol.local(this.counter.next());
                 }
+                // If the parent is a lambda, we can't generate a legal symbol
+                // by appending a descriptor; the parameter needs to be a local
+                // too.
+                const parentSymbol = this.getScipSymbol(node.parent!);
+                if (parentSymbol.isLocal()) {
+                    return ScipSymbol.local(this.counter.next());
+                }
 
-                return Symbols.makeParameter(this.getScipSymbol(node.parent!), node.name.value);
+                return Symbols.makeParameter(parentSymbol, node.name.value);
             }
             case ParseNodeType.Class: {
                 return Symbols.makeType(this.getScipSymbol(node.parent!), (node as ClassNode).name.value);
