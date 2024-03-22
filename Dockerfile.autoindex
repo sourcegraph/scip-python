@@ -1,4 +1,4 @@
-FROM nikolaik/python-nodejs:python3.10-nodejs16-alpine@sha256:fcbc543f7d4016679e2e6e8ec6345170f33426103dca9153068caaa9490d2fdd
+FROM nikolaik/python-nodejs:python3.10-nodejs16-alpine@sha256:dddb7bc296b266063ef54022959a2124b8b3a65434786203a55bc005929c5178
 
 RUN apk add --no-cache git bash curl
 RUN npm install -g @sourcegraph/scip-python @sourcegraph/src
