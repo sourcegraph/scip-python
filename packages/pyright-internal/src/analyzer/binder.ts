@@ -24,8 +24,7 @@ import { CreateTypeStubFileAction, Diagnostic } from '../common/diagnostic';
 import { DiagnosticRule } from '../common/diagnosticRules';
 import { getFileName, stripFileExtension } from '../common/pathUtils';
 import { convertTextRangeToRange } from '../common/positionUtils';
-import { getEmptyRange } from '../common/textRange';
-import { TextRange } from '../common/textRange';
+import { TextRange, getEmptyRange } from '../common/textRange';
 import { Localizer } from '../localization/localize';
 import {
     ArgumentCategory,
@@ -85,7 +84,6 @@ import { AnalyzerFileInfo, ImportLookupResult } from './analyzerFileInfo';
 import * as AnalyzerNodeInfo from './analyzerNodeInfo';
 import {
     CodeFlowReferenceExpressionNode,
-    createKeyForReference,
     FlowAssignment,
     FlowBranchLabel,
     FlowCall,
@@ -100,6 +98,7 @@ import {
     FlowPreFinallyGate,
     FlowVariableAnnotation,
     FlowWildcardImport,
+    createKeyForReference,
     getUniqueFlowNodeId,
     isCodeFlowSupportedForReference,
     wildcardImportReferenceKey,
@@ -123,7 +122,7 @@ import * as ParseTreeUtils from './parseTreeUtils';
 import { ParseTreeWalker } from './parseTreeWalker';
 import { NameBindingType, Scope, ScopeType } from './scope';
 import * as StaticExpressions from './staticExpressions';
-import { indeterminateSymbolId, Symbol, SymbolFlags } from './symbol';
+import { Symbol, SymbolFlags, indeterminateSymbolId } from './symbol';
 import { isConstantName, isPrivateName, isPrivateOrProtectedName } from './symbolNameUtils';
 
 interface MemberAccessInfo {
@@ -229,6 +228,9 @@ export class Binder extends ParseTreeWalker {
 
     // Are we currently binding code located within an except block?
     private _isInExceptSuite = false;
+
+    // Are we currently walking the type arguments to an Annotated type annotation?
+    private _isInAnnotatedAnnotation = false;
 
     // A list of names assigned to __slots__ within a class.
     private _dunderSlotsEntries: StringListNode[] | undefined;
@@ -652,7 +654,12 @@ export class Binder extends ParseTreeWalker {
         // and this can lead to a performance issue when walking the control
         // flow graph if we need to evaluate every decorator.
         if (!ParseTreeUtils.isNodeContainedWithinNodeType(node, ParseNodeType.Decorator)) {
-            this._createCallFlowNode(node);
+            // Skip if we're in an 'Annotated' annotation because this creates
+            // problems for "No Return" return type analysis when annotation
+            // evaluation is deferred.
+            if (!this._isInAnnotatedAnnotation) {
+                this._createCallFlowNode(node);
+            }
         }
 
         // Is this an manipulation of dunder all?
@@ -1270,7 +1277,22 @@ export class Binder extends ParseTreeWalker {
 
     override visitIndex(node: IndexNode): boolean {
         AnalyzerNodeInfo.setFlowNode(node, this._currentFlowNode!);
-        return true;
+
+        this.walk(node.baseExpression);
+
+        // If we're within an 'Annotated' type annotation, set the flag.
+        const wasInAnnotatedAnnotation = this._isInAnnotatedAnnotation;
+        if (this._isTypingAnnotation(node.baseExpression, 'Annotated')) {
+            this._isInAnnotatedAnnotation = true;
+        }
+
+        node.items.forEach((argNode) => {
+            this.walk(argNode);
+        });
+
+        this._isInAnnotatedAnnotation = wasInAnnotatedAnnotation;
+
+        return false;
     }
 
     override visitIf(node: IfNode): boolean {
@@ -1710,6 +1732,8 @@ export class Binder extends ParseTreeWalker {
         const dataclassesSymbolsOfInterest = ['InitVar'];
         const importInfo = AnalyzerNodeInfo.getImportInfo(node.module);
 
+        AnalyzerNodeInfo.setFlowNode(node, this._currentFlowNode!);
+
         let resolvedPath = '';
         if (importInfo && importInfo.isImportFound && !importInfo.isNativeLib) {
             resolvedPath = importInfo.resolvedPaths[importInfo.resolvedPaths.length - 1];
@@ -1793,9 +1817,7 @@ export class Binder extends ParseTreeWalker {
                                 // The symbol wasn't in the target module's symbol table. It's probably
                                 // an implicitly-imported submodule referenced by __all__.
                                 if (importInfo && importInfo.filteredImplicitImports) {
-                                    const implicitImport = importInfo.filteredImplicitImports.find(
-                                        (imp) => imp.name === name
-                                    );
+                                    const implicitImport = importInfo.filteredImplicitImports.get(name);
 
                                     if (implicitImport) {
                                         const submoduleFallback: AliasDeclaration = {
@@ -1854,6 +1876,8 @@ export class Binder extends ParseTreeWalker {
                 const importedName = importSymbolNode.name.value;
                 const nameNode = importSymbolNode.alias || importSymbolNode.name;
 
+                AnalyzerNodeInfo.setFlowNode(importSymbolNode, this._currentFlowNode!);
+
                 const symbol = this._bindNameToScope(this._currentScope, nameNode);
 
                 if (symbol) {
@@ -1882,7 +1906,7 @@ export class Binder extends ParseTreeWalker {
                     // Is the import referring to an implicitly-imported module?
                     let implicitImport: ImplicitImport | undefined;
                     if (importInfo && importInfo.filteredImplicitImports) {
-                        implicitImport = importInfo.filteredImplicitImports.find((imp) => imp.name === importedName);
+                        implicitImport = importInfo.filteredImplicitImports.get(importedName);
                     }
 
                     let submoduleFallback: AliasDeclaration | undefined;
@@ -1899,15 +1923,17 @@ export class Binder extends ParseTreeWalker {
                             isInExceptSuite: this._isInExceptSuite,
                         };
 
-                        // Handle the case of "from . import X" within an __init__ file.
-                        // In this case, we want to always resolve to the submodule rather
-                        // than the resolved path.
-                        if (
-                            fileName === '__init__' &&
-                            node.module.leadingDots === 1 &&
-                            node.module.nameParts.length === 0
-                        ) {
-                            loadSymbolsFromPath = false;
+                        // Handle the case where this is an __init__.py file and the imported
+                        // module name refers to itself. The most common situation where this occurs
+                        // is with a "from . import X" form, but it can also occur with
+                        // an absolute import (e.g. "from A.B.C import X"). In this case, we want to
+                        // always resolve to the submodule rather than the resolved path.
+                        if (fileName === '__init__') {
+                            if (node.module.leadingDots === 1 && node.module.nameParts.length === 0) {
+                                loadSymbolsFromPath = false;
+                            } else if (resolvedPath === this._fileInfo.filePath) {
+                                loadSymbolsFromPath = false;
+                            }
                         }
                     }
 
@@ -2107,6 +2133,11 @@ export class Binder extends ParseTreeWalker {
     override visitListComprehension(node: ListComprehensionNode): boolean {
         const enclosingFunction = ParseTreeUtils.getEnclosingFunction(node);
 
+        // The first iterable is executed outside of the comprehension scope.
+        if (node.forIfNodes.length > 0 && node.forIfNodes[0].nodeType === ParseNodeType.ListComprehensionFor) {
+            this.walk(node.forIfNodes[0].iterableExpression);
+        }
+
         this._createNewScope(ScopeType.ListComprehension, this._getNonClassParentScope(), () => {
             AnalyzerNodeInfo.setScope(node, this._currentScope);
 
@@ -2140,7 +2171,11 @@ export class Binder extends ParseTreeWalker {
             for (let i = 0; i < node.forIfNodes.length; i++) {
                 const compr = node.forIfNodes[i];
                 if (compr.nodeType === ParseNodeType.ListComprehensionFor) {
-                    this.walk(compr.iterableExpression);
+                    // We already walked the first iterable expression above,
+                    // so skip it here.
+                    if (i !== 0) {
+                        this.walk(compr.iterableExpression);
+                    }
 
                     this._createAssignmentTargetFlowNodes(
                         compr.targetExpression,
@@ -2200,9 +2235,7 @@ export class Binder extends ParseTreeWalker {
             // Bind the pattern.
             this.walk(caseStatement.pattern);
 
-            if (isSubjectNarrowable) {
-                this._createFlowNarrowForPattern(node.subjectExpression, caseStatement);
-            }
+            this._createFlowNarrowForPattern(node.subjectExpression, caseStatement);
 
             // Apply the guard expression.
             if (caseStatement.guardExpression) {
@@ -2458,6 +2491,8 @@ export class Binder extends ParseTreeWalker {
     ) {
         const firstNamePartValue = node.module.nameParts[0].value;
 
+        AnalyzerNodeInfo.setFlowNode(node, this._currentFlowNode!);
+
         // See if there's already a matching alias declaration for this import.
         // if so, we'll update it rather than creating a new one. This is required
         // to handle cases where multiple import statements target the same
@@ -2603,7 +2638,7 @@ export class Binder extends ParseTreeWalker {
         }
 
         lookupInfo.symbolTable.forEach((symbol, name) => {
-            if (!symbol.isExternallyHidden() && !isPrivateOrProtectedName(name)) {
+            if (!symbol.isExternallyHidden() && !name.startsWith('_')) {
                 namesToImport!.push(name);
             }
         });
@@ -2632,6 +2667,14 @@ export class Binder extends ParseTreeWalker {
                     if (yieldFinder.checkContainsYield(statement)) {
                         this._targetFunctionDeclaration.isGenerator = true;
                     }
+                }
+
+                // In case there are any class or function statements within this
+                // subtree, we need to create dummy scopes for them. The type analyzer
+                // depends on scopes being present.
+                if (!this._moduleSymbolOnly) {
+                    const dummyScopeGenerator = new DummyScopeGenerator(this._currentScope);
+                    dummyScopeGenerator.walk(statement);
                 }
             }
         }
@@ -3875,28 +3918,6 @@ export class Binder extends ParseTreeWalker {
         return { isClassVar, classVarTypeNode };
     }
 
-    // Determines if the specified type annotation is wrapped in a "Required".
-    private _isRequiredAnnotation(typeAnnotation: ExpressionNode | undefined): boolean {
-        if (typeAnnotation && typeAnnotation.nodeType === ParseNodeType.Index && typeAnnotation.items.length === 1) {
-            if (this._isTypingAnnotation(typeAnnotation.baseExpression, 'Required')) {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    // Determines if the specified type annotation is wrapped in a "NotRequired".
-    private _isNotRequiredAnnotation(typeAnnotation: ExpressionNode | undefined): boolean {
-        if (typeAnnotation && typeAnnotation.nodeType === ParseNodeType.Index && typeAnnotation.items.length === 1) {
-            if (this._isTypingAnnotation(typeAnnotation.baseExpression, 'NotRequired')) {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
     // Determines whether a member access expression is referring to a
     // member of a class (either a class or instance member). This will
     // typically take the form "self.x" or "cls.x".
@@ -4040,7 +4061,6 @@ export class Binder extends ParseTreeWalker {
             'OrderedDict',
             'Concatenate',
             'TypeGuard',
-            'StrictTypeGuard',
             'Unpack',
             'Self',
             'NoReturn',
@@ -4199,5 +4219,54 @@ export class ReturnFinder extends ParseTreeWalker {
     override visitReturn(node: ReturnNode): boolean {
         this._containsReturn = true;
         return false;
+    }
+}
+
+// Creates dummy scopes for classes or functions within a parse tree.
+// This is needed in cases where the parse tree has been determined
+// to be unreachable. There are code paths where the type evaluator
+// will still evaluate these types, and it depends on the presence
+// of a scope.
+export class DummyScopeGenerator extends ParseTreeWalker {
+    private _currentScope: Scope | undefined;
+
+    constructor(currentScope: Scope | undefined) {
+        super();
+        this._currentScope = currentScope;
+    }
+
+    override visitClass(node: ClassNode): boolean {
+        const newScope = this._createNewScope(ScopeType.Class, () => {
+            this.walk(node.suite);
+        });
+
+        if (!AnalyzerNodeInfo.getScope(node)) {
+            AnalyzerNodeInfo.setScope(node, newScope);
+        }
+
+        return false;
+    }
+
+    override visitFunction(node: FunctionNode): boolean {
+        const newScope = this._createNewScope(ScopeType.Function, () => {
+            this.walk(node.suite);
+        });
+
+        if (!AnalyzerNodeInfo.getScope(node)) {
+            AnalyzerNodeInfo.setScope(node, newScope);
+        }
+
+        return false;
+    }
+
+    private _createNewScope(scopeType: ScopeType, callback: () => void) {
+        const prevScope = this._currentScope;
+        const newScope = new Scope(scopeType, this._currentScope);
+        this._currentScope = newScope;
+
+        callback();
+
+        this._currentScope = prevScope;
+        return newScope;
     }
 }

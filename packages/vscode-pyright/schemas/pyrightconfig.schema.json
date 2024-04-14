@@ -93,7 +93,7 @@
       "$id": "#/properties/useLibraryCodeForTypes",
       "type": "boolean",
       "title": "Use library implementations to extract type information when type stub is not present",
-      "default": false
+      "default": true
     },
     "typeshedPath": {
       "$id": "#/properties/typeshedPath",
@@ -140,6 +140,12 @@
       "$id": "#/properties/strictParameterNoneValue",
       "type": "boolean",
       "title": "Allow implicit Optional when default parameter value is None",
+      "default": true
+    },
+    "enableExperimentalFeatures": {
+      "$id": "#/properties/enableExperimentalFeatures",
+      "type": "boolean",
+      "title": "Enable the use of experimental features that are not part of the Python typing spec",
       "default": true
     },
     "enableTypeIgnoreComments": {

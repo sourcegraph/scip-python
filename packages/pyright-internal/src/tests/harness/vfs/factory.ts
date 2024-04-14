@@ -115,6 +115,12 @@ let cacheKey: { host: TestHost; mountPaths: Map<string, string> } | undefined;
 let localCIFSCache: TestFileSystem | undefined;
 let localCSFSCache: TestFileSystem | undefined;
 
+export function clearCache() {
+    cacheKey = undefined;
+    localCIFSCache = undefined;
+    localCSFSCache = undefined;
+}
+
 function getBuiltLocal(
     host: TestHost,
     ignoreCase: boolean,
@@ -137,7 +143,7 @@ function getBuiltLocal(
         const files: FileSet = {};
         mountPaths.forEach((v, k) => (files[k] = new Mount(v, resolver)));
 
-        localCIFSCache = new TestFileSystem(/*ignoreCase*/ true, {
+        localCIFSCache = new TestFileSystem(/* ignoreCase */ true, {
             files,
             cwd,
             meta: {},
@@ -150,7 +156,7 @@ function getBuiltLocal(
     }
 
     if (!localCSFSCache) {
-        localCSFSCache = localCIFSCache.shadow(/*ignoreCase*/ false);
+        localCSFSCache = localCIFSCache.shadow(/* ignoreCase */ false);
         localCSFSCache.makeReadonly();
     }
 

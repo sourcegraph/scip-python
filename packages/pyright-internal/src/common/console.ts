@@ -8,6 +8,7 @@
  * methods.
  */
 
+import { Disposable } from 'vscode-jsonrpc';
 import * as debug from './debug';
 
 export enum LogLevel {
@@ -16,12 +17,22 @@ export enum LogLevel {
     Info = 'info',
     Log = 'log',
 }
-
 export interface ConsoleInterface {
     error: (message: string) => void;
     warn: (message: string) => void;
     info: (message: string) => void;
     log: (message: string) => void;
+}
+
+const levelMap = new Map([
+    [LogLevel.Error, 0],
+    [LogLevel.Warn, 1],
+    [LogLevel.Info, 2],
+    [LogLevel.Log, 3],
+]);
+
+export function getLevelNumber(level: LogLevel): number {
+    return levelMap.get(level) ?? 3;
 }
 
 // Avoids outputting errors to the console but counts
@@ -51,70 +62,72 @@ export class NullConsole implements ConsoleInterface {
 }
 
 export class StandardConsole implements ConsoleInterface {
-    log(message: string) {
-        console.info(message);
-    }
-
-    info(message: string) {
-        console.info(message);
-    }
-
-    warn(message: string) {
-        console.warn(message);
-    }
-
-    error(message: string) {
-        console.error(message);
-    }
-}
-
-export class StandardConsoleWithLevel extends StandardConsole {
-    constructor(private _maxLevel: LogLevel = LogLevel.Log) {
-        super();
-    }
+    constructor(private _maxLevel: LogLevel = LogLevel.Log) {}
 
     get level(): LogLevel {
         return this._maxLevel;
+    }
+
+    log(message: string) {
+        if (getLevelNumber(this._maxLevel) >= getLevelNumber(LogLevel.Log)) {
+            console.log(message);
+        }
+    }
+
+    info(message: string) {
+        if (getLevelNumber(this._maxLevel) >= getLevelNumber(LogLevel.Info)) {
+            console.info(message);
+        }
+    }
+
+    warn(message: string) {
+        if (getLevelNumber(this._maxLevel) >= getLevelNumber(LogLevel.Warn)) {
+            console.warn(message);
+        }
+    }
+
+    error(message: string) {
+        if (getLevelNumber(this._maxLevel) >= getLevelNumber(LogLevel.Error)) {
+            console.error(message);
+        }
     }
 }
 
 export class StderrConsole implements ConsoleInterface {
-    log(message: string) {
-        console.error(message);
-    }
-
-    info(message: string) {
-        console.error(message);
-    }
-
-    warn(message: string) {
-        console.error(message);
-    }
-
-    error(message: string) {
-        console.error(message);
-    }
-}
-
-export class StderrConsoleWithLevel extends StderrConsole {
-    constructor(private _maxLevel: LogLevel = LogLevel.Log) {
-        super();
-    }
+    constructor(private _maxLevel: LogLevel = LogLevel.Log) {}
 
     get level(): LogLevel {
         return this._maxLevel;
     }
+
+    log(message: string) {
+        if (getLevelNumber(this._maxLevel) >= getLevelNumber(LogLevel.Log)) {
+            console.error(message);
+        }
+    }
+
+    info(message: string) {
+        if (getLevelNumber(this._maxLevel) >= getLevelNumber(LogLevel.Info)) {
+            console.error(message);
+        }
+    }
+
+    warn(message: string) {
+        if (getLevelNumber(this._maxLevel) >= getLevelNumber(LogLevel.Warn)) {
+            console.error(message);
+        }
+    }
+
+    error(message: string) {
+        if (getLevelNumber(this._maxLevel) >= getLevelNumber(LogLevel.Error)) {
+            console.error(message);
+        }
+    }
 }
 
-export class ConsoleWithLogLevel implements ConsoleInterface {
-    private _levelMap: Map<string, number> = new Map([
-        [LogLevel.Error, 0],
-        [LogLevel.Warn, 1],
-        [LogLevel.Info, 2],
-        [LogLevel.Log, 3],
-    ]);
-
+export class ConsoleWithLogLevel implements ConsoleInterface, Disposable {
     private _maxLevel = 2;
+    private _disposed = false;
 
     constructor(private _console: ConsoleInterface, private _name = '') {}
 
@@ -134,12 +147,16 @@ export class ConsoleWithLogLevel implements ConsoleInterface {
     }
 
     set level(value: LogLevel) {
-        let maxLevel = this._levelMap.get(value);
+        let maxLevel = getLevelNumber(value);
         if (maxLevel === undefined) {
-            maxLevel = this._levelMap.get(LogLevel.Info)!;
+            maxLevel = getLevelNumber(LogLevel.Info)!;
         }
 
         this._maxLevel = maxLevel;
+    }
+
+    dispose() {
+        this._disposed = true;
     }
 
     error(message: string) {
@@ -166,12 +183,15 @@ export class ConsoleWithLogLevel implements ConsoleInterface {
         if (this._getNumericalLevel(level) > this._maxLevel) {
             return;
         }
+        if (this._disposed) {
+            return;
+        }
 
         log(this._console, level, message);
     }
 
     private _getNumericalLevel(level: LogLevel): number {
-        const numericLevel = this._levelMap.get(level);
+        const numericLevel = getLevelNumber(level);
         debug.assert(numericLevel !== undefined, 'Logger: unknown log level.');
         return numericLevel !== undefined ? numericLevel : 2;
     }
