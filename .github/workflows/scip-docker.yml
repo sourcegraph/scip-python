@@ -36,7 +36,7 @@ jobs:
             ${{ runner.os }}-node-
       - run: npm install
       - run: cd ./packages/pyright-scip/ && npm install && npm run build
-      - uses: docker/setup-buildx-action@v2
+      - uses: docker/setup-buildx-action@v3
       - name: Build Dockerfile
         id: docker_build_autoindex
         uses: docker/build-push-action@v4
