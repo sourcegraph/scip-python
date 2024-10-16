@@ -202,7 +202,7 @@ export class TreeVisitor extends ParseTreeWalker {
             []
         );
 
-        this.cwd = path.resolve(process.cwd());
+        this.cwd = path.resolve(process.cwd()).toLowerCase();
 
         this._docstringWriter = new TypeStubExtendedWriter(this.config.sourceFile, this.evaluator);
     }
@@ -498,13 +498,19 @@ export class TreeVisitor extends ParseTreeWalker {
     //        ^^^^^^^ node.module (create new reference)
     //                   ^ node.alias (create new local definition)
     override visitImportAs(node: ImportAsNode): boolean {
-        const moduleName = _formatModuleName(node.module);
+        let moduleName = _formatModuleName(node.module);
         const importInfo = getImportInfo(node.module);
         if (
             importInfo &&
-            importInfo.resolvedPaths[0] &&
-            path.resolve(importInfo.resolvedPaths[0]).startsWith(this.cwd)
+            importInfo.resolvedPaths[importInfo.resolvedPaths.length - 1] &&
+            path
+                .resolve(importInfo.resolvedPaths[importInfo.resolvedPaths.length - 1])
+                .toLowerCase()
+                .startsWith(this.cwd)
         ) {
+            moduleName = this.program._getImportNameForFile(
+                importInfo!.resolvedPaths[importInfo.resolvedPaths.length - 1]
+            );
             const symbol = Symbols.makeModuleInit(this.projectPackage, moduleName);
             this.pushNewOccurrence(node.module, symbol);
         } else {
@@ -1076,10 +1082,21 @@ export class TreeVisitor extends ParseTreeWalker {
                     pythonPackage = this.stdlibPackage;
                 }
 
-                return Symbols.makeModuleInit(
-                    pythonPackage,
-                    node.nameParts.map((namePart) => namePart.value).join('.')
-                );
+                const importInfo = getImportInfo(node);
+
+                let moduleName = node.nameParts.map((namePart) => namePart.value).join('.');
+
+                if (
+                    importInfo &&
+                    importInfo.resolvedPaths[importInfo.resolvedPaths.length - 1] &&
+                    importInfo.resolvedPaths[importInfo.resolvedPaths.length - 1].toLowerCase().startsWith(this.cwd)
+                ) {
+                    moduleName = this.program._getImportNameForFile(
+                        importInfo.resolvedPaths[importInfo.resolvedPaths.length - 1]
+                    );
+                }
+
+                return Symbols.makeModuleInit(pythonPackage, moduleName);
             }
             case ParseNodeType.MemberAccess: {
                 softAssert(false, 'Not supposed to get a member access');
@@ -1416,7 +1433,7 @@ export class TreeVisitor extends ParseTreeWalker {
         const nodeFilePath = path.resolve(nodeFileInfo.filePath);
 
         // TODO: Should use files from the package to determine this -- should be able to do that quite easily.
-        if (nodeFilePath.startsWith(this.cwd)) {
+        if (nodeFilePath.toLowerCase().startsWith(this.cwd.toLowerCase())) {
             return this.projectPackage;
         }
 
@@ -1636,7 +1653,7 @@ export class TreeVisitor extends ParseTreeWalker {
         if (declPath && declPath.length !== 0) {
             const p = path.resolve(declPath);
 
-            if (p.startsWith(this.cwd)) {
+            if (p.toLowerCase().startsWith(this.cwd)) {
                 return this.projectPackage;
             }
         }
