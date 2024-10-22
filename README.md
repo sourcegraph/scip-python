@@ -11,7 +11,7 @@ $ # Install scip-python
 $ npm install -g @sourcegraph/scip-python
 ```
 
-scip-python requires Node v16 or newer. See the [Dockerfile](https://github.com/sourcegraph/scip-python/blob/scip/Dockerfile.autoindex) for an exact SHA that is tested.
+scip-python requires Node v16 or newer. See the [Dockerfile](https://github.com/sourcegraph/scip-python/blob/scip/Dockerfile) for an exact SHA that is tested.
 
 scip-python uses `pip` to attempt to determine the versions and names of the packages available in your environment. If you do not use pip to install the packages, you can instead use the `--environment` flag to supply a list of packages to use as the environment. This will skip any calls out to pip to determine the state of your env. See [Environment](##-environment) for more information.
 

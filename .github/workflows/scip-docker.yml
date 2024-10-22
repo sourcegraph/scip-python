@@ -7,7 +7,7 @@ on:
   pull_request:
     paths:
       - '.github/workflows/**'
-      - 'Dockerfile.autoindex'
+      - 'Dockerfile'
 
 jobs:
   build-image:
@@ -41,7 +41,7 @@ jobs:
         id: docker_build_autoindex
         uses: docker/build-push-action@v4
         with:
-          file: Dockerfile.autoindex
+          file: Dockerfile
           push: false
           tags: |
             sourcegraph/scip-python:test
