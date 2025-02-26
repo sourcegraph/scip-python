@@ -238,6 +238,7 @@ export class TreeVisitor extends ParseTreeWalker {
                     new scip.SymbolInformation({
                         symbol: symbol.value,
                         documentation,
+                        display_name: fileInfo.moduleName,
                     })
                 );
             }
@@ -307,6 +308,7 @@ export class TreeVisitor extends ParseTreeWalker {
                         new scip.SymbolInformation({
                             symbol: this.getScipSymbol(dec.node).value,
                             documentation,
+                            display_name: node.leftExpression.value,
                         })
                     );
                 }
@@ -412,6 +414,7 @@ export class TreeVisitor extends ParseTreeWalker {
                 symbol: this.getScipSymbol(node).value,
                 documentation,
                 relationships,
+                display_name: node.name.value,
             })
         );
 
@@ -441,6 +444,7 @@ export class TreeVisitor extends ParseTreeWalker {
                 new scip.SymbolInformation({
                     symbol: symbol.value,
                     documentation: paramDocumentation,
+                    display_name: paramNode.name?.value,
                 })
             );
 
@@ -720,7 +724,10 @@ export class TreeVisitor extends ParseTreeWalker {
 
         if (isDefinition) {
             // In this case, decl.node == node.parent
-            switch (decl.node.nodeType) {
+            // We need to store `decl.node` as a const here for the switch to apply type refinement
+            // to the value `declNode` within switch case bodies.
+            const declNode = decl.node;
+            switch (declNode.nodeType) {
                 case ParseNodeType.Class: {
                     const symbol = this.getScipSymbol(parent);
 
@@ -730,7 +737,7 @@ export class TreeVisitor extends ParseTreeWalker {
                         documentation.push('```python\n' + stub.join('\n') + '\n```');
                     }
 
-                    const doc = ParseTreeUtils.getDocString(decl.node.suite.statements)?.trim();
+                    const doc = ParseTreeUtils.getDocString(declNode.suite.statements)?.trim();
                     if (doc) {
                         documentation.push(convertDocStringToMarkdown(doc));
                     }
@@ -785,10 +792,11 @@ export class TreeVisitor extends ParseTreeWalker {
                             symbol: symbol.value,
                             documentation,
                             relationships,
+                            display_name: declNode.name?.value,
                         })
                     );
 
-                    this.pushNewOccurrence(node, this.getScipSymbol(decl.node), scip.SymbolRole.Definition, decl.node);
+                    this.pushNewOccurrence(node, this.getScipSymbol(decl.node), scip.SymbolRole.Definition, declNode);
                     break;
                 }
                 default: {
@@ -1460,6 +1468,183 @@ export class TreeVisitor extends ParseTreeWalker {
         );
     }
 
+    private assertUnreachable(x: never): never {
+        throw new Error("Didn't expect to get here");
+    }
+
+    private displayNameForParseNode(node: ParseNode): string | undefined {
+        switch (node.nodeType) {
+            case ParseNodeType.Error:
+                break;
+
+            case ParseNodeType.Argument:
+                return node.name?.value;                
+            case ParseNodeType.Assert:
+                break;
+            case ParseNodeType.Assignment:
+                break;
+            case ParseNodeType.AssignmentExpression:
+                break;
+            case ParseNodeType.AugmentedAssignment:
+                break;
+            case ParseNodeType.Await:
+                break;
+            case ParseNodeType.BinaryOperation:
+                break;
+            case ParseNodeType.Break:
+                break;
+            case ParseNodeType.Call:
+                break;
+        
+            case ParseNodeType.Class:
+                return node.name?.value;
+            case ParseNodeType.Constant:
+                break;
+            case ParseNodeType.Continue:
+                break;
+            case ParseNodeType.Decorator:
+                break;
+            case ParseNodeType.Del:
+                break;
+            case ParseNodeType.Dictionary:
+                break;
+            case ParseNodeType.DictionaryExpandEntry:
+                break;
+            case ParseNodeType.DictionaryKeyEntry:
+                break;
+            case ParseNodeType.Ellipsis:
+                break;
+            case ParseNodeType.If:
+                break;
+        
+            case ParseNodeType.Import:
+                break;
+            case ParseNodeType.ImportAs:
+                return node.alias?.value;
+            case ParseNodeType.ImportFrom:
+                break;
+            case ParseNodeType.ImportFromAs:
+                return node.name?.value;
+            case ParseNodeType.Index:
+                break;
+            case ParseNodeType.Except:
+                break;
+            case ParseNodeType.For:
+                break;
+            case ParseNodeType.FormatString:
+                break;
+            case ParseNodeType.Function:
+                return node.name?.value;
+            case ParseNodeType.Global:
+                break;
+        
+            case ParseNodeType.Lambda:
+                break;
+            case ParseNodeType.List:
+                break;
+            case ParseNodeType.ListComprehension:
+                break;
+            case ParseNodeType.ListComprehensionFor:
+                break;
+            case ParseNodeType.ListComprehensionIf:
+                break;
+            case ParseNodeType.MemberAccess:
+                break;
+            case ParseNodeType.Module:
+                break;
+            case ParseNodeType.ModuleName:
+                break;
+            case ParseNodeType.Name:
+                return node.value;
+            case ParseNodeType.Nonlocal:
+                break;
+        
+            case ParseNodeType.Number:
+                break;
+            case ParseNodeType.Parameter:
+                return node.name?.value;
+            case ParseNodeType.Pass:
+                break;
+            case ParseNodeType.Raise:
+                break;
+            case ParseNodeType.Return:
+                break;
+            case ParseNodeType.Set:
+                break;
+            case ParseNodeType.Slice:
+                break;
+            case ParseNodeType.StatementList:
+                break;
+            case ParseNodeType.StringList:
+                break;
+            case ParseNodeType.String:
+                break;
+        
+            case ParseNodeType.Suite:
+                break;
+            case ParseNodeType.Ternary:
+                break;
+            case ParseNodeType.Tuple:
+                break;
+            case ParseNodeType.Try:
+                break;
+            case ParseNodeType.TypeAnnotation:
+                break;
+            case ParseNodeType.UnaryOperation:
+                break;
+            case ParseNodeType.Unpack:
+                break;
+            case ParseNodeType.While:
+                break;
+            case ParseNodeType.With:
+                break;
+            case ParseNodeType.WithItem:
+                break;
+        
+            case ParseNodeType.Yield:
+                break;
+            case ParseNodeType.YieldFrom:
+                break;
+            case ParseNodeType.FunctionAnnotation:
+                break;
+            case ParseNodeType.Match:
+                break;
+            case ParseNodeType.Case:
+                break;
+            case ParseNodeType.PatternSequence:
+                break;
+            case ParseNodeType.PatternAs:
+                break;
+            case ParseNodeType.PatternLiteral:
+                break;
+            case ParseNodeType.PatternClass:
+                break;
+            case ParseNodeType.PatternCapture:
+                break;
+        
+            case ParseNodeType.PatternMapping:
+                break;
+            case ParseNodeType.PatternMappingKeyEntry:
+                break;
+            case ParseNodeType.PatternMappingExpandEntry:
+                break;
+            case ParseNodeType.PatternValue:
+                break;
+            case ParseNodeType.PatternClassArgument:
+                break;
+            case ParseNodeType.TypeParameter:
+                break;
+            case ParseNodeType.TypeParameterList:
+                break;
+            case ParseNodeType.TypeAlias:
+                break;
+
+            default:
+                return this.assertUnreachable(node);
+        }
+        return `unimplemented: ${node.nodeType}`;
+    }
+
     private emitSymbolInformationOnce(
         node: ParseNode,
         symbol: ScipSymbol,
@@ -1471,11 +1656,14 @@ export class TreeVisitor extends ParseTreeWalker {
         }
         this.symbolInformationForNode.add(symbol.value);
 
+        const display_name = this.displayNameForParseNode(node);
+
         if (documentation) {
             this.document.symbols.push(
                 new scip.SymbolInformation({
                     symbol: symbol.value,
                     documentation,
+                    display_name,
                 })
             );
 
@@ -1495,6 +1683,7 @@ export class TreeVisitor extends ParseTreeWalker {
                 new scip.SymbolInformation({
                     symbol: symbol.value,
                     documentation: _formatHover(hoverResult!),
+                    display_name,
                 })
             );
 
@@ -1515,6 +1704,7 @@ export class TreeVisitor extends ParseTreeWalker {
             new scip.SymbolInformation({
                 symbol: symbol.value,
                 documentation: [docs],
+                display_name,
             })
         );
     }
