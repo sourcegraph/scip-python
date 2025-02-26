@@ -239,6 +239,7 @@ export class TreeVisitor extends ParseTreeWalker {
                         symbol: symbol.value,
                         documentation,
                         display_name: fileInfo.moduleName,
+                        kind: scip.SymbolInformation.Kind.Module,
                     })
                 );
             }
@@ -309,6 +310,7 @@ export class TreeVisitor extends ParseTreeWalker {
                             symbol: this.getScipSymbol(dec.node).value,
                             documentation,
                             display_name: node.leftExpression.value,
+                            kind: scip.SymbolInformation.Kind.Variable,
                         })
                     );
                 }
@@ -415,6 +417,7 @@ export class TreeVisitor extends ParseTreeWalker {
                 documentation,
                 relationships,
                 display_name: node.name.value,
+                kind: scip.SymbolInformation.Kind.Function,
             })
         );
 
@@ -445,6 +448,7 @@ export class TreeVisitor extends ParseTreeWalker {
                     symbol: symbol.value,
                     documentation: paramDocumentation,
                     display_name: paramNode.name?.value,
+                    kind: scip.SymbolInformation.Kind.Parameter,
                 })
             );
 
@@ -793,6 +797,7 @@ export class TreeVisitor extends ParseTreeWalker {
                             documentation,
                             relationships,
                             display_name: declNode.name?.value,
+                            kind: scip.SymbolInformation.Kind.Class,
                         })
                     );
 
@@ -1472,6 +1477,74 @@ export class TreeVisitor extends ParseTreeWalker {
         throw new Error("Didn't expect to get here");
     }
 
+    private emitSymbolInformationOnce(
+        node: ParseNode,
+        symbol: ScipSymbol,
+        documentation: string[] | undefined = undefined
+    ) {
+        // Only emit symbol info once.
+        if (this.symbolInformationForNode.has(symbol.value)) {
+            return;
+        }
+        this.symbolInformationForNode.add(symbol.value);
+
+        const display_name = this.displayNameForParseNode(node);
+        const kind = this.kindForParseNode(node);
+
+        if (documentation) {
+            this.document.symbols.push(
+                new scip.SymbolInformation({
+                    symbol: symbol.value,
+                    documentation,
+                    display_name,
+                    kind,
+                })
+            );
+
+            return;
+        }
+
+        const nodeFileInfo = getFileInfo(node)!;
+        const hoverResult = this.program.getHoverForPosition(
+            nodeFileInfo.filePath,
+            convertOffsetToPosition(node.start, nodeFileInfo.lines),
+            'markdown',
+            _cancellationToken
+        );
+
+        if (hoverResult) {
+            this.document.symbols.push(
+                new scip.SymbolInformation({
+                    symbol: symbol.value,
+                    documentation: _formatHover(hoverResult!),
+                    display_name,
+                    kind,
+                })
+            );
+
+            return;
+        }
+
+        this._docstringWriter.walk(node);
+        const docstringFromWriter = this._docstringWriter.docstrings.get(node.id);
+
+        // Only write a new symbol if we actually have any useful documentation
+        // (which is not a guarantee from docstringWriter)
+        if (docstringFromWriter === undefined) {
+            return;
+        }
+
+        const docs = '```python\n' + docstringFromWriter.join('\n') + '\n```';
+        this.document.symbols.push(
+            new scip.SymbolInformation({
+                symbol: symbol.value,
+                documentation: [docs],
+                display_name,
+                kind,
+            })
+        );
+    }
+
     private displayNameForParseNode(node: ParseNode): string | undefined {
         switch (node.nodeType) {
             case ParseNodeType.Error:
@@ -1645,68 +1718,179 @@ export class TreeVisitor extends ParseTreeWalker {
         return `unimplemented: ${node.nodeType}`;
     }
 
-    private emitSymbolInformationOnce(
-        node: ParseNode,
-        symbol: ScipSymbol,
-        documentation: string[] | undefined = undefined
-    ) {
-        // Only emit symbol info once.
-        if (this.symbolInformationForNode.has(symbol.value)) {
-            return;
+    private kindForParseNode(node: ParseNode): scip.SymbolInformation.Kind {
+        switch (node.nodeType) {
+            case ParseNodeType.Error:
+                break;
+
+            case ParseNodeType.Argument:
+                return scip.SymbolInformation.Kind.Parameter;
+            case ParseNodeType.Assert:
+                break;
+            case ParseNodeType.Assignment:
+                break;
+            case ParseNodeType.AssignmentExpression:
+                break;
+            case ParseNodeType.AugmentedAssignment:
+                break;
+            case ParseNodeType.Await:
+                break;
+            case ParseNodeType.BinaryOperation:
+                break;
+            case ParseNodeType.Break:
+                break;
+            case ParseNodeType.Call:
+                break;
+        
+            case ParseNodeType.Class:
+                return scip.SymbolInformation.Kind.Class;
+            case ParseNodeType.Constant:
+                return scip.SymbolInformation.Kind.Constant;
+            case ParseNodeType.Continue:
+                break;
+            case ParseNodeType.Decorator:
+                break;
+            case ParseNodeType.Del:
+                break;
+            case ParseNodeType.Dictionary:
+                break;
+            case ParseNodeType.DictionaryExpandEntry:
+                break;
+            case ParseNodeType.DictionaryKeyEntry:
+                break;
+            case ParseNodeType.Ellipsis:
+                break;
+            case ParseNodeType.If:
+                break;
+        
+            case ParseNodeType.Import:
+                return scip.SymbolInformation.Kind.Library; // I guess?
+            case ParseNodeType.ImportAs:
+                return scip.SymbolInformation.Kind.Library; // I guess?
+            case ParseNodeType.ImportFrom:
+                return scip.SymbolInformation.Kind.Library; // I guess?
+            case ParseNodeType.ImportFromAs:
+                return scip.SymbolInformation.Kind.Library; // I guess?
+            case ParseNodeType.Index:
+                break;
+            case ParseNodeType.Except:
+                break;
+            case ParseNodeType.For:
+                break;
+            case ParseNodeType.FormatString:
+                break;
+            case ParseNodeType.Function:
+                return scip.SymbolInformation.Kind.Function;
+            case ParseNodeType.Global:
+                break;
+        
+            case ParseNodeType.Lambda:
+                break;
+            case ParseNodeType.List:
+                break;
+            case ParseNodeType.ListComprehension:
+                break;
+            case ParseNodeType.ListComprehensionFor:
+                break;
+            case ParseNodeType.ListComprehensionIf:
+                break;
+            case ParseNodeType.MemberAccess:
+                break;
+            case ParseNodeType.Module:
+                break;
+            case ParseNodeType.ModuleName:
+                break;
+            case ParseNodeType.Name:
+                // Empirically I think this refers to a named parameter in a method call;
+                // e.g. in foo(x=5), the `x` token is a `Name` node.
+                return scip.SymbolInformation.Kind.ParameterLabel;
+            case ParseNodeType.Nonlocal:
+                break;
+        
+            case ParseNodeType.Number:
+                break;
+            case ParseNodeType.Parameter:
+                return scip.SymbolInformation.Kind.Parameter;
+            case ParseNodeType.Pass:
+                break;
+            case ParseNodeType.Raise:
+                break;
+            case ParseNodeType.Return:
+                break;
+            case ParseNodeType.Set:
+                break;
+            case ParseNodeType.Slice:
+                break;
+            case ParseNodeType.StatementList:
+                break;
+            case ParseNodeType.StringList:
+                break;
+            case ParseNodeType.String:
+                return scip.SymbolInformation.Kind.String;
+        
+            case ParseNodeType.Suite:
+                break;
+            case ParseNodeType.Ternary:
+                break;
+            case ParseNodeType.Tuple:
+                break;
+            case ParseNodeType.Try:
+                break;
+            case ParseNodeType.TypeAnnotation:
+                break;
+            case ParseNodeType.UnaryOperation:
+                break;
+            case ParseNodeType.Unpack:
+                break;
+            case ParseNodeType.While:
+                break;
+            case ParseNodeType.With:
+                break;
+            case ParseNodeType.WithItem:
+                break;
+        
+            case ParseNodeType.Yield:
+                break;
+            case ParseNodeType.YieldFrom:
+                break;
+            case ParseNodeType.FunctionAnnotation:
+                break;
+            case ParseNodeType.Match:
+                break;
+            case ParseNodeType.Case:
+                break;
+            case ParseNodeType.PatternSequence:
+                break;
+            case ParseNodeType.PatternAs:
+                break;
+            case ParseNodeType.PatternLiteral:
+                break;
+            case ParseNodeType.PatternClass:
+                break;
+            case ParseNodeType.PatternCapture:
+                break;
+        
+            case ParseNodeType.PatternMapping:
+                break;
+            case ParseNodeType.PatternMappingKeyEntry:
+                break;
+            case ParseNodeType.PatternMappingExpandEntry:
+                break;
+            case ParseNodeType.PatternValue:
+                break;
+            case ParseNodeType.PatternClassArgument:
+                break;
+            case ParseNodeType.TypeParameter:
+                break;
+            case ParseNodeType.TypeParameterList:
+                break;
+            case ParseNodeType.TypeAlias:
+                break;
+
+            default:
+                return this.assertUnreachable(node);
         }
-        this.symbolInformationForNode.add(symbol.value);
-
-        const display_name = this.displayNameForParseNode(node);
-
-        if (documentation) {
-            this.document.symbols.push(
-                new scip.SymbolInformation({
-                    symbol: symbol.value,
-                    documentation,
-                    display_name,
-                })
-            );
-
-            return;
-        }
-
-        const nodeFileInfo = getFileInfo(node)!;
-        const hoverResult = this.program.getHoverForPosition(
-            nodeFileInfo.filePath,
-            convertOffsetToPosition(node.start, nodeFileInfo.lines),
-            'markdown',
-            _cancellationToken
-        );
-
-        if (hoverResult) {
-            this.document.symbols.push(
-                new scip.SymbolInformation({
-                    symbol: symbol.value,
-                    documentation: _formatHover(hoverResult!),
-                    display_name,
-                })
-            );
-
-            return;
-        }
-
-        this._docstringWriter.walk(node);
-        const docstringFromWriter = this._docstringWriter.docstrings.get(node.id);
-
-        // Only write a new symbol if we actually have any useful documentation
-        // (which is not a guarantee from docstringWriter)
-        if (docstringFromWriter === undefined) {
-            return;
-        }
-
-        const docs = '```python\n' + docstringFromWriter.join('\n') + '\n```';
-        this.document.symbols.push(
-            new scip.SymbolInformation({
-                symbol: symbol.value,
-                documentation: [docs],
-                display_name,
-            })
-        );
+        return scip.SymbolInformation.Kind.UnspecifiedKind;
     }
 
     // this is copied from TypeEvaluator -> getAliasedSymbolTypeForName
