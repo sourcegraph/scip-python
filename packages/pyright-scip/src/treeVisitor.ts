@@ -1184,8 +1184,15 @@ export class TreeVisitor extends ParseTreeWalker {
                 }
                 
                 let symbol = null;
-                if (parent.nodeType === ParseNodeType.TypeAnnotation)
-                    symbol = this.getScipSymbol(enclosingSuite || parent);
+                if (parent.nodeType === ParseNodeType.TypeAnnotation) {
+                    const enclosingClass = ParseTreeUtils.getEnclosingClass(node, /* includeNested */ true);
+                    if (enclosingClass) {
+                        const classSymbol = this.getScipSymbol(enclosingClass);
+                        symbol = Symbols.makeTerm(classSymbol, node.value);
+                    } else {
+                        symbol = Symbols.makeTerm(this.getScipSymbol(enclosingSuite || parent), node.value);
+                    }
+                }                
                 else
                     symbol = Symbols.makeTerm(this.getScipSymbol(enclosingSuite || parent), (node as NameNode).value);
                 
