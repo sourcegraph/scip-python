@@ -1190,7 +1190,13 @@ export class TreeVisitor extends ParseTreeWalker {
                         const classSymbol = this.getScipSymbol(enclosingClass);
                         symbol = Symbols.makeTerm(classSymbol, node.value);
                     } else {
-                        symbol = Symbols.makeTerm(this.getScipSymbol(enclosingSuite || parent), node.value);
+                        const enclosingModule = ParseTreeUtils.getEnclosingModule(node);
+                        if (enclosingModule) {
+                            const moduleSymbol = this.getScipSymbol(enclosingModule);
+                            symbol = Symbols.makeTerm(moduleSymbol, node.value);
+                        } else {
+                            symbol = ScipSymbol.local(this.counter.next());
+                        }                
                     }
                 }                
                 else
