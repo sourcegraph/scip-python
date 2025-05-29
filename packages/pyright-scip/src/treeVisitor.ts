@@ -884,11 +884,27 @@ export class TreeVisitor extends ParseTreeWalker {
             throw `No parent for named node: ${node.token.value}`;
         }
 
+        // ── Class-field fast-path ──────────────────────────────────────────────
+        const cls = ParseTreeUtils.getEnclosingClass(node, /*includeNested*/ true);
+        if (cls && isClassFieldTarget(node)) {
+            console.log("Passed check");
+            const fieldSym = Symbols.makeTerm(this.getScipSymbol(cls), node.value);
+            console.log("fieldSym = ", fieldSym);
+            this.rawSetLsifSymbol(node, fieldSym, /*isLocal*/ true);  // seed cache
+            this.pushNewOccurrence(node, fieldSym, scip.SymbolRole.Definition);
+            return true;  // skip builtin fallback
+        }
+        // ───────────────────────────────────────────────────────────────────────
+
+
         if (node.token.value === '_') {
             return true;
         }
 
         const decls = this.evaluator.getDeclarationsForNameNode(node) || [];
+
+        if (node.value === "type")
+            console.log("Type - ", decls);
 
         if (decls.length === 0) {
             return this.emitNameWithoutDeclaration(node);
@@ -1759,4 +1775,21 @@ function isBuiltinModuleName(moduleName: string): boolean {
     }
 
     return false;
+}
+
+
+function isClassFieldTarget(n: NameNode): boolean {
+    const p = n.parent;
+    if (n.value === "type") {
+        console.log("Type Annotation - ", (p as TypeAnnotationNode).typeAnnotation);
+        console.log("Value Expression - ", (p as TypeAnnotationNode).valueExpression);
+    }
+    if (!p) return false;
+
+    return (
+        (p.nodeType === ParseNodeType.Assignment &&
+         (p as AssignmentNode).leftExpression === n) ||
+        (p.nodeType === ParseNodeType.TypeAnnotation &&
+         (p as TypeAnnotationNode).valueExpression === n)   // lhs of “name: T”
+    );
 }
