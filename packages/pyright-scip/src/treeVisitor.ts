@@ -255,6 +255,23 @@ export class TreeVisitor extends ParseTreeWalker {
 
     override visitClass(node: ClassNode): boolean {
         this._docstringWriter.visitClass(node);
+
+        const clsSym = this.getScipSymbol(node);
+        if (!this.symbolInformationForNode.has(clsSym.value)) {
+            const docs: string[] = [];
+    
+            const stub = this._docstringWriter.docstrings.get(node.id);
+            if (stub) docs.push("```python\n" + stub.join("\n") + "\n```");
+    
+            const doc = ParseTreeUtils.getDocString(node.suite.statements)?.trim();
+            if (doc) docs.push(convertDocStringToMarkdown(doc));
+    
+            this.document.symbols.push(
+                new scip.SymbolInformation({ symbol: clsSym.value, documentation: docs })
+            );
+            this.symbolInformationForNode.add(clsSym.value);
+        }
+        
         return true;
     }
 
