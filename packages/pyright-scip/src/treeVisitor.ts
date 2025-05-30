@@ -8,6 +8,8 @@ import { TextRange } from 'pyright-internal/common/textRange';
 import { TextRangeCollection } from 'pyright-internal/common/textRangeCollection';
 import {
     AssignmentNode,
+    CallNode,
+    MemberAccessNode,
     ClassNode,
     FunctionNode,
     ImportAsNode,
@@ -887,9 +889,7 @@ export class TreeVisitor extends ParseTreeWalker {
         // ── Class-field fast-path ──────────────────────────────────────────────
         const cls = ParseTreeUtils.getEnclosingClass(node, /*includeNested*/ true);
         if (cls && isClassFieldTarget(node)) {
-            console.log("Passed check");
             const fieldSym = Symbols.makeTerm(this.getScipSymbol(cls), node.value);
-            console.log("fieldSym = ", fieldSym);
             this.rawSetLsifSymbol(node, fieldSym, /*isLocal*/ true);  // seed cache
             this.pushNewOccurrence(node, fieldSym, scip.SymbolRole.Definition);
             return true;  // skip builtin fallback
@@ -918,6 +918,61 @@ export class TreeVisitor extends ParseTreeWalker {
         const decl = decls[0];
         return this.emitDeclaration(node, decl);
     }
+
+    override visitCall(node: CallNode): boolean {
+        // Walk the callee first so that any prerequisite symbols exist
+        this.walk(node.leftExpression);
+    
+        // ── Locate the token that names the class ───────────────
+        let classToken: NameNode | undefined;
+    
+        if (node.leftExpression.nodeType === ParseNodeType.Name) {
+            // Simple call:  Foo()
+            classToken = node.leftExpression as NameNode;
+    
+        } else if (node.leftExpression.nodeType === ParseNodeType.MemberAccess) {
+            // Qualified call:  pkg.mod.Foo()
+            classToken = (node.leftExpression as MemberAccessNode).memberName;
+        }
+    
+        // ── Resolve and emit the constructor reference ──────────
+        if (classToken) {
+            // Helpful debug logs
+            console.log(
+                "[visitCall] token =", classToken.value,
+                "at", this.fileInfo!.filePath, ":", classToken.start
+            );
+    
+            const decls =
+                this.evaluator.getDeclarationsForNameNode(classToken) || [];
+    
+            if (decls.length) {
+                const firstDecl = decls[0].node;
+                if (firstDecl?.nodeType === ParseNodeType.Class) {
+                    const classSym = this.getScipSymbol(firstDecl);
+                    const ctorSym  = Symbols.makeMethod(classSym, "__init__");
+    
+                    this.pushNewOccurrence(
+                        classToken,                    // highlight just “Server”
+                        ctorSym,
+                        scip.SymbolRole.ReadAccess     // it’s a reference
+                    );
+                } else {
+                    // Another good debug line
+                    console.log(
+                        "  ‣ declaration nodeType =",
+                        ParseTreeUtils.printParseNodeType(firstDecl?.nodeType)
+                    );
+                }
+            } else {
+                console.log("  ‣ no declarations found for", classToken.value);
+            }
+        }
+    
+        // Finally visit arguments
+        node.arguments.forEach(arg => this.walk(arg));
+        return false;   // we handled the children ourselves
+    }    
 
     private rawGetLsifSymbol(node: ParseNode): ScipSymbol | undefined {
         return this.globalSymbols.get(node.id) || this.documentSymbols.get(node.id);
