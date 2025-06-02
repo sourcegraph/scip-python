@@ -176,6 +176,12 @@ export class TreeVisitor extends ParseTreeWalker {
     public evaluator: TypeEvaluator;
     public program: Program;
 
+    /** Stack of variable-to-class mappings; one frame per scope. */
+    private readonly scopeVarTypes: Map<string, ScipSymbol>[] = [new Map()];
+    /** Convenience getter for the current (innermost) frame. */
+    private get varTypes() { return this.scopeVarTypes[this.scopeVarTypes.length - 1]; }
+    
+
     constructor(public config: TreeVisitorConfig) {
         super();
 
@@ -254,6 +260,10 @@ export class TreeVisitor extends ParseTreeWalker {
     }
 
     override visitClass(node: ClassNode): boolean {
+        // Before walking children, open a new type-map frame
+        const parentFrame = this.scopeVarTypes[this.scopeVarTypes.length - 1];
+        this.scopeVarTypes.push(new Map(parentFrame));   // shallow copy
+
         this._docstringWriter.visitClass(node);
 
         const clsSym = this.getScipSymbol(node);
@@ -272,6 +282,8 @@ export class TreeVisitor extends ParseTreeWalker {
             this.symbolInformationForNode.add(clsSym.value);
         }
         
+        // Close the frame we opened at the start of this scope
+        this.scopeVarTypes.pop();
         return true;
     }
 
@@ -348,6 +360,59 @@ export class TreeVisitor extends ParseTreeWalker {
                     );
                 }
             }
+        }
+
+        if (node.leftExpression.nodeType === ParseNodeType.MemberAccess &&
+            node.rightExpression?.nodeType === ParseNodeType.Call) {
+            const lhs      = node.leftExpression as MemberAccessNode;
+            const attrName = lhs.memberName.value;
+            
+            const calleeTok = (node.rightExpression as CallNode).leftExpression;
+            const calleeNm  =
+                calleeTok.nodeType === ParseNodeType.Name
+                    ? calleeTok as NameNode
+                    : calleeTok.nodeType === ParseNodeType.MemberAccess
+                            ? (calleeTok as MemberAccessNode).memberName
+                            : undefined;
+            
+            const classSym = calleeNm && this.resolveCtorClass(calleeNm);
+            if (classSym) {
+                // store mapping in the *enclosing* frame (i.e. the class scope)
+                const parentFrameIdx = this.scopeVarTypes.length - 2;
+                const targetFrame =
+                    parentFrameIdx >= 0 ? this.scopeVarTypes[parentFrameIdx]
+                                        : this.varTypes;
+                targetFrame.set(attrName, classSym);
+            }
+        }
+
+        if (node.leftExpression.nodeType === ParseNodeType.Name &&
+            node.rightExpression?.nodeType === ParseNodeType.Call) {
+            const varTok  = node.leftExpression  as NameNode;
+            const call    = node.rightExpression as CallNode;
+            
+            const calleeTok =
+                call.leftExpression.nodeType === ParseNodeType.Name
+                    ? call.leftExpression as NameNode
+                    : call.leftExpression.nodeType === ParseNodeType.MemberAccess
+                            ? (call.leftExpression as MemberAccessNode).memberName
+                            : undefined;
+            
+            const classSym = calleeTok && this.resolveCtorClass(calleeTok);
+            if (classSym) {
+                this.varTypes.set(varTok.value, classSym);
+            }
+        }
+
+        //---------------------------------------------------------------------
+        // ❷  *Optional* clean-up: if the assignment is NOT a constructor call,
+        //     remove any previous mapping so future member accesses don’t
+        //     pretend the variable is still a TTLDict (or whatever).
+        //---------------------------------------------------------------------
+        if (node.leftExpression.nodeType === ParseNodeType.Name &&
+            node.rightExpression?.nodeType !== ParseNodeType.Call) {
+
+            this.varTypes.delete((node.leftExpression as NameNode).value);
         }
 
         return true;
@@ -430,6 +495,9 @@ export class TreeVisitor extends ParseTreeWalker {
     }
 
     override visitFunction(node: FunctionNode): boolean {
+        // Before walking children, open a new type-map frame
+        const parentFrame = this.scopeVarTypes[this.scopeVarTypes.length - 1];
+        this.scopeVarTypes.push(new Map(parentFrame));   // shallow copy
         this._docstringWriter.visitFunction(node);
 
         // does this do return types?
@@ -488,6 +556,8 @@ export class TreeVisitor extends ParseTreeWalker {
         // Walk the function definition
         this.walk(node.suite);
 
+        // Close the frame we opened at the start of this scope
+        this.scopeVarTypes.pop();
         return false;
     }
 
@@ -882,15 +952,24 @@ export class TreeVisitor extends ParseTreeWalker {
                 softAssert(false, "I don't think that this should be possible");
                 break;
 
-            // Without a declaration, it doesn't seem useful to try and add member accesses
-            // with locals. You'll just get a new local for every reference because we can't construct
-            // what these are.
-            //
-            // In the future, it could be possible that we could store what locals we have generated for a file
-            // (for example `unknown_module.access`, and then use the same local for all of them, but it would be quite
-            // difficult in my mind).
-            case ParseNodeType.MemberAccess:
+            case ParseNodeType.MemberAccess: {
+                const ma = parent as MemberAccessNode;
+                const base = ma.leftExpression;
+            
+                // only handle "baseName.memberName"
+                if (base.nodeType === ParseNodeType.Name) {
+                    const baseSym = this.lookupVar(base.value);
+                    if (baseSym) {
+                        const methSym = Symbols.makeMethod(baseSym, node.value);
+                        this.pushNewOccurrence(node, methSym, scip.SymbolRole.ReadAccess);
+                        return true;
+                    }
+                }
+            
+                // fallback: old behaviour (local symbol)
+                this.pushNewOccurrence(node, this.getLocalForDeclaration(node));
                 return true;
+            }
         }
 
         log.debug('    NO DECL:', ParseTreeUtils.printParseNodeType, parent.nodeType);
@@ -902,6 +981,25 @@ export class TreeVisitor extends ParseTreeWalker {
         if (!node.parent) {
             throw `No parent for named node: ${node.token.value}`;
         }
+
+        if (node.parent.nodeType === ParseNodeType.MemberAccess) {
+            const ma   = node.parent as MemberAccessNode;
+            const base = ma.leftExpression;
+        
+            // a)  foo.set(...)      – base is Name
+            if (base.nodeType === ParseNodeType.Name) {
+                const baseSym = this.lookupVar(base.value);
+                if (baseSym) { this.emitMethod(node, baseSym); return true; }
+            }
+        
+            // b)  foo.bar.set(...)  – base is MemberAccess (take its *memberName*)
+            if (base.nodeType === ParseNodeType.MemberAccess) {
+                const attr = (base as MemberAccessNode).memberName;
+                const baseSym = this.lookupVar(attr.value);
+                if (baseSym) { this.emitMethod(node, baseSym); return true; }
+            }
+        }
+        
 
         // ── Class-field fast-path ──────────────────────────────────────────────
         const cls = ParseTreeUtils.getEnclosingClass(node, /*includeNested*/ true);
@@ -919,9 +1017,6 @@ export class TreeVisitor extends ParseTreeWalker {
         }
 
         const decls = this.evaluator.getDeclarationsForNameNode(node) || [];
-
-        if (node.value === "type")
-            console.log("Type - ", decls);
 
         if (decls.length === 0) {
             return this.emitNameWithoutDeclaration(node);
@@ -954,12 +1049,6 @@ export class TreeVisitor extends ParseTreeWalker {
     
         // ── Resolve and emit the constructor reference ──────────
         if (classToken) {
-            // Helpful debug logs
-            console.log(
-                "[visitCall] token =", classToken.value,
-                "at", this.fileInfo!.filePath, ":", classToken.start
-            );
-    
             const decls =
                 this.evaluator.getDeclarationsForNameNode(classToken) || [];
     
@@ -974,15 +1063,7 @@ export class TreeVisitor extends ParseTreeWalker {
                         ctorSym,
                         scip.SymbolRole.ReadAccess     // it’s a reference
                     );
-                } else {
-                    // Another good debug line
-                    console.log(
-                        "  ‣ declaration nodeType =",
-                        ParseTreeUtils.printParseNodeType(firstDecl?.nodeType)
-                    );
                 }
-            } else {
-                console.log("  ‣ no declarations found for", classToken.value);
             }
         }
     
@@ -1153,6 +1234,14 @@ export class TreeVisitor extends ParseTreeWalker {
 
         return this.makeScipSymbol(this.stdlibPackage, 'builtins', node);
     }
+
+    private lookupVar(name: string): ScipSymbol | undefined {
+        for (let i = this.scopeVarTypes.length - 1; i >= 0; i--) {
+            const hit = this.scopeVarTypes[i].get(name);
+            if (hit) return hit;
+        }
+        return undefined;
+    }    
 
     private makeScipSymbol(pythonPackage: PythonPackage, moduleName: string, node: ParseNode): ScipSymbol {
         switch (node.nodeType) {
@@ -1796,6 +1885,47 @@ export class TreeVisitor extends ParseTreeWalker {
         const symbol = finder();
         this.rawSetLsifSymbol(node, symbol, symbol.isLocal());
         return symbol;
+    }
+
+    private emitMethod(nameTok: NameNode, classSym: ScipSymbol) {
+        this.pushNewOccurrence(
+            nameTok,
+            Symbols.makeMethod(classSym, nameTok.value),
+            scip.SymbolRole.ReadAccess
+        );
+    }
+
+    /** Return the class-symbol that a constructor call token refers to,
+    *  resolving import aliases if necessary. */
+    private resolveCtorClass(tok: NameNode): ScipSymbol | undefined {
+        const decls = this.evaluator.getDeclarationsForNameNode(tok) || [];
+        if (!decls.length) return undefined;
+
+        let decl = decls[0];
+
+        // ── follow “from … import X” and other aliases ───────────────
+        if (isAliasDeclaration(decl)) {
+            const resolved =
+                this.evaluator.resolveAliasDeclaration(decl, /*exec*/ true, /*imported*/ true);
+            if (resolved) decl = resolved;
+        }
+
+        // a) we finally reached the real `class` definition
+        if (decl.node?.nodeType === ParseNodeType.Class) {
+            return this.getScipSymbol(decl.node);
+        }
+
+        // b) fallback: ask Pyright for the expression’s type
+        const info = this.evaluator.getTypeOfExpression(tok);
+        const t    = info?.type;
+        if (t && Types.isClass(t)) {
+            const pkg = this.getPackageInfo(tok, t.details.moduleName)
+                    ?? this.projectPackage;
+            return Symbols.makeClass(pkg,
+                                    t.details.moduleName,
+                                    t.details.name);
+        }
+        return undefined;
     }
 }
 
