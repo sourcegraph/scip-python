@@ -994,9 +994,14 @@ export class TreeVisitor extends ParseTreeWalker {
                 } else if (base.nodeType === ParseNodeType.MemberAccess) {
                     baseSym = this.lookupVar((base as MemberAccessNode).memberName.value);
                 }
-
+                
                 if (baseSym) {
-                    this.emitMethod(node, baseSym);
+                    const isCall = ma.parent?.nodeType === ParseNodeType.Call && (ma.parent as CallNode).leftExpression === ma;
+                    const sym = isCall
+                    ? Symbols.makeMethod(baseSym, node.value)
+                    : Symbols.makeTerm(baseSym, node.value);
+    
+                    this.pushNewOccurrence(node, sym, scip.SymbolRole.ReadAccess);
                     return true;
                 }
             }
@@ -1053,11 +1058,20 @@ export class TreeVisitor extends ParseTreeWalker {
         if (classToken) {
             const classSym = this.resolveCtorClass(classToken);
             if (classSym) {
-                const ctorSym = Symbols.makeMethod(classSym, "__init__");
                 this.pushNewOccurrence(
                     classToken,
-                    ctorSym,
+                    classSym,
                     scip.SymbolRole.ReadAccess
+                );
+
+                const ctorSym = Symbols.makeMethod(classSym, "__init__");
+                this.document.occurrences.push(
+                    new scip.Occurrence({
+                        symbol_roles: scip.SymbolRole.ReadAccess,
+                        symbol: ctorSym.value,
+                        range: zeroWidthAfter(classToken, this.fileInfo!.lines).toLsif(),
+                        enclosing_range: parseNodeToRange(node, this.fileInfo!.lines).toLsif()
+                    })
                 );
             }
         }
@@ -1988,5 +2002,14 @@ function isClassFieldTarget(n: NameNode): boolean {
          (p as AssignmentNode).leftExpression === n) ||
         (p.nodeType === ParseNodeType.TypeAnnotation &&
          (p as TypeAnnotationNode).valueExpression === n)   // lhs of “name: T”
+    );
+}
+
+function zeroWidthAfter(tok: NameNode,
+    lines: TextRangeCollection<TextRange>): Range {
+    const pos = convertOffsetToPosition(tok.start + tok.length, lines);
+    return new Range(
+        /*start*/ new Position(pos.line, pos.character),
+        /*end  */ new Position(pos.line, pos.character)   // zero-length
     );
 }
