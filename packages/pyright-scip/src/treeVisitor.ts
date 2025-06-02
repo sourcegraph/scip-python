@@ -984,19 +984,21 @@ export class TreeVisitor extends ParseTreeWalker {
 
         if (node.parent.nodeType === ParseNodeType.MemberAccess) {
             const ma   = node.parent as MemberAccessNode;
-            const base = ma.leftExpression;
-        
-            // a)  foo.set(...)      – base is Name
-            if (base.nodeType === ParseNodeType.Name) {
-                const baseSym = this.lookupVar(base.value);
-                if (baseSym) { this.emitMethod(node, baseSym); return true; }
-            }
-        
-            // b)  foo.bar.set(...)  – base is MemberAccess (take its *memberName*)
-            if (base.nodeType === ParseNodeType.MemberAccess) {
-                const attr = (base as MemberAccessNode).memberName;
-                const baseSym = this.lookupVar(attr.value);
-                if (baseSym) { this.emitMethod(node, baseSym); return true; }
+            
+            if (node === ma.memberName) {
+                const base = ma.leftExpression;
+                let baseSym: ScipSymbol | undefined;
+
+                if (base.nodeType === ParseNodeType.Name) {
+                    baseSym = this.lookupVar((base as NameNode).value);
+                } else if (base.nodeType === ParseNodeType.MemberAccess) {
+                    baseSym = this.lookupVar((base as MemberAccessNode).memberName.value);
+                }
+
+                if (baseSym) {
+                    this.emitMethod(node, baseSym);
+                    return true;
+                }
             }
         }
         
