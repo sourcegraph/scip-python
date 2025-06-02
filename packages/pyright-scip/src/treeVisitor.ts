@@ -1049,21 +1049,14 @@ export class TreeVisitor extends ParseTreeWalker {
     
         // ── Resolve and emit the constructor reference ──────────
         if (classToken) {
-            const decls =
-                this.evaluator.getDeclarationsForNameNode(classToken) || [];
-    
-            if (decls.length) {
-                const firstDecl = decls[0].node;
-                if (firstDecl?.nodeType === ParseNodeType.Class) {
-                    const classSym = this.getScipSymbol(firstDecl);
-                    const ctorSym  = Symbols.makeMethod(classSym, "__init__");
-    
-                    this.pushNewOccurrence(
-                        classToken,                    // highlight just “Server”
-                        ctorSym,
-                        scip.SymbolRole.ReadAccess     // it’s a reference
-                    );
-                }
+            const classSym = this.resolveCtorClass(classToken);
+            if (classSym) {
+                const ctorSym = Symbols.makeMethod(classSym, "__init__");
+                this.pushNewOccurrence(
+                    classToken,
+                    ctorSym,
+                    scip.SymbolRole.ReadAccess
+                );
             }
         }
     
