@@ -219,12 +219,21 @@ export class Indexer {
         let externalSymbols: Map<string, scip.SymbolInformation> = new Map();
         withStatus('Parse and emit SCIP', (progress) => {
             const typeEvaluator = this.program.evaluator!;
+            function getLanguage(filepath: string): string {
+                if (filepath.endsWith('.py') || filepath.endsWith('.pyi')) {
+                    return 'Python';
+                }
+                return '';
+            }
             projectSourceFiles.forEach((sourceFile, index) => {
                 progress.progress(`(${index}/${projectSourceFiles.length}): ${sourceFile.getFilePath()}`);
 
                 const filepath = sourceFile.getFilePath();
                 let doc = new scip.Document({
                     relative_path: path.relative(this.getProjectRoot(), filepath),
+                    language: getLanguage(filepath),
+                    // UTF-16 as it's a JS based indexer
+                    position_encoding: scip.PositionEncoding.UTF16CodeUnitOffsetFromLineStart
                 });
 
                 const parseResults = sourceFile.getParseResults();
