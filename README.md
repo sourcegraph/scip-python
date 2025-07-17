@@ -29,6 +29,8 @@ $ #     more information at https://github.com/sourcegraph/src-cli
 $ src code-intel upload
 ```
 
+If you hit an out-of-memory error, increase the memory limit using the environment variable `NODE_OPTIONS="--max-old-space-size=8192"` to increase the heap size limit to 8GB (or higher, if needed).
+
 ### target-only
 
 To run scip-python over only a particular directory, you can use the `--target-only` flag. Example:
