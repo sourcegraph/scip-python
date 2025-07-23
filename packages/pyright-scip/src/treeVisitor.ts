@@ -377,7 +377,10 @@ export class TreeVisitor extends ParseTreeWalker {
                 continue;
             }
 
-            let decl = parentMethodType.details.declaration!;
+            let decl = parentMethodType.details.declaration;
+            if (!decl || !decl.node) {
+                continue;
+            }
             let symbol = this.typeToSymbol(decl.node.name, decl.node, parentMethodType);
             relationshipMap.set(
                 symbol.value,
@@ -1055,6 +1058,9 @@ export class TreeVisitor extends ParseTreeWalker {
                 if (moduleName === 'builtins') {
                     return Symbols.makeModule(this.stdlibPackage, 'builtins');
                 } else {
+                    if (!pythonPackage) {
+                        return ScipSymbol.local(this.counter.next());
+                    }
                     return Symbols.makeModule(pythonPackage, moduleName);
                 }
             }
@@ -1128,7 +1134,10 @@ export class TreeVisitor extends ParseTreeWalker {
                                 const bound = typeVar.details.boundType! as ClassType;
 
                                 return this.getSymbolOnce(node, () => {
-                                    const pythonPackage = this.getPackageInfo(node, bound.details.moduleName)!;
+                                    const pythonPackage = this.getPackageInfo(node, bound.details.moduleName);
+                                    if (!pythonPackage) {
+                                        return ScipSymbol.local(this.counter.next());
+                                    }
                                     let symbol = Symbols.makeTerm(
                                         Symbols.makeType(
                                             Symbols.makeModule(pythonPackage, bound.details.moduleName),
@@ -1340,10 +1349,16 @@ export class TreeVisitor extends ParseTreeWalker {
 
                 return ScipSymbol.local(this.counter.next());
             } else {
+                if (!pythonPackage) {
+                    return ScipSymbol.local(this.counter.next());
+                }
                 return Symbols.makeMethod(Symbols.makeModule(pythonPackage, typeObj.details.moduleName), node.value);
             }
         } else if (Types.isClass(typeObj)) {
-            const pythonPackage = this.getPackageInfo(node, typeObj.details.moduleName)!;
+            const pythonPackage = this.getPackageInfo(node, typeObj.details.moduleName);
+            if (!pythonPackage) {
+                return ScipSymbol.local(this.counter.next());
+            }
             return Symbols.makeClass(pythonPackage, typeObj.details.moduleName, node.value);
         } else if (Types.isClassInstance(typeObj)) {
             typeObj = typeObj as ClassType;
@@ -1352,7 +1367,10 @@ export class TreeVisitor extends ParseTreeWalker {
         } else if (Types.isTypeVar(typeObj)) {
             throw 'typevar';
         } else if (Types.isModule(typeObj)) {
-            const pythonPackage = this.getPackageInfo(node, typeObj.moduleName)!;
+            const pythonPackage = this.getPackageInfo(node, typeObj.moduleName);
+            if (!pythonPackage) {
+                return ScipSymbol.local(this.counter.next());
+            }
             return Symbols.makeModuleInit(pythonPackage, typeObj.moduleName);
         } else if (Types.isOverloadedFunction(typeObj)) {
             if (!typeObj.overloads) {
