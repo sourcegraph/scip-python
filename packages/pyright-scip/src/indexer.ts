@@ -9,6 +9,7 @@ import { createFromRealFileSystem } from 'pyright-internal/common/realFileSystem
 import { ConfigOptions } from 'pyright-internal/common/configOptions';
 import { TreeVisitor } from './treeVisitor';
 import { FullAccessHost } from 'pyright-internal/common/fullAccessHost';
+import { normalizePathCase } from 'pyright-internal/common/pathUtils';
 import * as url from 'url';
 import { ScipConfig } from './lib';
 import { SourceFile } from 'pyright-internal/analyzer/sourceFile';
@@ -122,7 +123,9 @@ export class Indexer {
         this.importResolver = new ImportResolver(fs, this.pyrightConfig, host);
 
         this.program = new Program(this.importResolver, this.pyrightConfig);
-        this.program.setTrackedFiles([...this.projectFiles]);
+        // Normalize paths to ensure consistency with other code paths.
+        const normalizedProjectFiles = [...this.projectFiles].map((path: string) => normalizePathCase(fs, path));
+        this.program.setTrackedFiles(normalizedProjectFiles);
 
         if (scipConfig.projectNamespace) {
             setProjectNamespace(scipConfig.projectName, this.scipConfig.projectNamespace!);
