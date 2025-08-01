@@ -293,7 +293,9 @@ export class Program {
         }
 
         // Add the new files. Only the new items will be added.
-        this.addTrackedFiles(filePaths);
+        // Normalize paths to ensure consistency with other code paths.
+        const normalizedFilePaths = filePaths.map(path => normalizePathCase(this._fs, path));
+        this.addTrackedFiles(normalizedFilePaths);
 
         return this._removeUnneededFiles();
     }
