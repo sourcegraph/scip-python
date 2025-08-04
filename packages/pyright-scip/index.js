@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env node --enable-source-maps
 /* eslint-disable @typescript-eslint/ban-ts-comment */
 // @ts-nocheck
 

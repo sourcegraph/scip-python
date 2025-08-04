@@ -31,7 +31,9 @@ module.exports = (_, { mode }) => {
                 mode === 'development' ? '../[resource-path]' : monorepoResourceNameMapper('scip-python'),
             clean: true,
         },
-        devtool: mode === 'development' ? 'inline-source-map' : 'nosources-source-map',
+        // NOTE: Other settings for this value seem to show stack traces
+        // with mangled symbols that are not useful. Modify with care.
+        devtool: 'source-map',
         stats: {
             all: false,
             errors: true,
