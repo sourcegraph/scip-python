@@ -64,7 +64,7 @@ in `packages/pyright-scip` which can be invoked with Node
 to index a test project.
 
 ```
-node --enable-source-maps ./index.js <other args>
+node ./index.js <other args>
 ```
 
 ### Running tests
@@ -72,8 +72,6 @@ node --enable-source-maps ./index.js <other args>
 ```bash
 npm run check-snapshots
 ```
-
-**WARNING:** At the moment, there are [some known test failures on macOS](https://github.com/sourcegraph/scip-python/issues/91).
 
 Using a different Python version other than the one specified
 in `.tool-versions` may also lead to errors.
