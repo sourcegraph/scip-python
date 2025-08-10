@@ -19,6 +19,7 @@ import {
     ParameterCategory,
     ParameterNode,
     ParseNodeType,
+    TypeAnnotationNode,
 } from 'pyright-internal/parser/parseNodes';
 import * as TypeUtils from 'pyright-internal/analyzer/typeUtils';
 import * as ParseTreeUtils from 'pyright-internal/analyzer/parseTreeUtils';
@@ -139,6 +140,62 @@ export class TypeStubExtendedWriter extends TypeStubWriter {
         }
 
         this.docstrings.set(node.id, [line]);
+
+        return true;
+    }
+
+    override visitTypeAnnotation(node: TypeAnnotationNode): boolean {
+        let isTypeAlias = false;
+        let line = '';
+
+        // Handle cases where left expression is a simple name assignment (e.g., "a = 1").
+        if (node.valueExpression.nodeType === ParseNodeType.Name && node.parent?.nodeType === ParseNodeType.Assignment) {
+            // TODO: Handle "__all__" as a special case.
+            // if (leftExpr.value === '__all__') {
+            //     if (this._functionNestCount === 0 && this._ifNestCount === 0) {
+            //         this._emittedSuite = true;
+            //
+            //         line = this._printExpression(leftExpr);
+            //         line += ' = ';
+            //         line += this._printExpression(node.rightExpression);
+            //         this._emitLine(line);
+            //     }
+            //
+            //     return false;
+            // }
+
+            const valueType = this.evaluator.getType(node.valueExpression);
+
+            if (node.parent.typeAnnotationComment) {
+                line += this._printExpression(node.parent.typeAnnotationComment, /* treatStringsAsSymbols */ true);
+            } else if (valueType) {
+                line += TypeUtils.getFullNameOfType(valueType);
+            }
+
+            if (valueType?.typeAliasInfo) {
+                isTypeAlias = true;
+            } else if (node.parent.rightExpression.nodeType === ParseNodeType.Call) {
+                // Special-case TypeVar, TypeVarTuple, ParamSpec and NewType calls.
+                // Treat them like type aliases.
+                const callBaseType = this.evaluator.getType(node.parent.rightExpression.leftExpression);
+                if (
+                    callBaseType &&
+                    isInstantiableClass(callBaseType) &&
+                    ClassType.isBuiltIn(callBaseType, ['TypeVar', 'TypeVarTuple', 'ParamSpec', 'NewType'])
+                ) {
+                    isTypeAlias = true;
+                }
+            }
+
+            if (line && isTypeAlias) {
+                line += ' = ';
+                line += this._printExpression(node.parent.rightExpression);
+            }
+        }
+
+        if (line) {
+            this.docstrings.set(node.id, [line]);
+        }
 
         return true;
     }

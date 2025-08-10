@@ -12,6 +12,7 @@
         "build": "tsc",
         "clean": "shx rm -rf ./dist ./out",
         "test": "jest --forceExit",
+        "typecheck": "tsc --noEmit",
         "test:coverage": "jest --forceExit --reporters=jest-junit --reporters=default --coverage --coverageReporters=cobertura --coverageReporters=html --coverageReporters=json"
     },
     "dependencies": {

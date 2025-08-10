@@ -8,6 +8,8 @@ import { TextRange } from 'pyright-internal/common/textRange';
 import { TextRangeCollection } from 'pyright-internal/common/textRangeCollection';
 import {
     AssignmentNode,
+    CallNode,
+    MemberAccessNode,
     ClassNode,
     FunctionNode,
     ImportAsNode,
@@ -253,6 +255,23 @@ export class TreeVisitor extends ParseTreeWalker {
 
     override visitClass(node: ClassNode): boolean {
         this._docstringWriter.visitClass(node);
+
+        const clsSym = this.getScipSymbol(node);
+        if (!this.symbolInformationForNode.has(clsSym.value)) {
+            const docs: string[] = [];
+    
+            const stub = this._docstringWriter.docstrings.get(node.id);
+            if (stub) docs.push("```python\n" + stub.join("\n") + "\n```");
+    
+            const doc = ParseTreeUtils.getDocString(node.suite.statements)?.trim();
+            if (doc) docs.push(convertDocStringToMarkdown(doc));
+    
+            this.document.symbols.push(
+                new scip.SymbolInformation({ symbol: clsSym.value, documentation: docs })
+            );
+            this.symbolInformationForNode.add(clsSym.value);
+        }
+        
         return true;
     }
 
@@ -277,6 +296,24 @@ export class TreeVisitor extends ParseTreeWalker {
                 new scip.SymbolInformation({
                     symbol: this.getScipSymbol(node).value,
                     documentation: _formatHover(hoverResult!),
+                })
+            );
+        } 
+        else if (node.parent?.nodeType == ParseNodeType.Assignment && node.valueExpression.nodeType === ParseNodeType.Name) {
+            this._docstringWriter.visitTypeAnnotation(node);
+
+            let documentation = [];
+
+            let assignmentDoc = this._docstringWriter.docstrings.get(node.id);
+            if (assignmentDoc) {
+                documentation.push('```python\n' + assignmentDoc.join('\n') + '\n```');
+            }
+
+            // node.typeAnnotationComment
+            this.document.symbols.push(
+                new scip.SymbolInformation({
+                    symbol: this.getScipSymbol(node).value,
+                    documentation,
                 })
             );
         }
@@ -866,11 +903,25 @@ export class TreeVisitor extends ParseTreeWalker {
             throw `No parent for named node: ${node.token.value}`;
         }
 
+        // ── Class-field fast-path ──────────────────────────────────────────────
+        const cls = ParseTreeUtils.getEnclosingClass(node, /*includeNested*/ true);
+        if (cls && isClassFieldTarget(node)) {
+            const fieldSym = Symbols.makeTerm(this.getScipSymbol(cls), node.value);
+            this.rawSetLsifSymbol(node, fieldSym, /*isLocal*/ true);  // seed cache
+            this.pushNewOccurrence(node, fieldSym, scip.SymbolRole.Definition);
+            return true;  // skip builtin fallback
+        }
+        // ───────────────────────────────────────────────────────────────────────
+
+
         if (node.token.value === '_') {
             return true;
         }
 
         const decls = this.evaluator.getDeclarationsForNameNode(node) || [];
+
+        if (node.value === "type")
+            console.log("Type - ", decls);
 
         if (decls.length === 0) {
             return this.emitNameWithoutDeclaration(node);
@@ -884,6 +935,61 @@ export class TreeVisitor extends ParseTreeWalker {
         const decl = decls[0];
         return this.emitDeclaration(node, decl);
     }
+
+    override visitCall(node: CallNode): boolean {
+        // Walk the callee first so that any prerequisite symbols exist
+        this.walk(node.leftExpression);
+    
+        // ── Locate the token that names the class ───────────────
+        let classToken: NameNode | undefined;
+    
+        if (node.leftExpression.nodeType === ParseNodeType.Name) {
+            // Simple call:  Foo()
+            classToken = node.leftExpression as NameNode;
+    
+        } else if (node.leftExpression.nodeType === ParseNodeType.MemberAccess) {
+            // Qualified call:  pkg.mod.Foo()
+            classToken = (node.leftExpression as MemberAccessNode).memberName;
+        }
+    
+        // ── Resolve and emit the constructor reference ──────────
+        if (classToken) {
+            // Helpful debug logs
+            console.log(
+                "[visitCall] token =", classToken.value,
+                "at", this.fileInfo!.filePath, ":", classToken.start
+            );
+    
+            const decls =
+                this.evaluator.getDeclarationsForNameNode(classToken) || [];
+    
+            if (decls.length) {
+                const firstDecl = decls[0].node;
+                if (firstDecl?.nodeType === ParseNodeType.Class) {
+                    const classSym = this.getScipSymbol(firstDecl);
+                    const ctorSym  = Symbols.makeMethod(classSym, "__init__");
+    
+                    this.pushNewOccurrence(
+                        classToken,                    // highlight just “Server”
+                        ctorSym,
+                        scip.SymbolRole.ReadAccess     // it’s a reference
+                    );
+                } else {
+                    // Another good debug line
+                    console.log(
+                        "  ‣ declaration nodeType =",
+                        ParseTreeUtils.printParseNodeType(firstDecl?.nodeType)
+                    );
+                }
+            } else {
+                console.log("  ‣ no declarations found for", classToken.value);
+            }
+        }
+    
+        // Finally visit arguments
+        node.arguments.forEach(arg => this.walk(arg));
+        return false;   // we handled the children ourselves
+    }    
 
     private rawGetLsifSymbol(node: ParseNode): ScipSymbol | undefined {
         return this.globalSymbols.get(node.id) || this.documentSymbols.get(node.id);
@@ -1164,8 +1270,27 @@ export class TreeVisitor extends ParseTreeWalker {
                         return ScipSymbol.local(this.counter.next());
                     }
                 }
-
-                return Symbols.makeTerm(this.getScipSymbol(enclosingSuite || parent), (node as NameNode).value);
+                
+                let symbol = null;
+                if (parent.nodeType === ParseNodeType.TypeAnnotation) {
+                    const enclosingClass = ParseTreeUtils.getEnclosingClass(node, /* includeNested */ true);
+                    if (enclosingClass) {
+                        const classSymbol = this.getScipSymbol(enclosingClass);
+                        symbol = Symbols.makeTerm(classSymbol, node.value);
+                    } else {
+                        const enclosingModule = ParseTreeUtils.getEnclosingModule(node);
+                        if (enclosingModule) {
+                            const moduleSymbol = this.getScipSymbol(enclosingModule);
+                            symbol = Symbols.makeTerm(moduleSymbol, node.value);
+                        } else {
+                            symbol = ScipSymbol.local(this.counter.next());
+                        }                
+                    }
+                }                
+                else
+                    symbol = Symbols.makeTerm(this.getScipSymbol(enclosingSuite || parent), (node as NameNode).value);
+                
+                return symbol;
             }
             case ParseNodeType.TypeAnnotation: {
                 switch (node.valueExpression.nodeType) {
@@ -1722,4 +1847,21 @@ function isBuiltinModuleName(moduleName: string): boolean {
     }
 
     return false;
+}
+
+
+function isClassFieldTarget(n: NameNode): boolean {
+    const p = n.parent;
+    if (n.value === "type") {
+        console.log("Type Annotation - ", (p as TypeAnnotationNode).typeAnnotation);
+        console.log("Value Expression - ", (p as TypeAnnotationNode).valueExpression);
+    }
+    if (!p) return false;
+
+    return (
+        (p.nodeType === ParseNodeType.Assignment &&
+         (p as AssignmentNode).leftExpression === n) ||
+        (p.nodeType === ParseNodeType.TypeAnnotation &&
+         (p as TypeAnnotationNode).valueExpression === n)   // lhs of “name: T”
+    );
 }
