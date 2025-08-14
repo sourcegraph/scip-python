@@ -17,6 +17,7 @@ import {
 } from 'pyright-internal/common/pathUtils';
 import { PyrightFileSystem } from 'pyright-internal/pyrightFileSystem';
 import { ScipConfig } from './lib';
+import { sendStatus } from './status';
 
 const configFileNames = ['scip-pyrightconfig.json', 'pyrightconfig.json'];
 const pyprojectTomlName = 'pyproject.toml';
@@ -26,6 +27,8 @@ export class ScipPyrightConfig {
     _configFilePath: string | undefined;
     _configOptions: ConfigOptions;
 
+    // Use this for debug logging only. For sending user messages, use sendStatus.
+    // Some old code does not respect this.
     _console: Console = console;
     _typeCheckingMode = 'basic';
 
@@ -100,7 +103,7 @@ export class ScipPyrightConfig {
             if (configFilePath) {
                 projectRoot = getDirectoryPath(configFilePath);
             } else {
-                this._console.log(`No configuration file found.`);
+                sendStatus(`No configuration file found.`);
                 configFilePath = undefined;
             }
         }
@@ -115,9 +118,9 @@ export class ScipPyrightConfig {
 
             if (pyprojectFilePath) {
                 projectRoot = getDirectoryPath(pyprojectFilePath);
-                this._console.log(`pyproject.toml file found at ${projectRoot}.`);
+                sendStatus(`pyproject.toml file found at ${projectRoot}.`);
             } else {
-                this._console.log(`No pyproject.toml file found.`);
+                sendStatus(`No pyproject.toml file found.`);
             }
         }
 
@@ -180,7 +183,7 @@ export class ScipPyrightConfig {
             this._console.info(`Loading configuration file at ${configFilePath}`);
             configJsonObj = this._parseJsonConfigFile(configFilePath);
         } else if (pyprojectFilePath) {
-            this._console.info(`Loading pyproject.toml file at ${pyprojectFilePath}`);
+            sendStatus(`Loading pyproject.toml file at ${pyprojectFilePath}`);
             configJsonObj = this._parsePyprojectTomlFile(pyprojectFilePath);
         }
 

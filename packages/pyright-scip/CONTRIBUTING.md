@@ -73,8 +73,31 @@ node ./index.js <other args>
 npm run check-snapshots
 ```
 
+#### Filter specific snapshot tests
+
+Use the `--filter-tests` flag to run only specific snapshot tests:
+```bash
+# Using npm scripts (note the -- to pass arguments)
+npm run check-snapshots -- --filter-tests test1,test2,test3
+```
+
+Available snapshot tests can be found in `snapshots/input/`.
+
 Using a different Python version other than the one specified
 in `.tool-versions` may also lead to errors.
+
+## Making changes to Pyright internals
+
+When modifying code in the `pyright-internal` package:
+
+1. Keep changes minimal: Every change introduces a risk of
+   merge conflicts. Adding doc comments is fine, but avoid
+   changing functionality if possible. Instead of changing
+   access modifiers, prefer copying small functions into
+   scip-pyright logic.
+2. Use a `NOTE(scip-python):` prefix when adding comments to
+   make it clearer which comments were added by upstream
+   maintainers vs us.
 
 ## Publishing releases
 

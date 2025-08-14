@@ -310,10 +310,10 @@ export function writeSnapshot(outputPath: string, obtained: string): void {
     fs.writeFileSync(outputPath, obtained, { flag: 'w' });
 }
 
-export function diffSnapshot(outputPath: string, obtained: string): void {
+export function diffSnapshot(outputPath: string, obtained: string): 'equal' | 'different' {
     let existing = fs.readFileSync(outputPath, { encoding: 'utf8' });
     if (obtained === existing) {
-        return;
+        return 'equal';
     }
 
     console.error(
@@ -326,7 +326,7 @@ export function diffSnapshot(outputPath: string, obtained: string): void {
             '(what the current code produces). Run the command "npm run update-snapshots" to accept the new behavior.'
         )
     );
-    exit(1);
+    return 'different';
 }
 
 function occurrencesByLine(a: scip.Occurrence, b: scip.Occurrence): number {

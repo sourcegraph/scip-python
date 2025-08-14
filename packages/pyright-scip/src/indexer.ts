@@ -117,15 +117,15 @@ export class Indexer {
             this.projectFiles = targetFiles;
         }
 
-        console.log('Total Project Files', this.projectFiles.size);
+        sendStatus(`Total Project Files ${this.projectFiles.size}`);
 
         const host = new FullAccessHost(fs);
         this.importResolver = new ImportResolver(fs, this.pyrightConfig, host);
 
         this.program = new Program(this.importResolver, this.pyrightConfig);
-        // Normalize paths to ensure consistency with other code paths.
-        const normalizedProjectFiles = [...this.projectFiles].map((path: string) => normalizePathCase(fs, path));
-        this.program.setTrackedFiles(normalizedProjectFiles);
+        // setTrackedFiles internally handles path normalization, so we don't normalize
+        // paths here.
+        this.program.setTrackedFiles([...this.projectFiles]);
 
         if (scipConfig.projectNamespace) {
             setProjectNamespace(scipConfig.projectName, this.scipConfig.projectNamespace!);
@@ -194,7 +194,9 @@ export class Indexer {
         let projectSourceFiles: SourceFile[] = [];
         withStatus('Index workspace and track project files', () => {
             this.program.indexWorkspace((filepath: string) => {
-                // Filter out filepaths not part of this project
+                // Do not index files outside the project because SCIP doesn't support it.
+                //
+                // Both filepath and this.scipConfig.projectRoot are NOT normalized.
                 if (filepath.indexOf(this.scipConfig.projectRoot) != 0) {
                     return;
                 }
@@ -204,6 +206,7 @@ export class Indexer {
 
                 let requestsImport = sourceFile.getImports();
                 requestsImport.forEach((entry) =>
+                    // entry.resolvedPaths are all normalized.
                     entry.resolvedPaths.forEach((value) => {
                         this.program.addTrackedFile(value, true, false);
                     })

@@ -10,7 +10,8 @@ import { sendStatus, setQuiet, setShowProgressRateLimit } from './status';
 import { Indexer } from './indexer';
 import { exit } from 'process';
 
-function indexAction(options: IndexOptions): void {
+
+export function indexAction(options: IndexOptions): void {
     setQuiet(options.quiet);
     if (options.showProgressRateLimit !== undefined) {
         setShowProgressRateLimit(options.showProgressRateLimit);
@@ -91,6 +92,8 @@ function snapshotAction(snapshotRoot: string, options: SnapshotOptions): void {
 
         const scipIndexPath = path.join(projectRoot, options.output);
         const scipIndex = scip.Index.deserializeBinary(fs.readFileSync(scipIndexPath));
+
+        let hasDiff = false;
         for (const doc of scipIndex.documents) {
             if (doc.relative_path.startsWith('..')) {
                 continue;
@@ -103,10 +106,14 @@ function snapshotAction(snapshotRoot: string, options: SnapshotOptions): void {
             const outputPath = path.resolve(outputDirectory, snapshotDir, relativeToInputDirectory);
 
             if (options.check) {
-                diffSnapshot(outputPath, obtained);
+                const diffResult = diffSnapshot(outputPath, obtained);
+                hasDiff = hasDiff || diffResult === 'different';
             } else {
                 writeSnapshot(outputPath, obtained);
             }
+        }
+        if (hasDiff) {
+            exit(1);
         }
     }
 }

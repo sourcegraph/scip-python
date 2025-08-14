@@ -54,6 +54,10 @@ import { HoverResults } from 'pyright-internal/languageService/hoverProvider';
 import { convertDocStringToMarkdown } from 'pyright-internal/analyzer/docStringConversion';
 import { assert } from 'pyright-internal/common/debug';
 import { getClassFieldsRecursive } from 'pyright-internal/analyzer/typeUtils';
+import {createFromFileSystem} from "pyright-internal/tests/harness/vfs/factory";
+import {PyrightFileSystem} from "pyright-internal/pyrightFileSystem";
+import {createFromRealFileSystem} from "pyright-internal/common/realFileSystem";
+import {normalizePathCase} from "pyright-internal/common/pathUtils";
 
 //  Useful functions for later, but haven't gotten far enough yet to use them.
 //      extractParameterDocumentation
@@ -500,16 +504,26 @@ export class TreeVisitor extends ParseTreeWalker {
     override visitImportAs(node: ImportAsNode): boolean {
         const moduleName = _formatModuleName(node.module);
         const importInfo = getImportInfo(node.module);
+
         if (
             importInfo &&
             importInfo.resolvedPaths[0] &&
-            path.resolve(importInfo.resolvedPaths[0]).startsWith(this.cwd)
+            ((): boolean => {
+                // HACK(id: inconsistent-casing-of-resolved-paths):
+                // Sometimes the resolvedPath is normalized and sometimes it is not.
+                // If we remove one of the two checks below, existing tests start failing
+                // (aliased_import and nested_items tests). So do both checks.
+                const resolvedPath = path.resolve(importInfo.resolvedPaths[0])
+                return resolvedPath.startsWith(this.cwd) ||
+                    resolvedPath.startsWith(
+                        normalizePathCase(new PyrightFileSystem(createFromRealFileSystem()), this.cwd))
+            })()
         ) {
             const symbol = Symbols.makeModuleInit(this.projectPackage, moduleName);
+
             this.pushNewOccurrence(node.module, symbol);
         } else {
             const pythonPackage = this.moduleNameNodeToPythonPackage(node.module);
-
             if (pythonPackage) {
                 const symbol = Symbols.makeModuleInit(pythonPackage, moduleName);
                 this.pushNewOccurrence(node.module, symbol);
@@ -1417,6 +1431,10 @@ export class TreeVisitor extends ParseTreeWalker {
 
         // TODO: Should use files from the package to determine this -- should be able to do that quite easily.
         if (nodeFilePath.startsWith(this.cwd)) {
+            // NOTE: Unlike other code paths where we have
+            // HACK(id: inconsistent-casing-of-resolved-paths),
+            // here, nodeFilePath seems to never be normalized,
+            // so avoid a separate check.
             return this.projectPackage;
         }
 
@@ -1636,7 +1654,12 @@ export class TreeVisitor extends ParseTreeWalker {
         if (declPath && declPath.length !== 0) {
             const p = path.resolve(declPath);
 
-            if (p.startsWith(this.cwd)) {
+            // HACK(id: inconsistent-casing-of-resolved-paths):
+            // On a case-insensitive filesystem, p can sometimes be fully lowercased
+            // (e.g. see the nested_items test), and sometimes it may have uppercase
+            // characters (e.g. the unique test).
+            if (p.startsWith(this.cwd) ||
+                p.startsWith(normalizePathCase(new PyrightFileSystem(createFromRealFileSystem()), this.cwd))) {
                 return this.projectPackage;
             }
         }

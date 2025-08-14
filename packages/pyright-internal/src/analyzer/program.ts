@@ -331,7 +331,15 @@ export class Program {
 
     addTrackedFile(filePath: string, isThirdPartyImport = false, isInPyTypedPackage = false): SourceFile {
         let sourceFileInfo = this.getSourceFileInfo(filePath);
-        const importName = this._getImportNameForFile(filePath);
+        let importName = this._getImportNameForFile(filePath);
+        // HACK(scip-python): When adding tracked files for imports, we end up passing
+        // normalized paths as the argument. However, _getImportNameForFile seemingly
+        // needs a non-normalized path, which cannot be recovered directly from a
+        // normalized path. However, in practice, the non-normalized path seems to
+        // be stored on the sourceFileInfo, so attempt to use that instead.
+        if (importName === '' && sourceFileInfo) {
+            importName = this._getImportNameForFile(sourceFileInfo.sourceFile.getFilePath());
+        }
 
         if (sourceFileInfo) {
             // The module name may have changed based on updates to the
