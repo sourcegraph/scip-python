@@ -41,6 +41,6 @@ jobs:
             exit 1
           fi
       - run: npm install
-      - run: cd ./packages/pyright-scip/ && npm install && npm run build
+      - run: cd ./packages/pyright-scip/ && npm install
       - run: python --version
       - run: cd ./packages/pyright-scip/ && npm run check-snapshots

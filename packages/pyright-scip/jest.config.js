@@ -12,23 +12,22 @@ const { compilerOptions } = require('./tsconfig');
 
 module.exports = {
     testEnvironment: 'node',
-    roots: ['<rootDir>/src/'],
+    roots: ['<rootDir>/src/', '<rootDir>/test/'],
     transform: {
         '^.+\\.tsx?$': 'ts-jest',
     },
-    testRegex: '(/__tests__/.*|(\\.|/)(test|spec))\\.tsx?$',
+    testMatch: ['**/src/**/*.test.ts', '**/test/test-*.ts'],
     moduleFileExtensions: ['ts', 'tsx', 'js', 'jsx'],
-    moduleNameMapper: pathsToModuleNameMapper(compilerOptions.paths, { prefix: '<rootDir>' }),
+    moduleNameMapper: {
+        ...pathsToModuleNameMapper(compilerOptions.paths, { prefix: '<rootDir>' }),
+        '^typescript-char$': '<rootDir>/../pyright-internal/node_modules/.pnpm/typescript-char@0.0.0/node_modules/typescript-char',
+        '^vscode-uri$': '<rootDir>/../pyright-internal/node_modules/.pnpm/vscode-uri@3.1.0/node_modules/vscode-uri',
+        '^vscode-languageserver-protocol$': '<rootDir>/../pyright-internal/node_modules/.pnpm/vscode-languageserver-protocol@3.17.3/node_modules/vscode-languageserver-protocol',
+        '^vscode-languageserver-types$': '<rootDir>/../pyright-internal/node_modules/.pnpm/vscode-languageserver-types@3.17.3/node_modules/vscode-languageserver-types',
+    },
     globals: {
         'ts-jest': {
-            tsconfig: {
-                baseUrl: '.',
-                target: 'es6',
-
-                // Needed because jest calls tsc in a way that doesn't
-                // inline const enums.
-                preserveConstEnums: false,
-            },
+            tsconfig: 'tsconfig.test.json',
         },
     },
 };

@@ -21,7 +21,6 @@ module.exports = (_, { mode }) => {
         context: __dirname,
         entry: {
             'scip-python': './src/main.ts',
-            'scip-python-test': './test/test-main.ts',
         },
         target: 'node',
         output: {

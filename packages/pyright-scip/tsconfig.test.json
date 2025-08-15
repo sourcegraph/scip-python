@@ -1,0 +1,11 @@
+{
+    "extends": "./tsconfig.json",
+    "compilerOptions": {
+        "skipLibCheck": true,
+        "isolatedModules": false,
+        "noImplicitAny": false,
+        "strict": false
+    },
+    "include": ["src/**/*", "test/**/*"],
+    "exclude": ["src/lsif.ts", "snapshots"]
+}
