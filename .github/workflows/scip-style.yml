@@ -1,0 +1,46 @@
+name: 'SCIP Style'
+
+env:
+  NODE_VERSION: '16'
+
+on:
+  push:
+    branches:
+      - scip
+  pull_request:
+    branches:
+      - scip
+
+jobs:
+  pyright-scip-style:
+    runs-on: ubuntu-latest
+    name: Pyright-SCIP Style
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - uses: actions/setup-node@v3
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Get npm cache directory
+        id: npm-cache
+        run: |
+          echo "dir=$(npm config get cache)" >> $GITHUB_OUTPUT
+      - uses: actions/cache@v3
+        with:
+          path: ${{ steps.npm-cache.outputs.dir }}
+          key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node-
+
+      - run: npm install
+        working-directory: packages/pyright-scip
+
+      - name: Check prettier formatting
+        run: npm run check:prettier
+        working-directory: packages/pyright-scip
+
+      - name: Check ESLint
+        run: npm run check:eslint
+        working-directory: packages/pyright-scip
