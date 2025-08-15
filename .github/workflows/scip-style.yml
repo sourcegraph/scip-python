@@ -1,4 +1,4 @@
-name: 'SCIP Style'
+name: 'formatting'
 
 env:
   NODE_VERSION: '16'
@@ -6,15 +6,14 @@ env:
 on:
   push:
     branches:
+      - main
       - scip
   pull_request:
-    branches:
-      - scip
 
 jobs:
-  pyright-scip-style:
+  check:
     runs-on: ubuntu-latest
-    name: Pyright-SCIP Style
+    name: check
 
     steps:
       - uses: actions/checkout@v3
@@ -33,6 +32,8 @@ jobs:
           key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
           restore-keys: |
             ${{ runner.os }}-node-
+
+      - run: npm install
 
       - run: npm install
         working-directory: packages/pyright-scip

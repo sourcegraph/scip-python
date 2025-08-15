@@ -1,15 +1,14 @@
-name: scip-snapshots
+name: test
 
 on:
   push:
     branches:
+      - main
       - scip
   pull_request:
-    branches:
-      - scip
 
 jobs:
-  build:
+  check:
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest]
