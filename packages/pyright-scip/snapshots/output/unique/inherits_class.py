@@ -9,11 +9,11 @@ class A:
         raise NotImplemented
 #             ^^^^^^^^^^^^^^ reference  python-stdlib 3.11 builtins/NotImplemented#
 
-    def unmatched(self, x: int):
-#       ^^^^^^^^^ definition  snapshot-util 0.1 inherits_class/A#unmatched().
-#                 ^^^^ definition  snapshot-util 0.1 inherits_class/A#unmatched().(self)
-#                       ^ definition  snapshot-util 0.1 inherits_class/A#unmatched().(x)
-#                          ^^^ reference  python-stdlib 3.11 builtins/int#
+    def matched_despite_different_type(self, x: int):
+#       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ definition  snapshot-util 0.1 inherits_class/A#matched_despite_different_type().
+#                                      ^^^^ definition  snapshot-util 0.1 inherits_class/A#matched_despite_different_type().(self)
+#                                            ^ definition  snapshot-util 0.1 inherits_class/A#matched_despite_different_type().(x)
+#                                               ^^^ reference  python-stdlib 3.11 builtins/int#
         pass
 
 class B(A):
@@ -27,13 +27,14 @@ class B(A):
 #                  ^^^ reference  python-stdlib 3.11 builtins/int#
         return 5
 
-    def unmatched(self, x: int, y: int):
-#       ^^^^^^^^^ definition  snapshot-util 0.1 inherits_class/B#unmatched().
-#                 ^^^^ definition  snapshot-util 0.1 inherits_class/B#unmatched().(self)
-#                       ^ definition  snapshot-util 0.1 inherits_class/B#unmatched().(x)
-#                          ^^^ reference  python-stdlib 3.11 builtins/int#
-#                               ^ definition  snapshot-util 0.1 inherits_class/B#unmatched().(y)
-#                                  ^^^ reference  python-stdlib 3.11 builtins/int#
+    def matched_despite_different_type(self, x: int, y: int):
+#       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ definition  snapshot-util 0.1 inherits_class/B#matched_despite_different_type().
+#       relationship implementation scip-python python snapshot-util 0.1 inherits_class/A#matched_despite_different_type().
+#                                      ^^^^ definition  snapshot-util 0.1 inherits_class/B#matched_despite_different_type().(self)
+#                                            ^ definition  snapshot-util 0.1 inherits_class/B#matched_despite_different_type().(x)
+#                                               ^^^ reference  python-stdlib 3.11 builtins/int#
+#                                                    ^ definition  snapshot-util 0.1 inherits_class/B#matched_despite_different_type().(y)
+#                                                       ^^^ reference  python-stdlib 3.11 builtins/int#
         pass
 
     def unrelated(self):

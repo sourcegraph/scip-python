@@ -54,7 +54,6 @@ class Multi(Left, Right):
     def shared(self) -> bool:
 #       ^^^^^^ definition  snapshot-util 0.1 multiinherits_test/Multi#shared().
 #       relationship implementation scip-python python snapshot-util 0.1 multiinherits_test/Left#shared().
-#       relationship implementation scip-python python snapshot-util 0.1 multiinherits_test/Right#shared().
 #              ^^^^ definition  snapshot-util 0.1 multiinherits_test/Multi#shared().(self)
 #                       ^^^^ reference  python-stdlib 3.11 builtins/bool#
         return True
