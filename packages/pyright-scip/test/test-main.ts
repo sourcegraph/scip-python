@@ -8,6 +8,15 @@ import { join } from 'path';
 import * as path from 'path';
 import * as fs from 'fs';
 import { Indexer } from '../src/indexer';
+import {
+    setGlobalAssertionFlags,
+    setGlobalContext,
+    checkSometimesAssertions,
+    SeenCondition
+} from '../src/assertions';
+import { normalizePathCase, isFileSystemCaseSensitive } from 'pyright-internal/common/pathUtils';
+import { PyrightFileSystem } from 'pyright-internal/pyrightFileSystem';
+import { createFromRealFileSystem } from 'pyright-internal/common/realFileSystem';
 
 function createTempDirectory(outputDirectory: string, testName: string): string {
     const tempPrefix = path.join(path.dirname(outputDirectory), `.tmp-${testName}-`);
@@ -271,6 +280,13 @@ function unitTests(): void {
 
 function snapshotTests(mode: 'check' | 'update', failFast: boolean, quiet: boolean, filterTests?: string[]): void {
     const snapshotRoot = './snapshots';
+    const cwd = process.cwd();
+    
+    // Initialize assertion flags
+    const fileSystem = new PyrightFileSystem(createFromRealFileSystem());
+    const pathNormalizationChecks = !isFileSystemCaseSensitive(fileSystem) && normalizePathCase(fileSystem, cwd) !== cwd;
+    const otherChecks = true;
+    setGlobalAssertionFlags(pathNormalizationChecks, otherChecks);
     
     // Load package info to determine project name and version per test
     const packageInfoPath = path.join(snapshotRoot, 'packageInfo.json');
@@ -285,6 +301,9 @@ function snapshotTests(mode: 'check' | 'update', failFast: boolean, quiet: boole
     });
 
     testRunner.runTests((testName, inputDir, outputDir) => {
+        // Set context for this test
+        setGlobalContext(testName);
+        
         let projectName: string | undefined;
         let projectVersion: string | undefined;
         

@@ -1,10 +1,11 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { join } from 'path';
+import { checkSometimesAssertions, SeenCondition } from './assertions';
 
 export interface TestFailure {
     testName: string;
-    type: 'empty-scip-index' | 'missing-output' | 'content-mismatch' | 'orphaned-output' | 'caught-exception';
+    type: 'empty-scip-index' | 'missing-output' | 'content-mismatch' | 'orphaned-output' | 'caught-exception' | 'sometimes-assertion';
     message: string;
 }
 
@@ -154,6 +155,20 @@ export class TestRunner {
                 }
                 reportResults(results);
                 return;
+            }
+        }
+
+        // Only check sometimes assertions when running all tests, not when filtering
+        if (!this.options.filterTests) {
+            const sometimesResults = checkSometimesAssertions();
+            for (const [key, state] of sometimesResults) {
+                if (state === SeenCondition.Mixed) continue; // success
+                
+                results.failed.push({
+                    testName: 'assertions',
+                    type: 'sometimes-assertion',
+                    message: `Assertion '${key}' was ${state} across all test contexts`
+                });
             }
         }
 
