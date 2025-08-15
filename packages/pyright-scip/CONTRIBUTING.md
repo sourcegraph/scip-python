@@ -1,10 +1,11 @@
 # Contributing to scip-python
 
-- [Development](#development)
-  - [Installing dependencies](#installing-dependencies)
-  - [Building the code](#building-the-code)
-  - [Running tests](#running-tests)
-- [Publishing releases](#publishing-releases)
+-   [Development](#development)
+    -   [Installing dependencies](#installing-dependencies)
+    -   [Building the code](#building-the-code)
+    -   [Running tests](#running-tests)
+    -   [Linting and formatting](#linting-and-formatting)
+-   [Publishing releases](#publishing-releases)
 
 ## Development
 
@@ -12,34 +13,37 @@
 
 1. Install [ASDF](https://asdf-vm.com/guide/getting-started.html).
 2. Install the correct versions of Node and Python:
+
     ```bash
     asdf plugin add nodejs
     asdf plugin add python
     # Install appropriate Node and Python versions based on .tool-versions
     asdf install
-    ````
-   You may need to restart your shell for the changes to take effect.
+    ```
 
-   NOTE: On Linux, ASDF may try to install Python from source instead of
-   using prebuilt binaries. In that case, you need to install a bunch of
-   other dependencies first:
-   ```bash
-   sudo apt update
-   sudo apt install -y build-essential zlib1g-dev libssl-dev libbz2-dev libsqlite3-dev libncurses-dev libffi-dev readline-common libreadline-dev liblzma-dev
-   ```
+    You may need to restart your shell for the changes to take effect.
+
+    NOTE: On Linux, ASDF may try to install Python from source instead of
+    using prebuilt binaries. In that case, you need to install a bunch of
+    other dependencies first:
+
+    ```bash
+    sudo apt update
+    sudo apt install -y build-essential zlib1g-dev libssl-dev libbz2-dev libsqlite3-dev libncurses-dev libffi-dev readline-common libreadline-dev liblzma-dev
+    ```
+
 3. Install dependencies:
-   ```bash
-   # From the root of the repo
-   npm install
-   cd packages/pyright-scip
-   npm install
-   ```
+    ```bash
+    # From the root of the repo
+    npm install
+    cd packages/pyright-scip
+    npm install
+    ```
 
 All the other commands should be run from the `packages/pyright-scip`
 subdirectory.
 
 ### Building the code
-
 
 ```bash
 # Build in development mode once
@@ -76,6 +80,7 @@ npm run check-snapshots
 #### Filter specific snapshot tests
 
 Use the `--filter-tests` flag to run only specific snapshot tests:
+
 ```bash
 # Using npm scripts (note the -- to pass arguments)
 npm run check-snapshots -- --filter-tests test1,test2,test3
@@ -85,6 +90,28 @@ Available snapshot tests can be found in `snapshots/input/`.
 
 Using a different Python version other than the one specified
 in `.tool-versions` may also lead to errors.
+
+### Linting and formatting
+
+To check for linting and formatting issues:
+
+```bash
+# Check prettier formatting
+npm run check:prettier
+
+# Check ESLint issues
+npm run check:eslint
+```
+
+To fix linting and formatting issues:
+
+```bash
+# Fix prettier formatting issues
+npm run fix:prettier
+
+# Fix ESLint issues
+npm run fix:eslint
+```
 
 ## Making changes to Pyright internals
 
