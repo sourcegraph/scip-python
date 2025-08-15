@@ -6,6 +6,8 @@ import { TypeEvaluator } from 'pyright-internal/analyzer/typeEvaluatorTypes';
 import { convertOffsetToPosition } from 'pyright-internal/common/positionUtils';
 import { TextRange } from 'pyright-internal/common/textRange';
 import { TextRangeCollection } from 'pyright-internal/common/textRangeCollection';
+import { printParseNodeType } from 'pyright-internal/analyzer/parseTreeUtils';
+import { TreeDumper } from 'pyright-internal/commands/dumpFileDebugInfoCommand';
 import {
     AssignmentNode,
     ClassNode,
@@ -38,7 +40,7 @@ import { SourceFile } from 'pyright-internal/analyzer/sourceFile';
 import { extractParameterDocumentation } from 'pyright-internal/analyzer/docStringUtils';
 import {
     Declaration,
-    DeclarationType,
+    DeclarationType, FunctionDeclaration,
     isAliasDeclaration,
     isIntrinsicDeclaration,
 } from 'pyright-internal/analyzer/declaration';
@@ -53,7 +55,7 @@ import { Event } from 'vscode-languageserver';
 import { HoverResults } from 'pyright-internal/languageService/hoverProvider';
 import { convertDocStringToMarkdown } from 'pyright-internal/analyzer/docStringConversion';
 import { assert } from 'pyright-internal/common/debug';
-import { getClassFieldsRecursive } from 'pyright-internal/analyzer/typeUtils';
+import { ClassMemberLookupFlags, lookUpClassMember } from 'pyright-internal/analyzer/typeUtils';
 import { PyrightFileSystem } from "pyright-internal/pyrightFileSystem";
 import { createFromRealFileSystem } from "pyright-internal/common/realFileSystem";
 import { normalizePathCase } from "pyright-internal/common/pathUtils";
@@ -218,6 +220,8 @@ export class TreeVisitor extends ParseTreeWalker {
         const fileInfo = getFileInfo(node);
         this.fileInfo = fileInfo;
 
+        // Pro tip: Use this.debugDumpAST(node, fileInfo) to see AST for debugging
+
         // Insert definition at the top of the file
         const pythonPackage = this.getPackageInfo(node, fileInfo.moduleName);
         if (pythonPackage) {
@@ -342,54 +346,26 @@ export class TreeVisitor extends ParseTreeWalker {
         let relationshipMap: Map<string, scip.Relationship> = new Map();
         let classType = enclosingClassType.classType;
 
-        // Use: getClassMemberIterator
-        //  Could use this to handle each of the fields with the same name
-        //  but it's a bit weird if you have A -> B -> C, and then you say
-        //  that C implements A's & B's... that seems perhaps a bit too verbose.
-        //
-        // See: https://github.com/sourcegraph/scip-python/issues/50
-        for (const base of classType.details.baseClasses) {
-            if (base.category !== TypeCategory.Class) {
+        let classMember = lookUpClassMember(classType, node.name.value, ClassMemberLookupFlags.SkipOriginalClass);
+        if (!classMember) {
+            return undefined;
+        }
+
+        const superDecls = classMember.symbol.getDeclarations();
+        for (const superDecl of superDecls) {
+            if (superDecl.type !== DeclarationType.Function) {
                 continue;
             }
-
-            let parentMethod = base.details.fields.get(node.name.value);
-            if (!parentMethod) {
-                let fieldLookup = getClassFieldsRecursive(base).get(node.name.value);
-                if (fieldLookup && fieldLookup.classType.category !== TypeCategory.Unknown) {
-                    parentMethod = fieldLookup.classType.details.fields.get(node.name.value)!;
-                } else {
-                    continue;
-                }
+            let symbol = this.getFunctionSymbol(superDecl);
+            if (!symbol.isLocal()) {
+                relationshipMap.set(
+                    symbol.value,
+                    new scip.Relationship({
+                        symbol: symbol.value,
+                        is_implementation: true,
+                    })
+                );
             }
-
-            let parentMethodType = this.evaluator.getEffectiveTypeOfSymbol(parentMethod);
-            if (parentMethodType.category !== TypeCategory.Function) {
-                continue;
-            }
-
-            if (
-                !ModifiedTypeUtils.isTypeImplementable(
-                    functionType.functionType,
-                    parentMethodType,
-                    false,
-                    true,
-                    0,
-                    true
-                )
-            ) {
-                continue;
-            }
-
-            let decl = parentMethodType.details.declaration!;
-            let symbol = this.typeToSymbol(decl.node.name, decl.node, parentMethodType);
-            relationshipMap.set(
-                symbol.value,
-                new scip.Relationship({
-                    symbol: symbol.value,
-                    is_implementation: true,
-                })
-            );
         }
 
         let relationships = Array.from(relationshipMap.values());
@@ -515,7 +491,6 @@ export class TreeVisitor extends ParseTreeWalker {
                 // (aliased_import and nested_items tests). So do both checks.
                 const resolvedPath = path.resolve(importInfo.resolvedPaths[0])
                 assertSometimesNormalized(resolvedPath, 'visitImportAs.resolvedPath')
-
                 return resolvedPath.startsWith(this.cwd) ||
                     resolvedPath.startsWith(
                         normalizePathCase(new PyrightFileSystem(createFromRealFileSystem()), this.cwd))
@@ -1320,44 +1295,49 @@ export class TreeVisitor extends ParseTreeWalker {
         }
     }
 
+    private getFunctionSymbol(decl: FunctionDeclaration): ScipSymbol {
+        const declModuleName = decl.moduleName;
+        let pythonPackage = this.guessPackage(declModuleName, decl.path);
+        if (!pythonPackage) {
+            return ScipSymbol.local(this.counter.next());
+        }
+
+        const enclosingClass = ParseTreeUtils.getEnclosingClass(decl.node);
+        if (enclosingClass) {
+            const enclosingClassType = this.evaluator.getTypeOfClass(enclosingClass);
+            if (enclosingClassType) {
+                let classType = enclosingClassType.classType;
+                const pythonPackage = this.guessPackage(classType.details.moduleName, classType.details.filePath)!;
+                const symbol = Symbols.makeClass(pythonPackage, classType.details.moduleName, classType.details.name);
+                return Symbols.makeMethod(symbol, decl.node.name.value);
+            }
+            return ScipSymbol.local(this.counter.next());
+        } else {
+            return Symbols.makeMethod(Symbols.makeModule(pythonPackage, declModuleName), decl.node.name.value);
+        }
+    }
+
+    // NOTE(tech-debt): typeToSymbol's signature doesn't make sense. It returns the
+    // symbol for a _function_ (not the function's _type_) despite the name being
+    // 'typeToSymbol'. More generally, we should have dedicated functions to get
+    // the symbol based on the specific declarations, like getFunctionSymbol.
+    // There can be a general function which gets the symbol for a variety of kinds
+    // of _declarations_, but it must not take a _Type_ as an argument
+    // (Python mostly doesn't use structural types, so ~only declarations should
+    // have symbols).
+
     // Take a `Type` from pyright and turn that into an LSIF symbol.
     private typeToSymbol(node: NameNode, declNode: ParseNode, typeObj: Type): ScipSymbol {
         if (Types.isFunction(typeObj)) {
             // TODO: Possibly worth checking for parent declarations.
             //  I'm not sure if that will actually work though for types.
-
             const decl = typeObj.details.declaration;
             if (!decl) {
                 // throw 'Unhandled missing declaration for type: function';
                 // console.warn('Missing Function Decl:', node.token.value, typeObj);
                 return ScipSymbol.local(this.counter.next());
             }
-
-            const declModuleName = decl.moduleName;
-            let pythonPackage = this.guessPackage(declModuleName, decl.path);
-            if (!pythonPackage) {
-                return ScipSymbol.local(this.counter.next());
-            }
-
-            const enclosingClass = ParseTreeUtils.getEnclosingClass(declNode);
-            if (enclosingClass) {
-                const enclosingClassType = this.evaluator.getTypeOfClass(enclosingClass);
-                if (enclosingClassType) {
-                    let classType = enclosingClassType.classType;
-                    const pythonPackage = this.guessPackage(classType.details.moduleName, classType.details.filePath)!;
-                    const symbol = Symbols.makeClass(
-                        pythonPackage,
-                        classType.details.moduleName,
-                        classType.details.name
-                    );
-
-                    return Symbols.makeMethod(symbol, node.value);
-                }
-
-                return ScipSymbol.local(this.counter.next());
-            } else {
-                return Symbols.makeMethod(Symbols.makeModule(pythonPackage, typeObj.details.moduleName), node.value);
-            }
+            return this.getFunctionSymbol(decl);
         } else if (Types.isClass(typeObj)) {
             const pythonPackage = this.getPackageInfo(node, typeObj.details.moduleName)!;
             return Symbols.makeClass(pythonPackage, typeObj.details.moduleName, node.value);
@@ -1700,6 +1680,15 @@ export class TreeVisitor extends ParseTreeWalker {
         this.rawSetLsifSymbol(node, symbol, symbol.isLocal());
         return symbol;
     }
+
+    private debugDumpAST(node: ModuleNode, fileInfo: AnalyzerFileInfo): void {
+        console.log("\n=== AST DUMP ===");
+        const dumper = new TreeDumper("", fileInfo.lines);
+        dumper.walk(node);
+        console.log(dumper.output);
+        console.log("=== END AST DUMP ===\n");
+    }
+
 }
 
 function _formatModuleName(node: ModuleNameNode): string {

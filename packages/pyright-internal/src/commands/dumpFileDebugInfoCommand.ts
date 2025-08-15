@@ -549,7 +549,8 @@ function getTypeCategoryString(typeCategory: TypeCategory, type: any) {
     }
 }
 
-class TreeDumper extends ParseTreeWalker {
+// NOTE(scip-python): Exported for use in scip-python debugging
+export class TreeDumper extends ParseTreeWalker {
     private _indentation = '';
     private _output = '';
 
