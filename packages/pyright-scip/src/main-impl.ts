@@ -10,7 +10,6 @@ import { sendStatus, setQuiet, setShowProgressRateLimit } from './status';
 import { Indexer } from './indexer';
 import { exit } from 'process';
 
-
 export function indexAction(options: IndexOptions): void {
     setQuiet(options.quiet);
     if (options.showProgressRateLimit !== undefined) {

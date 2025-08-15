@@ -5,7 +5,7 @@ import { createFromRealFileSystem } from 'pyright-internal/common/realFileSystem
 export enum SeenCondition {
     AlwaysFalse = 'always-false',
     AlwaysTrue = 'always-true',
-    Mixed = 'mixed'
+    Mixed = 'mixed',
 }
 
 export class AssertionError extends Error {
@@ -18,7 +18,7 @@ export class AssertionError extends Error {
 // Private global state - never export directly
 let _assertionFlags = {
     pathNormalizationChecks: false,
-    otherChecks: false
+    otherChecks: false,
 };
 let _context = '';
 const _sometimesResults = new Map<string, Map<string, SeenCondition>>();
@@ -35,7 +35,7 @@ export function setGlobalContext(context: string): void {
 // Internal implementation functions
 function assertAlwaysImpl(enableFlag: boolean, check: () => boolean, message: () => string): void {
     if (!enableFlag) return;
-    
+
     if (!check()) {
         throw new AssertionError(message());
     }
@@ -43,21 +43,21 @@ function assertAlwaysImpl(enableFlag: boolean, check: () => boolean, message: ()
 
 function assertSometimesImpl(enableFlag: boolean, check: () => boolean, key: string): void {
     if (!enableFlag) return;
-    
+
     const ctx = _context;
     if (ctx === '') {
         throw new AssertionError('Context must be set before calling assertSometimes');
     }
-    
+
     let ctxMap = _sometimesResults.get(key);
     if (!ctxMap) {
         ctxMap = new Map();
         _sometimesResults.set(key, ctxMap);
     }
-    
+
     const result = check() ? SeenCondition.AlwaysTrue : SeenCondition.AlwaysFalse;
     const prev = ctxMap.get(ctx);
-    
+
     if (prev === undefined) {
         ctxMap.set(ctx, result);
     } else if (prev !== result) {
@@ -95,11 +95,7 @@ export function assertAlwaysNormalized(path: string): void {
 
 export function assertSometimesNormalized(path: string, key: string): void {
     const normalized = normalizePathCase(_fs, path);
-    assertSometimesImpl(
-        _assertionFlags.pathNormalizationChecks,
-        () => normalized === path,
-        key
-    );
+    assertSometimesImpl(_assertionFlags.pathNormalizationChecks, () => normalized === path, key);
 }
 
 // Monoidal combination logic
@@ -114,7 +110,7 @@ function combine(a: SeenCondition, b: SeenCondition): SeenCondition {
 
 export function checkSometimesAssertions(): Map<string, SeenCondition> {
     const summary = new Map<string, SeenCondition>();
-    
+
     for (const [key, ctxMap] of _sometimesResults) {
         let agg: SeenCondition | undefined;
         for (const state of ctxMap.values()) {
@@ -125,6 +121,6 @@ export function checkSometimesAssertions(): Map<string, SeenCondition> {
             summary.set(key, agg);
         }
     }
-    
+
     return summary;
 }

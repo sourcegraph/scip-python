@@ -8,12 +8,7 @@ import { join } from 'path';
 import * as path from 'path';
 import * as fs from 'fs';
 import { Indexer } from '../src/indexer';
-import {
-    setGlobalAssertionFlags,
-    setGlobalContext,
-    checkSometimesAssertions,
-    SeenCondition
-} from '../src/assertions';
+import { setGlobalAssertionFlags, setGlobalContext, checkSometimesAssertions, SeenCondition } from '../src/assertions';
 import { normalizePathCase, isFileSystemCaseSensitive } from 'pyright-internal/common/pathUtils';
 import { PyrightFileSystem } from 'pyright-internal/pyrightFileSystem';
 import { createFromRealFileSystem } from 'pyright-internal/common/realFileSystem';
@@ -42,10 +37,10 @@ function validateOutputExists(outputDirectory: string, testName: string) {
         return {
             testName,
             type: 'missing-output' as const,
-            message: `Expected output folder does not exist`
+            message: `Expected output folder does not exist`,
         };
     }
-    
+
     return null;
 }
 
@@ -58,7 +53,7 @@ function processSingleTest(
     const results: ValidationResults = {
         passed: [],
         failed: [],
-        skipped: []
+        skipped: [],
     };
 
     const projectRoot = join(inputDirectory, testName);
@@ -66,7 +61,7 @@ function processSingleTest(
         results.failed.push({
             testName,
             type: 'missing-output',
-            message: `Test directory does not exist: ${testName}`
+            message: `Test directory does not exist: ${testName}`,
         });
         return results;
     }
@@ -89,7 +84,7 @@ function processSingleTest(
         results.failed.push({
             testName,
             type: 'caught-exception',
-            message: `Indexing failed: ${error}`
+            message: `Indexing failed: ${error}`,
         });
         return results;
     }
@@ -97,14 +92,14 @@ function processSingleTest(
     // Read and validate generated SCIP index
     const scipIndexPath = path.join(projectRoot, options.output ?? 'index.scip');
     let scipIndex: scip.Index;
-    
+
     try {
         scipIndex = scip.Index.deserializeBinary(fs.readFileSync(scipIndexPath));
     } catch (error) {
         results.failed.push({
             testName,
             type: 'caught-exception',
-            message: `Failed to read generated SCIP index: ${error}`
+            message: `Failed to read generated SCIP index: ${error}`,
         });
         return results;
     }
@@ -113,7 +108,7 @@ function processSingleTest(
         results.failed.push({
             testName,
             type: 'empty-scip-index',
-            message: 'SCIP index has 0 documents'
+            message: 'SCIP index has 0 documents',
         });
         return results;
     }
@@ -124,7 +119,7 @@ function processSingleTest(
             results.failed.push({
                 testName,
                 type: 'missing-output' as const,
-                message: `Expected output folder does not exist`
+                message: `Expected output folder does not exist`,
             });
             return results;
         }
@@ -137,7 +132,7 @@ function processSingleTest(
             const testOutputDir = path.resolve(outputDirectory, testName);
             tempDir = createTempDirectory(testOutputDir, testName);
         }
-        
+
         for (const doc of scipIndex.documents) {
             // FIXME: We should update the SCIP index generation to not generate
             // relative paths starting with '..'
@@ -157,7 +152,7 @@ function processSingleTest(
                     results.failed.push({
                         testName,
                         type: 'content-mismatch',
-                        message: `Snapshot content mismatch for ${outputPath}`
+                        message: `Snapshot content mismatch for ${outputPath}`,
                     });
                 }
             } else {
@@ -165,7 +160,7 @@ function processSingleTest(
                 writeSnapshot(tempOutputPath, obtained);
             }
         }
-        
+
         if (options.mode !== 'check' && tempDir) {
             const testOutputDir = path.resolve(outputDirectory, testName);
             replaceFolder(tempDir, testOutputDir);
@@ -175,7 +170,7 @@ function processSingleTest(
         results.failed.push({
             testName,
             type: 'caught-exception',
-            message: `Error processing snapshots: ${error}`
+            message: `Error processing snapshots: ${error}`,
         });
     } finally {
         if (tempDir) {
@@ -281,39 +276,40 @@ function unitTests(): void {
 function snapshotTests(mode: 'check' | 'update', failFast: boolean, quiet: boolean, filterTests?: string[]): void {
     const snapshotRoot = './snapshots';
     const cwd = process.cwd();
-    
+
     // Initialize assertion flags
     const fileSystem = new PyrightFileSystem(createFromRealFileSystem());
-    const pathNormalizationChecks = !isFileSystemCaseSensitive(fileSystem) && normalizePathCase(fileSystem, cwd) !== cwd;
+    const pathNormalizationChecks =
+        !isFileSystemCaseSensitive(fileSystem) && normalizePathCase(fileSystem, cwd) !== cwd;
     const otherChecks = true;
     setGlobalAssertionFlags(pathNormalizationChecks, otherChecks);
-    
+
     // Load package info to determine project name and version per test
     const packageInfoPath = path.join(snapshotRoot, 'packageInfo.json');
     const packageInfo = JSON.parse(fs.readFileSync(packageInfoPath, 'utf8'));
-    
+
     const testRunner = new TestRunner({
         snapshotRoot,
         filterTests: filterTests ? filterTests.join(',') : undefined,
         failFast: failFast,
         quiet: quiet,
-        mode: mode
+        mode: mode,
     });
 
     testRunner.runTests((testName, inputDir, outputDir) => {
         // Set context for this test
         setGlobalContext(testName);
-        
+
         let projectName: string | undefined;
         let projectVersion: string | undefined;
-        
+
         // Only set project name/version from packageInfo if test doesn't have its own pyproject.toml
         const testProjectRoot = path.join(inputDir, testName);
         if (!fs.existsSync(path.join(testProjectRoot, 'pyproject.toml'))) {
             projectName = packageInfo['default']['name'];
             projectVersion = packageInfo['default']['version'];
         }
-        
+
         if (testName in packageInfo['special']) {
             projectName = packageInfo['special'][testName]['name'];
             projectVersion = packageInfo['special'][testName]['version'];
@@ -328,7 +324,7 @@ function snapshotTests(mode: 'check' | 'update', failFast: boolean, quiet: boole
             output: 'index.scip',
             dev: false,
             cwd: path.join(inputDir, testName),
-            targetOnly: undefined
+            targetOnly: undefined,
         });
     });
 }
@@ -344,11 +340,11 @@ function parseFilterTests(): string[] | undefined {
         return undefined;
     }
     const filterValue = process.argv[filterIndex + 1];
-    return filterValue.split(',').map(test => test.trim());
+    return filterValue.split(',').map((test) => test.trim());
 }
 
 const filterTests = parseFilterTests();
-const failFast = (process.argv.indexOf('--fail-fast') !== -1) ?? false;
+const failFast = process.argv.indexOf('--fail-fast') !== -1 ?? false;
 const quiet = process.argv.indexOf('--verbose') === -1;
 
 if (process.argv.indexOf('--check') !== -1) {

@@ -15,9 +15,13 @@ if (typeof module.setSourceMapsSupport === 'function') {
     const nodeOptions = process.env.NODE_OPTIONS || '';
     if (!nodeOptions.includes('--enable-source-maps')) {
         if (nodeOptions) {
-            console.warn('Source maps support not available. Consider adding --enable-source-maps to the existing NODE_OPTIONS environment variable.');
+            console.warn(
+                'Source maps support not available. Consider adding --enable-source-maps to the existing NODE_OPTIONS environment variable.'
+            );
         } else {
-            console.warn('Source maps support not available. Consider setting the NODE_OPTIONS environment variable to "--enable-source-maps".');
+            console.warn(
+                'Source maps support not available. Consider setting the NODE_OPTIONS environment variable to "--enable-source-maps".'
+            );
         }
     }
 }

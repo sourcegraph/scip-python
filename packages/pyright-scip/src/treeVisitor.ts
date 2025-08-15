@@ -40,7 +40,8 @@ import { SourceFile } from 'pyright-internal/analyzer/sourceFile';
 import { extractParameterDocumentation } from 'pyright-internal/analyzer/docStringUtils';
 import {
     Declaration,
-    DeclarationType, FunctionDeclaration,
+    DeclarationType,
+    FunctionDeclaration,
     isAliasDeclaration,
     isIntrinsicDeclaration,
 } from 'pyright-internal/analyzer/declaration';
@@ -56,10 +57,10 @@ import { HoverResults } from 'pyright-internal/languageService/hoverProvider';
 import { convertDocStringToMarkdown } from 'pyright-internal/analyzer/docStringConversion';
 import { assert } from 'pyright-internal/common/debug';
 import { ClassMemberLookupFlags, lookUpClassMember } from 'pyright-internal/analyzer/typeUtils';
-import { PyrightFileSystem } from "pyright-internal/pyrightFileSystem";
-import { createFromRealFileSystem } from "pyright-internal/common/realFileSystem";
-import { normalizePathCase } from "pyright-internal/common/pathUtils";
-import { assertNeverNormalized, assertSometimesNormalized } from "./assertions";
+import { PyrightFileSystem } from 'pyright-internal/pyrightFileSystem';
+import { createFromRealFileSystem } from 'pyright-internal/common/realFileSystem';
+import { normalizePathCase } from 'pyright-internal/common/pathUtils';
+import { assertNeverNormalized, assertSometimesNormalized } from './assertions';
 
 //  Useful functions for later, but haven't gotten far enough yet to use them.
 //      extractParameterDocumentation
@@ -489,11 +490,14 @@ export class TreeVisitor extends ParseTreeWalker {
                 // Sometimes the resolvedPath is normalized and sometimes it is not.
                 // If we remove one of the two checks below, existing tests start failing
                 // (aliased_import and nested_items tests). So do both checks.
-                const resolvedPath = path.resolve(importInfo.resolvedPaths[0])
-                assertSometimesNormalized(resolvedPath, 'visitImportAs.resolvedPath')
-                return resolvedPath.startsWith(this.cwd) ||
+                const resolvedPath = path.resolve(importInfo.resolvedPaths[0]);
+                assertSometimesNormalized(resolvedPath, 'visitImportAs.resolvedPath');
+                return (
+                    resolvedPath.startsWith(this.cwd) ||
                     resolvedPath.startsWith(
-                        normalizePathCase(new PyrightFileSystem(createFromRealFileSystem()), this.cwd))
+                        normalizePathCase(new PyrightFileSystem(createFromRealFileSystem()), this.cwd)
+                    )
+                );
             })()
         ) {
             const symbol = Symbols.makeModuleInit(this.projectPackage, moduleName);
@@ -1643,8 +1647,10 @@ export class TreeVisitor extends ParseTreeWalker {
             // (e.g. see the nested_items test), and sometimes it may have uppercase
             // characters (e.g. the unique test).
             assertSometimesNormalized(p, 'guessPackage.declPath.resolved');
-            if (p.startsWith(this.cwd) ||
-                p.startsWith(normalizePathCase(new PyrightFileSystem(createFromRealFileSystem()), this.cwd))) {
+            if (
+                p.startsWith(this.cwd) ||
+                p.startsWith(normalizePathCase(new PyrightFileSystem(createFromRealFileSystem()), this.cwd))
+            ) {
                 return this.projectPackage;
             }
         }
@@ -1682,13 +1688,12 @@ export class TreeVisitor extends ParseTreeWalker {
     }
 
     private debugDumpAST(node: ModuleNode, fileInfo: AnalyzerFileInfo): void {
-        console.log("\n=== AST DUMP ===");
-        const dumper = new TreeDumper("", fileInfo.lines);
+        console.log('\n=== AST DUMP ===');
+        const dumper = new TreeDumper('', fileInfo.lines);
         dumper.walk(node);
         console.log(dumper.output);
-        console.log("=== END AST DUMP ===\n");
+        console.log('=== END AST DUMP ===\n');
     }
-
 }
 
 function _formatModuleName(node: ModuleNameNode): string {

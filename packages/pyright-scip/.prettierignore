@@ -1,0 +1,5 @@
+*.md
+*.markdown
+dist/
+node_modules/
+snapshots/

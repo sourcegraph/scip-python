@@ -5,15 +5,15 @@
  * compiler version: 0.0.0
  * source: scip.proto
  * git: https://github.com/thesayyn/protoc-gen-ts */
-import * as pb_1 from "google-protobuf";
+import * as pb_1 from 'google-protobuf';
 export namespace scip {
     export enum ProtocolVersion {
-        UnspecifiedProtocolVersion = 0
+        UnspecifiedProtocolVersion = 0,
     }
     export enum TextEncoding {
         UnspecifiedTextEncoding = 0,
         UTF8 = 1,
-        UTF16 = 2
+        UTF16 = 2,
     }
     export enum SymbolRole {
         UnspecifiedSymbolRole = 0,
@@ -23,7 +23,7 @@ export namespace scip {
         ReadAccess = 8,
         Generated = 16,
         Test = 32,
-        ForwardDefinition = 64
+        ForwardDefinition = 64,
     }
     export enum SyntaxKind {
         UnspecifiedSyntaxKind = 0,
@@ -66,19 +66,19 @@ export namespace scip {
         BooleanLiteral = 33,
         Tag = 34,
         TagAttribute = 35,
-        TagDelimiter = 36
+        TagDelimiter = 36,
     }
     export enum Severity {
         UnspecifiedSeverity = 0,
         Error = 1,
         Warning = 2,
         Information = 3,
-        Hint = 4
+        Hint = 4,
     }
     export enum DiagnosticTag {
         UnspecifiedDiagnosticTag = 0,
         Unnecessary = 1,
-        Deprecated = 2
+        Deprecated = 2,
     }
     export enum Language {
         UnspecifiedLanguage = 0,
@@ -190,25 +190,29 @@ export namespace scip {
         XML = 31,
         XSL = 32,
         YAML = 74,
-        Zig = 38
+        Zig = 38,
     }
     export class Index extends pb_1.Message {
         #one_of_decls: number[][] = [];
-        constructor(data?: any[] | {
-            metadata?: Metadata;
-            documents?: Document[];
-            external_symbols?: SymbolInformation[];
-        }) {
+        constructor(
+            data?:
+                | any[]
+                | {
+                      metadata?: Metadata;
+                      documents?: Document[];
+                      external_symbols?: SymbolInformation[];
+                  }
+        ) {
             super();
             pb_1.Message.initialize(this, Array.isArray(data) ? data : [], 0, -1, [2, 3], this.#one_of_decls);
-            if (!Array.isArray(data) && typeof data == "object") {
-                if ("metadata" in data && data.metadata != undefined) {
+            if (!Array.isArray(data) && typeof data == 'object') {
+                if ('metadata' in data && data.metadata != undefined) {
                     this.metadata = data.metadata;
                 }
-                if ("documents" in data && data.documents != undefined) {
+                if ('documents' in data && data.documents != undefined) {
                     this.documents = data.documents;
                 }
-                if ("external_symbols" in data && data.external_symbols != undefined) {
+                if ('external_symbols' in data && data.external_symbols != undefined) {
                     this.external_symbols = data.external_symbols;
                 }
             }
@@ -244,10 +248,10 @@ export namespace scip {
                 message.metadata = Metadata.fromObject(data.metadata);
             }
             if (data.documents != null) {
-                message.documents = data.documents.map(item => Document.fromObject(item));
+                message.documents = data.documents.map((item) => Document.fromObject(item));
             }
             if (data.external_symbols != null) {
-                message.external_symbols = data.external_symbols.map(item => SymbolInformation.fromObject(item));
+                message.external_symbols = data.external_symbols.map((item) => SymbolInformation.fromObject(item));
             }
             return message;
         }
@@ -272,31 +276,41 @@ export namespace scip {
         serialize(w: pb_1.BinaryWriter): void;
         serialize(w?: pb_1.BinaryWriter): Uint8Array | void {
             const writer = w || new pb_1.BinaryWriter();
-            if (this.has_metadata)
-                writer.writeMessage(1, this.metadata, () => this.metadata.serialize(writer));
+            if (this.has_metadata) writer.writeMessage(1, this.metadata, () => this.metadata.serialize(writer));
             if (this.documents.length)
                 writer.writeRepeatedMessage(2, this.documents, (item: Document) => item.serialize(writer));
             if (this.external_symbols.length)
-                writer.writeRepeatedMessage(3, this.external_symbols, (item: SymbolInformation) => item.serialize(writer));
-            if (!w)
-                return writer.getResultBuffer();
+                writer.writeRepeatedMessage(3, this.external_symbols, (item: SymbolInformation) =>
+                    item.serialize(writer)
+                );
+            if (!w) return writer.getResultBuffer();
         }
         static deserialize(bytes: Uint8Array | pb_1.BinaryReader): Index {
-            const reader = bytes instanceof pb_1.BinaryReader ? bytes : new pb_1.BinaryReader(bytes), message = new Index();
+            const reader = bytes instanceof pb_1.BinaryReader ? bytes : new pb_1.BinaryReader(bytes),
+                message = new Index();
             while (reader.nextField()) {
-                if (reader.isEndGroup())
-                    break;
+                if (reader.isEndGroup()) break;
                 switch (reader.getFieldNumber()) {
                     case 1:
-                        reader.readMessage(message.metadata, () => message.metadata = Metadata.deserialize(reader));
+                        reader.readMessage(message.metadata, () => (message.metadata = Metadata.deserialize(reader)));
                         break;
                     case 2:
-                        reader.readMessage(message.documents, () => pb_1.Message.addToRepeatedWrapperField(message, 2, Document.deserialize(reader), Document));
+                        reader.readMessage(message.documents, () =>
+                            pb_1.Message.addToRepeatedWrapperField(message, 2, Document.deserialize(reader), Document)
+                        );
                         break;
                     case 3:
-                        reader.readMessage(message.external_symbols, () => pb_1.Message.addToRepeatedWrapperField(message, 3, SymbolInformation.deserialize(reader), SymbolInformation));
+                        reader.readMessage(message.external_symbols, () =>
+                            pb_1.Message.addToRepeatedWrapperField(
+                                message,
+                                3,
+                                SymbolInformation.deserialize(reader),
+                                SymbolInformation
+                            )
+                        );
                         break;
-                    default: reader.skipField();
+                    default:
+                        reader.skipField();
                 }
             }
             return message;
@@ -310,31 +324,39 @@ export namespace scip {
     }
     export class Metadata extends pb_1.Message {
         #one_of_decls: number[][] = [];
-        constructor(data?: any[] | {
-            version?: ProtocolVersion;
-            tool_info?: ToolInfo;
-            project_root?: string;
-            text_document_encoding?: TextEncoding;
-        }) {
+        constructor(
+            data?:
+                | any[]
+                | {
+                      version?: ProtocolVersion;
+                      tool_info?: ToolInfo;
+                      project_root?: string;
+                      text_document_encoding?: TextEncoding;
+                  }
+        ) {
             super();
             pb_1.Message.initialize(this, Array.isArray(data) ? data : [], 0, -1, [], this.#one_of_decls);
-            if (!Array.isArray(data) && typeof data == "object") {
-                if ("version" in data && data.version != undefined) {
+            if (!Array.isArray(data) && typeof data == 'object') {
+                if ('version' in data && data.version != undefined) {
                     this.version = data.version;
                 }
-                if ("tool_info" in data && data.tool_info != undefined) {
+                if ('tool_info' in data && data.tool_info != undefined) {
                     this.tool_info = data.tool_info;
                 }
-                if ("project_root" in data && data.project_root != undefined) {
+                if ('project_root' in data && data.project_root != undefined) {
                     this.project_root = data.project_root;
                 }
-                if ("text_document_encoding" in data && data.text_document_encoding != undefined) {
+                if ('text_document_encoding' in data && data.text_document_encoding != undefined) {
                     this.text_document_encoding = data.text_document_encoding;
                 }
             }
         }
         get version() {
-            return pb_1.Message.getFieldWithDefault(this, 1, ProtocolVersion.UnspecifiedProtocolVersion) as ProtocolVersion;
+            return pb_1.Message.getFieldWithDefault(
+                this,
+                1,
+                ProtocolVersion.UnspecifiedProtocolVersion
+            ) as ProtocolVersion;
         }
         set version(value: ProtocolVersion) {
             pb_1.Message.setField(this, 1, value);
@@ -349,7 +371,7 @@ export namespace scip {
             return pb_1.Message.getField(this, 2) != null;
         }
         get project_root() {
-            return pb_1.Message.getFieldWithDefault(this, 3, "") as string;
+            return pb_1.Message.getFieldWithDefault(this, 3, '') as string;
         }
         set project_root(value: string) {
             pb_1.Message.setField(this, 3, value);
@@ -406,28 +428,24 @@ export namespace scip {
         serialize(w: pb_1.BinaryWriter): void;
         serialize(w?: pb_1.BinaryWriter): Uint8Array | void {
             const writer = w || new pb_1.BinaryWriter();
-            if (this.version != ProtocolVersion.UnspecifiedProtocolVersion)
-                writer.writeEnum(1, this.version);
-            if (this.has_tool_info)
-                writer.writeMessage(2, this.tool_info, () => this.tool_info.serialize(writer));
-            if (this.project_root.length)
-                writer.writeString(3, this.project_root);
+            if (this.version != ProtocolVersion.UnspecifiedProtocolVersion) writer.writeEnum(1, this.version);
+            if (this.has_tool_info) writer.writeMessage(2, this.tool_info, () => this.tool_info.serialize(writer));
+            if (this.project_root.length) writer.writeString(3, this.project_root);
             if (this.text_document_encoding != TextEncoding.UnspecifiedTextEncoding)
                 writer.writeEnum(4, this.text_document_encoding);
-            if (!w)
-                return writer.getResultBuffer();
+            if (!w) return writer.getResultBuffer();
         }
         static deserialize(bytes: Uint8Array | pb_1.BinaryReader): Metadata {
-            const reader = bytes instanceof pb_1.BinaryReader ? bytes : new pb_1.BinaryReader(bytes), message = new Metadata();
+            const reader = bytes instanceof pb_1.BinaryReader ? bytes : new pb_1.BinaryReader(bytes),
+                message = new Metadata();
             while (reader.nextField()) {
-                if (reader.isEndGroup())
-                    break;
+                if (reader.isEndGroup()) break;
                 switch (reader.getFieldNumber()) {
                     case 1:
                         message.version = reader.readEnum();
                         break;
                     case 2:
-                        reader.readMessage(message.tool_info, () => message.tool_info = ToolInfo.deserialize(reader));
+                        reader.readMessage(message.tool_info, () => (message.tool_info = ToolInfo.deserialize(reader)));
                         break;
                     case 3:
                         message.project_root = reader.readString();
@@ -435,7 +453,8 @@ export namespace scip {
                     case 4:
                         message.text_document_encoding = reader.readEnum();
                         break;
-                    default: reader.skipField();
+                    default:
+                        reader.skipField();
                 }
             }
             return message;
@@ -449,33 +468,37 @@ export namespace scip {
     }
     export class ToolInfo extends pb_1.Message {
         #one_of_decls: number[][] = [];
-        constructor(data?: any[] | {
-            name?: string;
-            version?: string;
-            arguments?: string[];
-        }) {
+        constructor(
+            data?:
+                | any[]
+                | {
+                      name?: string;
+                      version?: string;
+                      arguments?: string[];
+                  }
+        ) {
             super();
             pb_1.Message.initialize(this, Array.isArray(data) ? data : [], 0, -1, [3], this.#one_of_decls);
-            if (!Array.isArray(data) && typeof data == "object") {
-                if ("name" in data && data.name != undefined) {
+            if (!Array.isArray(data) && typeof data == 'object') {
+                if ('name' in data && data.name != undefined) {
                     this.name = data.name;
                 }
-                if ("version" in data && data.version != undefined) {
+                if ('version' in data && data.version != undefined) {
                     this.version = data.version;
                 }
-                if ("arguments" in data && data.arguments != undefined) {
+                if ('arguments' in data && data.arguments != undefined) {
                     this.arguments = data.arguments;
                 }
             }
         }
         get name() {
-            return pb_1.Message.getFieldWithDefault(this, 1, "") as string;
+            return pb_1.Message.getFieldWithDefault(this, 1, '') as string;
         }
         set name(value: string) {
             pb_1.Message.setField(this, 1, value);
         }
         get version() {
-            return pb_1.Message.getFieldWithDefault(this, 2, "") as string;
+            return pb_1.Message.getFieldWithDefault(this, 2, '') as string;
         }
         set version(value: string) {
             pb_1.Message.setField(this, 2, value);
@@ -486,11 +509,7 @@ export namespace scip {
         set arguments(value: string[]) {
             pb_1.Message.setField(this, 3, value);
         }
-        static fromObject(data: {
-            name?: string;
-            version?: string;
-            arguments?: string[];
-        }): ToolInfo {
+        static fromObject(data: { name?: string; version?: string; arguments?: string[] }): ToolInfo {
             const message = new ToolInfo({});
             if (data.name != null) {
                 message.name = data.name;
@@ -524,20 +543,16 @@ export namespace scip {
         serialize(w: pb_1.BinaryWriter): void;
         serialize(w?: pb_1.BinaryWriter): Uint8Array | void {
             const writer = w || new pb_1.BinaryWriter();
-            if (this.name.length)
-                writer.writeString(1, this.name);
-            if (this.version.length)
-                writer.writeString(2, this.version);
-            if (this.arguments.length)
-                writer.writeRepeatedString(3, this.arguments);
-            if (!w)
-                return writer.getResultBuffer();
+            if (this.name.length) writer.writeString(1, this.name);
+            if (this.version.length) writer.writeString(2, this.version);
+            if (this.arguments.length) writer.writeRepeatedString(3, this.arguments);
+            if (!w) return writer.getResultBuffer();
         }
         static deserialize(bytes: Uint8Array | pb_1.BinaryReader): ToolInfo {
-            const reader = bytes instanceof pb_1.BinaryReader ? bytes : new pb_1.BinaryReader(bytes), message = new ToolInfo();
+            const reader = bytes instanceof pb_1.BinaryReader ? bytes : new pb_1.BinaryReader(bytes),
+                message = new ToolInfo();
             while (reader.nextField()) {
-                if (reader.isEndGroup())
-                    break;
+                if (reader.isEndGroup()) break;
                 switch (reader.getFieldNumber()) {
                     case 1:
                         message.name = reader.readString();
@@ -548,7 +563,8 @@ export namespace scip {
                     case 3:
                         pb_1.Message.addToRepeatedField(message, 3, reader.readString());
                         break;
-                    default: reader.skipField();
+                    default:
+                        reader.skipField();
                 }
             }
             return message;
@@ -562,41 +578,45 @@ export namespace scip {
     }
     export class Document extends pb_1.Message {
         #one_of_decls: number[][] = [];
-        constructor(data?: any[] | {
-            language?: string;
-            relative_path?: string;
-            occurrences?: Occurrence[];
-            symbols?: SymbolInformation[];
-            text?: string;
-        }) {
+        constructor(
+            data?:
+                | any[]
+                | {
+                      language?: string;
+                      relative_path?: string;
+                      occurrences?: Occurrence[];
+                      symbols?: SymbolInformation[];
+                      text?: string;
+                  }
+        ) {
             super();
             pb_1.Message.initialize(this, Array.isArray(data) ? data : [], 0, -1, [2, 3], this.#one_of_decls);
-            if (!Array.isArray(data) && typeof data == "object") {
-                if ("language" in data && data.language != undefined) {
+            if (!Array.isArray(data) && typeof data == 'object') {
+                if ('language' in data && data.language != undefined) {
                     this.language = data.language;
                 }
-                if ("relative_path" in data && data.relative_path != undefined) {
+                if ('relative_path' in data && data.relative_path != undefined) {
                     this.relative_path = data.relative_path;
                 }
-                if ("occurrences" in data && data.occurrences != undefined) {
+                if ('occurrences' in data && data.occurrences != undefined) {
                     this.occurrences = data.occurrences;
                 }
-                if ("symbols" in data && data.symbols != undefined) {
+                if ('symbols' in data && data.symbols != undefined) {
                     this.symbols = data.symbols;
                 }
-                if ("text" in data && data.text != undefined) {
+                if ('text' in data && data.text != undefined) {
                     this.text = data.text;
                 }
             }
         }
         get language() {
-            return pb_1.Message.getFieldWithDefault(this, 4, "") as string;
+            return pb_1.Message.getFieldWithDefault(this, 4, '') as string;
         }
         set language(value: string) {
             pb_1.Message.setField(this, 4, value);
         }
         get relative_path() {
-            return pb_1.Message.getFieldWithDefault(this, 1, "") as string;
+            return pb_1.Message.getFieldWithDefault(this, 1, '') as string;
         }
         set relative_path(value: string) {
             pb_1.Message.setField(this, 1, value);
@@ -614,7 +634,7 @@ export namespace scip {
             pb_1.Message.setRepeatedWrapperField(this, 3, value);
         }
         get text() {
-            return pb_1.Message.getFieldWithDefault(this, 5, "") as string;
+            return pb_1.Message.getFieldWithDefault(this, 5, '') as string;
         }
         set text(value: string) {
             pb_1.Message.setField(this, 5, value);
@@ -634,10 +654,10 @@ export namespace scip {
                 message.relative_path = data.relative_path;
             }
             if (data.occurrences != null) {
-                message.occurrences = data.occurrences.map(item => Occurrence.fromObject(item));
+                message.occurrences = data.occurrences.map((item) => Occurrence.fromObject(item));
             }
             if (data.symbols != null) {
-                message.symbols = data.symbols.map(item => SymbolInformation.fromObject(item));
+                message.symbols = data.symbols.map((item) => SymbolInformation.fromObject(item));
             }
             if (data.text != null) {
                 message.text = data.text;
@@ -673,24 +693,20 @@ export namespace scip {
         serialize(w: pb_1.BinaryWriter): void;
         serialize(w?: pb_1.BinaryWriter): Uint8Array | void {
             const writer = w || new pb_1.BinaryWriter();
-            if (this.language.length)
-                writer.writeString(4, this.language);
-            if (this.relative_path.length)
-                writer.writeString(1, this.relative_path);
+            if (this.language.length) writer.writeString(4, this.language);
+            if (this.relative_path.length) writer.writeString(1, this.relative_path);
             if (this.occurrences.length)
                 writer.writeRepeatedMessage(2, this.occurrences, (item: Occurrence) => item.serialize(writer));
             if (this.symbols.length)
                 writer.writeRepeatedMessage(3, this.symbols, (item: SymbolInformation) => item.serialize(writer));
-            if (this.text.length)
-                writer.writeString(5, this.text);
-            if (!w)
-                return writer.getResultBuffer();
+            if (this.text.length) writer.writeString(5, this.text);
+            if (!w) return writer.getResultBuffer();
         }
         static deserialize(bytes: Uint8Array | pb_1.BinaryReader): Document {
-            const reader = bytes instanceof pb_1.BinaryReader ? bytes : new pb_1.BinaryReader(bytes), message = new Document();
+            const reader = bytes instanceof pb_1.BinaryReader ? bytes : new pb_1.BinaryReader(bytes),
+                message = new Document();
             while (reader.nextField()) {
-                if (reader.isEndGroup())
-                    break;
+                if (reader.isEndGroup()) break;
                 switch (reader.getFieldNumber()) {
                     case 4:
                         message.language = reader.readString();
@@ -699,15 +715,30 @@ export namespace scip {
                         message.relative_path = reader.readString();
                         break;
                     case 2:
-                        reader.readMessage(message.occurrences, () => pb_1.Message.addToRepeatedWrapperField(message, 2, Occurrence.deserialize(reader), Occurrence));
+                        reader.readMessage(message.occurrences, () =>
+                            pb_1.Message.addToRepeatedWrapperField(
+                                message,
+                                2,
+                                Occurrence.deserialize(reader),
+                                Occurrence
+                            )
+                        );
                         break;
                     case 3:
-                        reader.readMessage(message.symbols, () => pb_1.Message.addToRepeatedWrapperField(message, 3, SymbolInformation.deserialize(reader), SymbolInformation));
+                        reader.readMessage(message.symbols, () =>
+                            pb_1.Message.addToRepeatedWrapperField(
+                                message,
+                                3,
+                                SymbolInformation.deserialize(reader),
+                                SymbolInformation
+                            )
+                        );
                         break;
                     case 5:
                         message.text = reader.readString();
                         break;
-                    default: reader.skipField();
+                    default:
+                        reader.skipField();
                 }
             }
             return message;
@@ -721,27 +752,31 @@ export namespace scip {
     }
     export class Symbol extends pb_1.Message {
         #one_of_decls: number[][] = [];
-        constructor(data?: any[] | {
-            scheme?: string;
-            package?: Package;
-            descriptors?: Descriptor[];
-        }) {
+        constructor(
+            data?:
+                | any[]
+                | {
+                      scheme?: string;
+                      package?: Package;
+                      descriptors?: Descriptor[];
+                  }
+        ) {
             super();
             pb_1.Message.initialize(this, Array.isArray(data) ? data : [], 0, -1, [3], this.#one_of_decls);
-            if (!Array.isArray(data) && typeof data == "object") {
-                if ("scheme" in data && data.scheme != undefined) {
+            if (!Array.isArray(data) && typeof data == 'object') {
+                if ('scheme' in data && data.scheme != undefined) {
                     this.scheme = data.scheme;
                 }
-                if ("package" in data && data.package != undefined) {
+                if ('package' in data && data.package != undefined) {
                     this.package = data.package;
                 }
-                if ("descriptors" in data && data.descriptors != undefined) {
+                if ('descriptors' in data && data.descriptors != undefined) {
                     this.descriptors = data.descriptors;
                 }
             }
         }
         get scheme() {
-            return pb_1.Message.getFieldWithDefault(this, 1, "") as string;
+            return pb_1.Message.getFieldWithDefault(this, 1, '') as string;
         }
         set scheme(value: string) {
             pb_1.Message.setField(this, 1, value);
@@ -774,7 +809,7 @@ export namespace scip {
                 message.package = Package.fromObject(data.package);
             }
             if (data.descriptors != null) {
-                message.descriptors = data.descriptors.map(item => Descriptor.fromObject(item));
+                message.descriptors = data.descriptors.map((item) => Descriptor.fromObject(item));
             }
             return message;
         }
@@ -799,31 +834,36 @@ export namespace scip {
         serialize(w: pb_1.BinaryWriter): void;
         serialize(w?: pb_1.BinaryWriter): Uint8Array | void {
             const writer = w || new pb_1.BinaryWriter();
-            if (this.scheme.length)
-                writer.writeString(1, this.scheme);
-            if (this.has_package)
-                writer.writeMessage(2, this.package, () => this.package.serialize(writer));
+            if (this.scheme.length) writer.writeString(1, this.scheme);
+            if (this.has_package) writer.writeMessage(2, this.package, () => this.package.serialize(writer));
             if (this.descriptors.length)
                 writer.writeRepeatedMessage(3, this.descriptors, (item: Descriptor) => item.serialize(writer));
-            if (!w)
-                return writer.getResultBuffer();
+            if (!w) return writer.getResultBuffer();
         }
         static deserialize(bytes: Uint8Array | pb_1.BinaryReader): Symbol {
-            const reader = bytes instanceof pb_1.BinaryReader ? bytes : new pb_1.BinaryReader(bytes), message = new Symbol();
+            const reader = bytes instanceof pb_1.BinaryReader ? bytes : new pb_1.BinaryReader(bytes),
+                message = new Symbol();
             while (reader.nextField()) {
-                if (reader.isEndGroup())
-                    break;
+                if (reader.isEndGroup()) break;
                 switch (reader.getFieldNumber()) {
                     case 1:
                         message.scheme = reader.readString();
                         break;
                     case 2:
-                        reader.readMessage(message.package, () => message.package = Package.deserialize(reader));
+                        reader.readMessage(message.package, () => (message.package = Package.deserialize(reader)));
                         break;
                     case 3:
-                        reader.readMessage(message.descriptors, () => pb_1.Message.addToRepeatedWrapperField(message, 3, Descriptor.deserialize(reader), Descriptor));
+                        reader.readMessage(message.descriptors, () =>
+                            pb_1.Message.addToRepeatedWrapperField(
+                                message,
+                                3,
+                                Descriptor.deserialize(reader),
+                                Descriptor
+                            )
+                        );
                         break;
-                    default: reader.skipField();
+                    default:
+                        reader.skipField();
                 }
             }
             return message;
@@ -837,48 +877,48 @@ export namespace scip {
     }
     export class Package extends pb_1.Message {
         #one_of_decls: number[][] = [];
-        constructor(data?: any[] | {
-            manager?: string;
-            name?: string;
-            version?: string;
-        }) {
+        constructor(
+            data?:
+                | any[]
+                | {
+                      manager?: string;
+                      name?: string;
+                      version?: string;
+                  }
+        ) {
             super();
             pb_1.Message.initialize(this, Array.isArray(data) ? data : [], 0, -1, [], this.#one_of_decls);
-            if (!Array.isArray(data) && typeof data == "object") {
-                if ("manager" in data && data.manager != undefined) {
+            if (!Array.isArray(data) && typeof data == 'object') {
+                if ('manager' in data && data.manager != undefined) {
                     this.manager = data.manager;
                 }
-                if ("name" in data && data.name != undefined) {
+                if ('name' in data && data.name != undefined) {
                     this.name = data.name;
                 }
-                if ("version" in data && data.version != undefined) {
+                if ('version' in data && data.version != undefined) {
                     this.version = data.version;
                 }
             }
         }
         get manager() {
-            return pb_1.Message.getFieldWithDefault(this, 1, "") as string;
+            return pb_1.Message.getFieldWithDefault(this, 1, '') as string;
         }
         set manager(value: string) {
             pb_1.Message.setField(this, 1, value);
         }
         get name() {
-            return pb_1.Message.getFieldWithDefault(this, 2, "") as string;
+            return pb_1.Message.getFieldWithDefault(this, 2, '') as string;
         }
         set name(value: string) {
             pb_1.Message.setField(this, 2, value);
         }
         get version() {
-            return pb_1.Message.getFieldWithDefault(this, 3, "") as string;
+            return pb_1.Message.getFieldWithDefault(this, 3, '') as string;
         }
         set version(value: string) {
             pb_1.Message.setField(this, 3, value);
         }
-        static fromObject(data: {
-            manager?: string;
-            name?: string;
-            version?: string;
-        }): Package {
+        static fromObject(data: { manager?: string; name?: string; version?: string }): Package {
             const message = new Package({});
             if (data.manager != null) {
                 message.manager = data.manager;
@@ -912,20 +952,16 @@ export namespace scip {
         serialize(w: pb_1.BinaryWriter): void;
         serialize(w?: pb_1.BinaryWriter): Uint8Array | void {
             const writer = w || new pb_1.BinaryWriter();
-            if (this.manager.length)
-                writer.writeString(1, this.manager);
-            if (this.name.length)
-                writer.writeString(2, this.name);
-            if (this.version.length)
-                writer.writeString(3, this.version);
-            if (!w)
-                return writer.getResultBuffer();
+            if (this.manager.length) writer.writeString(1, this.manager);
+            if (this.name.length) writer.writeString(2, this.name);
+            if (this.version.length) writer.writeString(3, this.version);
+            if (!w) return writer.getResultBuffer();
         }
         static deserialize(bytes: Uint8Array | pb_1.BinaryReader): Package {
-            const reader = bytes instanceof pb_1.BinaryReader ? bytes : new pb_1.BinaryReader(bytes), message = new Package();
+            const reader = bytes instanceof pb_1.BinaryReader ? bytes : new pb_1.BinaryReader(bytes),
+                message = new Package();
             while (reader.nextField()) {
-                if (reader.isEndGroup())
-                    break;
+                if (reader.isEndGroup()) break;
                 switch (reader.getFieldNumber()) {
                     case 1:
                         message.manager = reader.readString();
@@ -936,7 +972,8 @@ export namespace scip {
                     case 3:
                         message.version = reader.readString();
                         break;
-                    default: reader.skipField();
+                    default:
+                        reader.skipField();
                 }
             }
             return message;
@@ -950,33 +987,37 @@ export namespace scip {
     }
     export class Descriptor extends pb_1.Message {
         #one_of_decls: number[][] = [];
-        constructor(data?: any[] | {
-            name?: string;
-            disambiguator?: string;
-            suffix?: Descriptor.Suffix;
-        }) {
+        constructor(
+            data?:
+                | any[]
+                | {
+                      name?: string;
+                      disambiguator?: string;
+                      suffix?: Descriptor.Suffix;
+                  }
+        ) {
             super();
             pb_1.Message.initialize(this, Array.isArray(data) ? data : [], 0, -1, [], this.#one_of_decls);
-            if (!Array.isArray(data) && typeof data == "object") {
-                if ("name" in data && data.name != undefined) {
+            if (!Array.isArray(data) && typeof data == 'object') {
+                if ('name' in data && data.name != undefined) {
                     this.name = data.name;
                 }
-                if ("disambiguator" in data && data.disambiguator != undefined) {
+                if ('disambiguator' in data && data.disambiguator != undefined) {
                     this.disambiguator = data.disambiguator;
                 }
-                if ("suffix" in data && data.suffix != undefined) {
+                if ('suffix' in data && data.suffix != undefined) {
                     this.suffix = data.suffix;
                 }
             }
         }
         get name() {
-            return pb_1.Message.getFieldWithDefault(this, 1, "") as string;
+            return pb_1.Message.getFieldWithDefault(this, 1, '') as string;
         }
         set name(value: string) {
             pb_1.Message.setField(this, 1, value);
         }
         get disambiguator() {
-            return pb_1.Message.getFieldWithDefault(this, 2, "") as string;
+            return pb_1.Message.getFieldWithDefault(this, 2, '') as string;
         }
         set disambiguator(value: string) {
             pb_1.Message.setField(this, 2, value);
@@ -987,11 +1028,7 @@ export namespace scip {
         set suffix(value: Descriptor.Suffix) {
             pb_1.Message.setField(this, 3, value);
         }
-        static fromObject(data: {
-            name?: string;
-            disambiguator?: string;
-            suffix?: Descriptor.Suffix;
-        }): Descriptor {
+        static fromObject(data: { name?: string; disambiguator?: string; suffix?: Descriptor.Suffix }): Descriptor {
             const message = new Descriptor({});
             if (data.name != null) {
                 message.name = data.name;
@@ -1025,20 +1062,16 @@ export namespace scip {
         serialize(w: pb_1.BinaryWriter): void;
         serialize(w?: pb_1.BinaryWriter): Uint8Array | void {
             const writer = w || new pb_1.BinaryWriter();
-            if (this.name.length)
-                writer.writeString(1, this.name);
-            if (this.disambiguator.length)
-                writer.writeString(2, this.disambiguator);
-            if (this.suffix != Descriptor.Suffix.UnspecifiedSuffix)
-                writer.writeEnum(3, this.suffix);
-            if (!w)
-                return writer.getResultBuffer();
+            if (this.name.length) writer.writeString(1, this.name);
+            if (this.disambiguator.length) writer.writeString(2, this.disambiguator);
+            if (this.suffix != Descriptor.Suffix.UnspecifiedSuffix) writer.writeEnum(3, this.suffix);
+            if (!w) return writer.getResultBuffer();
         }
         static deserialize(bytes: Uint8Array | pb_1.BinaryReader): Descriptor {
-            const reader = bytes instanceof pb_1.BinaryReader ? bytes : new pb_1.BinaryReader(bytes), message = new Descriptor();
+            const reader = bytes instanceof pb_1.BinaryReader ? bytes : new pb_1.BinaryReader(bytes),
+                message = new Descriptor();
             while (reader.nextField()) {
-                if (reader.isEndGroup())
-                    break;
+                if (reader.isEndGroup()) break;
                 switch (reader.getFieldNumber()) {
                     case 1:
                         message.name = reader.readString();
@@ -1049,7 +1082,8 @@ export namespace scip {
                     case 3:
                         message.suffix = reader.readEnum();
                         break;
-                    default: reader.skipField();
+                    default:
+                        reader.skipField();
                 }
             }
             return message;
@@ -1074,48 +1108,52 @@ export namespace scip {
             Parameter = 6,
             Meta = 7,
             Local = 8,
-            Macro = 9
+            Macro = 9,
         }
     }
     export class SymbolInformation extends pb_1.Message {
         #one_of_decls: number[][] = [];
-        constructor(data?: any[] | {
-            symbol?: string;
-            documentation?: string[];
-            relationships?: Relationship[];
-            kind?: SymbolInformation.Kind;
-            display_name?: string;
-            signature_documentation?: Document;
-            enclosing_symbol?: string;
-        }) {
+        constructor(
+            data?:
+                | any[]
+                | {
+                      symbol?: string;
+                      documentation?: string[];
+                      relationships?: Relationship[];
+                      kind?: SymbolInformation.Kind;
+                      display_name?: string;
+                      signature_documentation?: Document;
+                      enclosing_symbol?: string;
+                  }
+        ) {
             super();
             pb_1.Message.initialize(this, Array.isArray(data) ? data : [], 0, -1, [3, 4], this.#one_of_decls);
-            if (!Array.isArray(data) && typeof data == "object") {
-                if ("symbol" in data && data.symbol != undefined) {
+            if (!Array.isArray(data) && typeof data == 'object') {
+                if ('symbol' in data && data.symbol != undefined) {
                     this.symbol = data.symbol;
                 }
-                if ("documentation" in data && data.documentation != undefined) {
+                if ('documentation' in data && data.documentation != undefined) {
                     this.documentation = data.documentation;
                 }
-                if ("relationships" in data && data.relationships != undefined) {
+                if ('relationships' in data && data.relationships != undefined) {
                     this.relationships = data.relationships;
                 }
-                if ("kind" in data && data.kind != undefined) {
+                if ('kind' in data && data.kind != undefined) {
                     this.kind = data.kind;
                 }
-                if ("display_name" in data && data.display_name != undefined) {
+                if ('display_name' in data && data.display_name != undefined) {
                     this.display_name = data.display_name;
                 }
-                if ("signature_documentation" in data && data.signature_documentation != undefined) {
+                if ('signature_documentation' in data && data.signature_documentation != undefined) {
                     this.signature_documentation = data.signature_documentation;
                 }
-                if ("enclosing_symbol" in data && data.enclosing_symbol != undefined) {
+                if ('enclosing_symbol' in data && data.enclosing_symbol != undefined) {
                     this.enclosing_symbol = data.enclosing_symbol;
                 }
             }
         }
         get symbol() {
-            return pb_1.Message.getFieldWithDefault(this, 1, "") as string;
+            return pb_1.Message.getFieldWithDefault(this, 1, '') as string;
         }
         set symbol(value: string) {
             pb_1.Message.setField(this, 1, value);
@@ -1133,13 +1171,17 @@ export namespace scip {
             pb_1.Message.setRepeatedWrapperField(this, 4, value);
         }
         get kind() {
-            return pb_1.Message.getFieldWithDefault(this, 5, SymbolInformation.Kind.UnspecifiedKind) as SymbolInformation.Kind;
+            return pb_1.Message.getFieldWithDefault(
+                this,
+                5,
+                SymbolInformation.Kind.UnspecifiedKind
+            ) as SymbolInformation.Kind;
         }
         set kind(value: SymbolInformation.Kind) {
             pb_1.Message.setField(this, 5, value);
         }
         get display_name() {
-            return pb_1.Message.getFieldWithDefault(this, 6, "") as string;
+            return pb_1.Message.getFieldWithDefault(this, 6, '') as string;
         }
         set display_name(value: string) {
             pb_1.Message.setField(this, 6, value);
@@ -1154,7 +1196,7 @@ export namespace scip {
             return pb_1.Message.getField(this, 7) != null;
         }
         get enclosing_symbol() {
-            return pb_1.Message.getFieldWithDefault(this, 8, "") as string;
+            return pb_1.Message.getFieldWithDefault(this, 8, '') as string;
         }
         set enclosing_symbol(value: string) {
             pb_1.Message.setField(this, 8, value);
@@ -1176,7 +1218,7 @@ export namespace scip {
                 message.documentation = data.documentation;
             }
             if (data.relationships != null) {
-                message.relationships = data.relationships.map(item => Relationship.fromObject(item));
+                message.relationships = data.relationships.map((item) => Relationship.fromObject(item));
             }
             if (data.kind != null) {
                 message.kind = data.kind;
@@ -1229,28 +1271,24 @@ export namespace scip {
         serialize(w: pb_1.BinaryWriter): void;
         serialize(w?: pb_1.BinaryWriter): Uint8Array | void {
             const writer = w || new pb_1.BinaryWriter();
-            if (this.symbol.length)
-                writer.writeString(1, this.symbol);
-            if (this.documentation.length)
-                writer.writeRepeatedString(3, this.documentation);
+            if (this.symbol.length) writer.writeString(1, this.symbol);
+            if (this.documentation.length) writer.writeRepeatedString(3, this.documentation);
             if (this.relationships.length)
                 writer.writeRepeatedMessage(4, this.relationships, (item: Relationship) => item.serialize(writer));
-            if (this.kind != SymbolInformation.Kind.UnspecifiedKind)
-                writer.writeEnum(5, this.kind);
-            if (this.display_name.length)
-                writer.writeString(6, this.display_name);
+            if (this.kind != SymbolInformation.Kind.UnspecifiedKind) writer.writeEnum(5, this.kind);
+            if (this.display_name.length) writer.writeString(6, this.display_name);
             if (this.has_signature_documentation)
-                writer.writeMessage(7, this.signature_documentation, () => this.signature_documentation.serialize(writer));
-            if (this.enclosing_symbol.length)
-                writer.writeString(8, this.enclosing_symbol);
-            if (!w)
-                return writer.getResultBuffer();
+                writer.writeMessage(7, this.signature_documentation, () =>
+                    this.signature_documentation.serialize(writer)
+                );
+            if (this.enclosing_symbol.length) writer.writeString(8, this.enclosing_symbol);
+            if (!w) return writer.getResultBuffer();
         }
         static deserialize(bytes: Uint8Array | pb_1.BinaryReader): SymbolInformation {
-            const reader = bytes instanceof pb_1.BinaryReader ? bytes : new pb_1.BinaryReader(bytes), message = new SymbolInformation();
+            const reader = bytes instanceof pb_1.BinaryReader ? bytes : new pb_1.BinaryReader(bytes),
+                message = new SymbolInformation();
             while (reader.nextField()) {
-                if (reader.isEndGroup())
-                    break;
+                if (reader.isEndGroup()) break;
                 switch (reader.getFieldNumber()) {
                     case 1:
                         message.symbol = reader.readString();
@@ -1259,7 +1297,14 @@ export namespace scip {
                         pb_1.Message.addToRepeatedField(message, 3, reader.readString());
                         break;
                     case 4:
-                        reader.readMessage(message.relationships, () => pb_1.Message.addToRepeatedWrapperField(message, 4, Relationship.deserialize(reader), Relationship));
+                        reader.readMessage(message.relationships, () =>
+                            pb_1.Message.addToRepeatedWrapperField(
+                                message,
+                                4,
+                                Relationship.deserialize(reader),
+                                Relationship
+                            )
+                        );
                         break;
                     case 5:
                         message.kind = reader.readEnum();
@@ -1268,12 +1313,16 @@ export namespace scip {
                         message.display_name = reader.readString();
                         break;
                     case 7:
-                        reader.readMessage(message.signature_documentation, () => message.signature_documentation = Document.deserialize(reader));
+                        reader.readMessage(
+                            message.signature_documentation,
+                            () => (message.signature_documentation = Document.deserialize(reader))
+                        );
                         break;
                     case 8:
                         message.enclosing_symbol = reader.readString();
                         break;
-                    default: reader.skipField();
+                    default:
+                        reader.skipField();
                 }
             }
             return message;
@@ -1369,40 +1418,44 @@ export namespace scip {
             TypeParameter = 58,
             Union = 59,
             Value = 60,
-            Variable = 61
+            Variable = 61,
         }
     }
     export class Relationship extends pb_1.Message {
         #one_of_decls: number[][] = [];
-        constructor(data?: any[] | {
-            symbol?: string;
-            is_reference?: boolean;
-            is_implementation?: boolean;
-            is_type_definition?: boolean;
-            is_definition?: boolean;
-        }) {
+        constructor(
+            data?:
+                | any[]
+                | {
+                      symbol?: string;
+                      is_reference?: boolean;
+                      is_implementation?: boolean;
+                      is_type_definition?: boolean;
+                      is_definition?: boolean;
+                  }
+        ) {
             super();
             pb_1.Message.initialize(this, Array.isArray(data) ? data : [], 0, -1, [], this.#one_of_decls);
-            if (!Array.isArray(data) && typeof data == "object") {
-                if ("symbol" in data && data.symbol != undefined) {
+            if (!Array.isArray(data) && typeof data == 'object') {
+                if ('symbol' in data && data.symbol != undefined) {
                     this.symbol = data.symbol;
                 }
-                if ("is_reference" in data && data.is_reference != undefined) {
+                if ('is_reference' in data && data.is_reference != undefined) {
                     this.is_reference = data.is_reference;
                 }
-                if ("is_implementation" in data && data.is_implementation != undefined) {
+                if ('is_implementation' in data && data.is_implementation != undefined) {
                     this.is_implementation = data.is_implementation;
                 }
-                if ("is_type_definition" in data && data.is_type_definition != undefined) {
+                if ('is_type_definition' in data && data.is_type_definition != undefined) {
                     this.is_type_definition = data.is_type_definition;
                 }
-                if ("is_definition" in data && data.is_definition != undefined) {
+                if ('is_definition' in data && data.is_definition != undefined) {
                     this.is_definition = data.is_definition;
                 }
             }
         }
         get symbol() {
-            return pb_1.Message.getFieldWithDefault(this, 1, "") as string;
+            return pb_1.Message.getFieldWithDefault(this, 1, '') as string;
         }
         set symbol(value: string) {
             pb_1.Message.setField(this, 1, value);
@@ -1485,24 +1538,18 @@ export namespace scip {
         serialize(w: pb_1.BinaryWriter): void;
         serialize(w?: pb_1.BinaryWriter): Uint8Array | void {
             const writer = w || new pb_1.BinaryWriter();
-            if (this.symbol.length)
-                writer.writeString(1, this.symbol);
-            if (this.is_reference != false)
-                writer.writeBool(2, this.is_reference);
-            if (this.is_implementation != false)
-                writer.writeBool(3, this.is_implementation);
-            if (this.is_type_definition != false)
-                writer.writeBool(4, this.is_type_definition);
-            if (this.is_definition != false)
-                writer.writeBool(5, this.is_definition);
-            if (!w)
-                return writer.getResultBuffer();
+            if (this.symbol.length) writer.writeString(1, this.symbol);
+            if (this.is_reference != false) writer.writeBool(2, this.is_reference);
+            if (this.is_implementation != false) writer.writeBool(3, this.is_implementation);
+            if (this.is_type_definition != false) writer.writeBool(4, this.is_type_definition);
+            if (this.is_definition != false) writer.writeBool(5, this.is_definition);
+            if (!w) return writer.getResultBuffer();
         }
         static deserialize(bytes: Uint8Array | pb_1.BinaryReader): Relationship {
-            const reader = bytes instanceof pb_1.BinaryReader ? bytes : new pb_1.BinaryReader(bytes), message = new Relationship();
+            const reader = bytes instanceof pb_1.BinaryReader ? bytes : new pb_1.BinaryReader(bytes),
+                message = new Relationship();
             while (reader.nextField()) {
-                if (reader.isEndGroup())
-                    break;
+                if (reader.isEndGroup()) break;
                 switch (reader.getFieldNumber()) {
                     case 1:
                         message.symbol = reader.readString();
@@ -1519,7 +1566,8 @@ export namespace scip {
                     case 5:
                         message.is_definition = reader.readBool();
                         break;
-                    default: reader.skipField();
+                    default:
+                        reader.skipField();
                 }
             }
             return message;
@@ -1533,37 +1581,41 @@ export namespace scip {
     }
     export class Occurrence extends pb_1.Message {
         #one_of_decls: number[][] = [];
-        constructor(data?: any[] | {
-            range?: number[];
-            symbol?: string;
-            symbol_roles?: number;
-            override_documentation?: string[];
-            syntax_kind?: SyntaxKind;
-            diagnostics?: Diagnostic[];
-            enclosing_range?: number[];
-        }) {
+        constructor(
+            data?:
+                | any[]
+                | {
+                      range?: number[];
+                      symbol?: string;
+                      symbol_roles?: number;
+                      override_documentation?: string[];
+                      syntax_kind?: SyntaxKind;
+                      diagnostics?: Diagnostic[];
+                      enclosing_range?: number[];
+                  }
+        ) {
             super();
             pb_1.Message.initialize(this, Array.isArray(data) ? data : [], 0, -1, [1, 4, 6, 7], this.#one_of_decls);
-            if (!Array.isArray(data) && typeof data == "object") {
-                if ("range" in data && data.range != undefined) {
+            if (!Array.isArray(data) && typeof data == 'object') {
+                if ('range' in data && data.range != undefined) {
                     this.range = data.range;
                 }
-                if ("symbol" in data && data.symbol != undefined) {
+                if ('symbol' in data && data.symbol != undefined) {
                     this.symbol = data.symbol;
                 }
-                if ("symbol_roles" in data && data.symbol_roles != undefined) {
+                if ('symbol_roles' in data && data.symbol_roles != undefined) {
                     this.symbol_roles = data.symbol_roles;
                 }
-                if ("override_documentation" in data && data.override_documentation != undefined) {
+                if ('override_documentation' in data && data.override_documentation != undefined) {
                     this.override_documentation = data.override_documentation;
                 }
-                if ("syntax_kind" in data && data.syntax_kind != undefined) {
+                if ('syntax_kind' in data && data.syntax_kind != undefined) {
                     this.syntax_kind = data.syntax_kind;
                 }
-                if ("diagnostics" in data && data.diagnostics != undefined) {
+                if ('diagnostics' in data && data.diagnostics != undefined) {
                     this.diagnostics = data.diagnostics;
                 }
-                if ("enclosing_range" in data && data.enclosing_range != undefined) {
+                if ('enclosing_range' in data && data.enclosing_range != undefined) {
                     this.enclosing_range = data.enclosing_range;
                 }
             }
@@ -1575,7 +1627,7 @@ export namespace scip {
             pb_1.Message.setField(this, 1, value);
         }
         get symbol() {
-            return pb_1.Message.getFieldWithDefault(this, 2, "") as string;
+            return pb_1.Message.getFieldWithDefault(this, 2, '') as string;
         }
         set symbol(value: string) {
             pb_1.Message.setField(this, 2, value);
@@ -1636,7 +1688,7 @@ export namespace scip {
                 message.syntax_kind = data.syntax_kind;
             }
             if (data.diagnostics != null) {
-                message.diagnostics = data.diagnostics.map(item => Diagnostic.fromObject(item));
+                message.diagnostics = data.diagnostics.map((item) => Diagnostic.fromObject(item));
             }
             if (data.enclosing_range != null) {
                 message.enclosing_range = data.enclosing_range;
@@ -1680,28 +1732,21 @@ export namespace scip {
         serialize(w: pb_1.BinaryWriter): void;
         serialize(w?: pb_1.BinaryWriter): Uint8Array | void {
             const writer = w || new pb_1.BinaryWriter();
-            if (this.range.length)
-                writer.writePackedInt32(1, this.range);
-            if (this.symbol.length)
-                writer.writeString(2, this.symbol);
-            if (this.symbol_roles != 0)
-                writer.writeInt32(3, this.symbol_roles);
-            if (this.override_documentation.length)
-                writer.writeRepeatedString(4, this.override_documentation);
-            if (this.syntax_kind != SyntaxKind.UnspecifiedSyntaxKind)
-                writer.writeEnum(5, this.syntax_kind);
+            if (this.range.length) writer.writePackedInt32(1, this.range);
+            if (this.symbol.length) writer.writeString(2, this.symbol);
+            if (this.symbol_roles != 0) writer.writeInt32(3, this.symbol_roles);
+            if (this.override_documentation.length) writer.writeRepeatedString(4, this.override_documentation);
+            if (this.syntax_kind != SyntaxKind.UnspecifiedSyntaxKind) writer.writeEnum(5, this.syntax_kind);
             if (this.diagnostics.length)
                 writer.writeRepeatedMessage(6, this.diagnostics, (item: Diagnostic) => item.serialize(writer));
-            if (this.enclosing_range.length)
-                writer.writePackedInt32(7, this.enclosing_range);
-            if (!w)
-                return writer.getResultBuffer();
+            if (this.enclosing_range.length) writer.writePackedInt32(7, this.enclosing_range);
+            if (!w) return writer.getResultBuffer();
         }
         static deserialize(bytes: Uint8Array | pb_1.BinaryReader): Occurrence {
-            const reader = bytes instanceof pb_1.BinaryReader ? bytes : new pb_1.BinaryReader(bytes), message = new Occurrence();
+            const reader = bytes instanceof pb_1.BinaryReader ? bytes : new pb_1.BinaryReader(bytes),
+                message = new Occurrence();
             while (reader.nextField()) {
-                if (reader.isEndGroup())
-                    break;
+                if (reader.isEndGroup()) break;
                 switch (reader.getFieldNumber()) {
                     case 1:
                         message.range = reader.readPackedInt32();
@@ -1719,12 +1764,20 @@ export namespace scip {
                         message.syntax_kind = reader.readEnum();
                         break;
                     case 6:
-                        reader.readMessage(message.diagnostics, () => pb_1.Message.addToRepeatedWrapperField(message, 6, Diagnostic.deserialize(reader), Diagnostic));
+                        reader.readMessage(message.diagnostics, () =>
+                            pb_1.Message.addToRepeatedWrapperField(
+                                message,
+                                6,
+                                Diagnostic.deserialize(reader),
+                                Diagnostic
+                            )
+                        );
                         break;
                     case 7:
                         message.enclosing_range = reader.readPackedInt32();
                         break;
-                    default: reader.skipField();
+                    default:
+                        reader.skipField();
                 }
             }
             return message;
@@ -1738,29 +1791,33 @@ export namespace scip {
     }
     export class Diagnostic extends pb_1.Message {
         #one_of_decls: number[][] = [];
-        constructor(data?: any[] | {
-            severity?: Severity;
-            code?: string;
-            message?: string;
-            source?: string;
-            tags?: DiagnosticTag[];
-        }) {
+        constructor(
+            data?:
+                | any[]
+                | {
+                      severity?: Severity;
+                      code?: string;
+                      message?: string;
+                      source?: string;
+                      tags?: DiagnosticTag[];
+                  }
+        ) {
             super();
             pb_1.Message.initialize(this, Array.isArray(data) ? data : [], 0, -1, [5], this.#one_of_decls);
-            if (!Array.isArray(data) && typeof data == "object") {
-                if ("severity" in data && data.severity != undefined) {
+            if (!Array.isArray(data) && typeof data == 'object') {
+                if ('severity' in data && data.severity != undefined) {
                     this.severity = data.severity;
                 }
-                if ("code" in data && data.code != undefined) {
+                if ('code' in data && data.code != undefined) {
                     this.code = data.code;
                 }
-                if ("message" in data && data.message != undefined) {
+                if ('message' in data && data.message != undefined) {
                     this.message = data.message;
                 }
-                if ("source" in data && data.source != undefined) {
+                if ('source' in data && data.source != undefined) {
                     this.source = data.source;
                 }
-                if ("tags" in data && data.tags != undefined) {
+                if ('tags' in data && data.tags != undefined) {
                     this.tags = data.tags;
                 }
             }
@@ -1772,19 +1829,19 @@ export namespace scip {
             pb_1.Message.setField(this, 1, value);
         }
         get code() {
-            return pb_1.Message.getFieldWithDefault(this, 2, "") as string;
+            return pb_1.Message.getFieldWithDefault(this, 2, '') as string;
         }
         set code(value: string) {
             pb_1.Message.setField(this, 2, value);
         }
         get message() {
-            return pb_1.Message.getFieldWithDefault(this, 3, "") as string;
+            return pb_1.Message.getFieldWithDefault(this, 3, '') as string;
         }
         set message(value: string) {
             pb_1.Message.setField(this, 3, value);
         }
         get source() {
-            return pb_1.Message.getFieldWithDefault(this, 4, "") as string;
+            return pb_1.Message.getFieldWithDefault(this, 4, '') as string;
         }
         set source(value: string) {
             pb_1.Message.setField(this, 4, value);
@@ -1849,24 +1906,18 @@ export namespace scip {
         serialize(w: pb_1.BinaryWriter): void;
         serialize(w?: pb_1.BinaryWriter): Uint8Array | void {
             const writer = w || new pb_1.BinaryWriter();
-            if (this.severity != Severity.UnspecifiedSeverity)
-                writer.writeEnum(1, this.severity);
-            if (this.code.length)
-                writer.writeString(2, this.code);
-            if (this.message.length)
-                writer.writeString(3, this.message);
-            if (this.source.length)
-                writer.writeString(4, this.source);
-            if (this.tags.length)
-                writer.writePackedEnum(5, this.tags);
-            if (!w)
-                return writer.getResultBuffer();
+            if (this.severity != Severity.UnspecifiedSeverity) writer.writeEnum(1, this.severity);
+            if (this.code.length) writer.writeString(2, this.code);
+            if (this.message.length) writer.writeString(3, this.message);
+            if (this.source.length) writer.writeString(4, this.source);
+            if (this.tags.length) writer.writePackedEnum(5, this.tags);
+            if (!w) return writer.getResultBuffer();
         }
         static deserialize(bytes: Uint8Array | pb_1.BinaryReader): Diagnostic {
-            const reader = bytes instanceof pb_1.BinaryReader ? bytes : new pb_1.BinaryReader(bytes), message = new Diagnostic();
+            const reader = bytes instanceof pb_1.BinaryReader ? bytes : new pb_1.BinaryReader(bytes),
+                message = new Diagnostic();
             while (reader.nextField()) {
-                if (reader.isEndGroup())
-                    break;
+                if (reader.isEndGroup()) break;
                 switch (reader.getFieldNumber()) {
                     case 1:
                         message.severity = reader.readEnum();
@@ -1883,7 +1934,8 @@ export namespace scip {
                     case 5:
                         message.tags = reader.readPackedEnum();
                         break;
-                    default: reader.skipField();
+                    default:
+                        reader.skipField();
                 }
             }
             return message;

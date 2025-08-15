@@ -5,7 +5,13 @@ import { checkSometimesAssertions, SeenCondition } from './assertions';
 
 export interface TestFailure {
     testName: string;
-    type: 'empty-scip-index' | 'missing-output' | 'content-mismatch' | 'orphaned-output' | 'caught-exception' | 'sometimes-assertion';
+    type:
+        | 'empty-scip-index'
+        | 'missing-output'
+        | 'content-mismatch'
+        | 'orphaned-output'
+        | 'caught-exception'
+        | 'sometimes-assertion';
     message: string;
 }
 
@@ -30,22 +36,30 @@ export interface SingleTestOptions {
 
 function validateFilterTestNames(inputDirectory: string, filterTestNames: string[]): void {
     const availableTests = fs.readdirSync(inputDirectory);
-    const missingTests = filterTestNames.filter(name => !availableTests.includes(name));
-    
+    const missingTests = filterTestNames.filter((name) => !availableTests.includes(name));
+
     if (missingTests.length > 0) {
-        console.error(`ERROR: The following test names were not found: ${missingTests.join(', ')}. Available tests: ${availableTests.join(', ')}`);
+        console.error(
+            `ERROR: The following test names were not found: ${missingTests.join(
+                ', '
+            )}. Available tests: ${availableTests.join(', ')}`
+        );
         process.exit(1);
     }
 }
 
-function handleOrphanedOutputs(inputTests: Set<string>, outputDirectory: string, mode: 'check' | 'update'): TestFailure[] {
+function handleOrphanedOutputs(
+    inputTests: Set<string>,
+    outputDirectory: string,
+    mode: 'check' | 'update'
+): TestFailure[] {
     if (!fs.existsSync(outputDirectory)) {
         return [];
     }
-    
+
     const outputTests = fs.readdirSync(outputDirectory);
     const orphanedOutputs: TestFailure[] = [];
-    
+
     for (const outputTest of outputTests) {
         if (inputTests.has(outputTest)) {
             continue;
@@ -59,21 +73,21 @@ function handleOrphanedOutputs(inputTests: Set<string>, outputDirectory: string,
         orphanedOutputs.push({
             testName: outputTest,
             type: 'orphaned-output',
-            message: `Output folder exists but no corresponding input folder found`
+            message: `Output folder exists but no corresponding input folder found`,
         });
     }
-    
+
     return orphanedOutputs;
 }
 
 function reportResults(results: ValidationResults): void {
     const totalTests = results.passed.length + results.failed.length + results.skipped.length;
     console.assert(totalTests > 0, 'No tests found');
-    
+
     for (const failure of results.failed) {
         console.error(`FAIL [${failure.testName}]: ${failure.message}`);
     }
-    
+
     let summaryStr = `\n${results.passed.length}/${totalTests} tests passed, ${results.failed.length} failed`;
     if (results.skipped.length > 0) {
         summaryStr += `, ${results.skipped.length} skipped`;
@@ -88,16 +102,14 @@ function reportResults(results: ValidationResults): void {
 export class TestRunner {
     constructor(private options: TestRunnerOptions) {}
 
-    runTests(
-        runSingleTest: (testName: string, inputDir: string, outputDir: string) => ValidationResults
-    ): void {
+    runTests(runSingleTest: (testName: string, inputDir: string, outputDir: string) => ValidationResults): void {
         const inputDirectory = path.resolve(join(this.options.snapshotRoot, 'input'));
         const outputDirectory = path.resolve(join(this.options.snapshotRoot, 'output'));
 
         const results: ValidationResults = {
             passed: [],
             failed: [],
-            skipped: []
+            skipped: [],
         };
 
         let snapshotDirectories = fs.readdirSync(inputDirectory);
@@ -112,9 +124,9 @@ export class TestRunner {
         }
 
         if (this.options.filterTests) {
-            const filterTestNames = this.options.filterTests.split(',').map(name => name.trim());
+            const filterTestNames = this.options.filterTests.split(',').map((name) => name.trim());
             validateFilterTestNames(inputDirectory, filterTestNames);
-            snapshotDirectories = snapshotDirectories.filter(dir => filterTestNames.includes(dir));
+            snapshotDirectories = snapshotDirectories.filter((dir) => filterTestNames.includes(dir));
             if (snapshotDirectories.length === 0) {
                 console.error(`No tests found matching filter: ${this.options.filterTests}`);
                 process.exit(1);
@@ -129,20 +141,18 @@ export class TestRunner {
 
             let testResults: ValidationResults;
             try {
-                testResults = runSingleTest(
-                    testName, 
-                    inputDirectory, 
-                    outputDirectory,
-                );
+                testResults = runSingleTest(testName, inputDirectory, outputDirectory);
             } catch (error) {
                 testResults = {
                     passed: [],
-                    failed: [{
-                        testName,
-                        type: 'caught-exception',
-                        message: `Test runner failed: ${error}`
-                    }],
-                    skipped: []
+                    failed: [
+                        {
+                            testName,
+                            type: 'caught-exception',
+                            message: `Test runner failed: ${error}`,
+                        },
+                    ],
+                    skipped: [],
                 };
             }
 
@@ -163,11 +173,11 @@ export class TestRunner {
             const sometimesResults = checkSometimesAssertions();
             for (const [key, state] of sometimesResults) {
                 if (state === SeenCondition.Mixed) continue; // success
-                
+
                 results.failed.push({
                     testName: 'assertions',
                     type: 'sometimes-assertion',
-                    message: `Assertion '${key}' was ${state} across all test contexts`
+                    message: `Assertion '${key}' was ${state} across all test contexts`,
                 });
             }
         }
