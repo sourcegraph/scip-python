@@ -1,8 +1,5 @@
 name: 'formatting'
 
-env:
-  NODE_VERSION: '16'
-
 on:
   push:
     branches:
@@ -18,20 +15,9 @@ jobs:
     steps:
       - uses: actions/checkout@v3
 
-      - uses: actions/setup-node@v3
+      - uses: jdx/mise-action@v2.4.4
         with:
-          node-version: ${{ env.NODE_VERSION }}
-
-      - name: Get npm cache directory
-        id: npm-cache
-        run: |
-          echo "dir=$(npm config get cache)" >> $GITHUB_OUTPUT
-      - uses: actions/cache@v3
-        with:
-          path: ${{ steps.npm-cache.outputs.dir }}
-          key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
-          restore-keys: |
-            ${{ runner.os }}-node-
+          version: 2025.8.10
 
       - run: npm install
 

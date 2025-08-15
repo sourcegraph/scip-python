@@ -14,17 +14,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
-      - name: Install asdf.
-        uses: asdf-vm/actions/setup@v2.1.0
-      - name: Cache asdf and asdf-managed tools.
-        uses: actions/cache@v4
-        id: asdf-cache
+      - name: Install mise
+        uses: jdx/mise-action@v2.4.4
         with:
-          path: ${{ env.ASDF_DIR }}
-          key: asdf-${{ runner.os}}-${{ hashFiles('**/.tool-versions') }}
-      - name: Install asdf tools (if not cached).
-        if: steps.asdf-cache.outputs.cache-hit != 'true'
-        uses: asdf-vm/actions/install@v2.1.0
+          version: 2025.8.10
       - name: Get npm cache directory
         id: npm-cache
         run: echo "dir=$(npm config get cache)" >> $GITHUB_OUTPUT

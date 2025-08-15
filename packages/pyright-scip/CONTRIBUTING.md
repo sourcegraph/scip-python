@@ -11,26 +11,17 @@
 
 ### Installing dependencies
 
-1. Install [ASDF](https://asdf-vm.com/guide/getting-started.html).
+1. Install [mise](https://mise.jdx.dev/getting-started.html).
 2. Install the correct versions of Node and Python:
 
     ```bash
-    asdf plugin add nodejs
-    asdf plugin add python
+    mise plugin install nodejs
+    mise plugin install python
     # Install appropriate Node and Python versions based on .tool-versions
-    asdf install
+    mise install
     ```
 
     You may need to restart your shell for the changes to take effect.
-
-    NOTE: On Linux, ASDF may try to install Python from source instead of
-    using prebuilt binaries. In that case, you need to install a bunch of
-    other dependencies first:
-
-    ```bash
-    sudo apt update
-    sudo apt install -y build-essential zlib1g-dev libssl-dev libbz2-dev libsqlite3-dev libncurses-dev libffi-dev readline-common libreadline-dev liblzma-dev
-    ```
 
 3. Install dependencies:
     ```bash
