@@ -14,10 +14,10 @@
 -   `npm run build` - Production build
 -   `npm run watch` - Development build with watch mode
 
-### Linting and Formatting
+### Formatting
 
 -   `npm run fix:prettier` - Fix prettier formatting issues
--   `npm run fix:eslint` - Fix ESLint issues
+-   `npm run check:prettier` - Check prettier formatting
 
 ## Code Style
 

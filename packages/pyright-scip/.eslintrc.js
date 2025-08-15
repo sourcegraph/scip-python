@@ -9,4 +9,5 @@ module.exports = {
     },
     ignorePatterns: ['temp', 'lsif.ts', 'snapshots'],
     rules: {},
+    root: true,
 };

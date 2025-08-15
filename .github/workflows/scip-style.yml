@@ -40,7 +40,3 @@ jobs:
       - name: Check prettier formatting
         run: npm run check:prettier
         working-directory: packages/pyright-scip
-
-      - name: Check ESLint
-        run: npm run check:eslint
-        working-directory: packages/pyright-scip

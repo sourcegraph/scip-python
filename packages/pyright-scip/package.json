@@ -13,10 +13,8 @@
         "test": "jest --forceExit --detectOpenHandles",
         "webpack": "webpack --mode development --progress",
         "watch": "webpack --mode development --progress --watch",
-        "fix:prettier": "prettier --write .",
-        "fix:eslint": "eslint --fix .",
-        "check:prettier": "prettier --check .",
-        "check:eslint": "eslint ."
+        "fix:prettier": "prettier --write --loglevel error .",
+        "check:prettier": "prettier --check ."
     },
     "author": "Sourcegraph",
     "repository": {

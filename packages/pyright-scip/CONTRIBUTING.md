@@ -4,7 +4,7 @@
     -   [Installing dependencies](#installing-dependencies)
     -   [Building the code](#building-the-code)
     -   [Running tests](#running-tests)
-    -   [Linting and formatting](#linting-and-formatting)
+    -   [Formatting](#formatting)
 -   [Publishing releases](#publishing-releases)
 
 ## Development
@@ -91,26 +91,20 @@ Available snapshot tests can be found in `snapshots/input/`.
 Using a different Python version other than the one specified
 in `.tool-versions` may also lead to errors.
 
-### Linting and formatting
+### Formatting
 
-To check for linting and formatting issues:
+To check for formatting issues:
 
 ```bash
 # Check prettier formatting
 npm run check:prettier
-
-# Check ESLint issues
-npm run check:eslint
 ```
 
-To fix linting and formatting issues:
+To fix formatting issues:
 
 ```bash
 # Fix prettier formatting issues
 npm run fix:prettier
-
-# Fix ESLint issues
-npm run fix:eslint
 ```
 
 ## Making changes to Pyright internals
