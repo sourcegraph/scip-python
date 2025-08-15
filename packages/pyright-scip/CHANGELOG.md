@@ -1,4 +1,27 @@
-# Release v0.4
+# v0.6.3
+
+- Fixes a known crash when handling inheritance from class
+  methods which use a decorator.
+- Fixes a bug introduced in v0.6.1 which would cause
+  SCIP indexes on macOS to be generated with 0 documents.
+
+This version has much more robust testing on macOS for
+path-handling issues.
+
+# v0.6.2
+
+**WARNING**: This release is known to have issues on macOS.
+We recommend upgrading to v0.6.3 or newer.
+
+- Fixed source maps on Linux.
+
+# v0.6.1
+
+**WARNING**: This release should not be used.
+
+- Enabled source maps on macOS.
+
+# v0.4
 
 - remove: `--include` and `--exclude`. Instead use `pyproject.toml` and pyright configuration.
 - add: `--target-only` to only emit and parse information related to some subdirectory of your project. Should still be run from root of project.

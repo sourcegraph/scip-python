@@ -113,7 +113,9 @@ When modifying code in the `pyright-internal` package:
 
 ## Publishing releases
 
-1. Change the version in `packages/pyright-scip/package.json`
-   to `M.N.P` and land a PR with that.
-2. Add a tag `vM.N.P` to the commit on the `scip` branch
-   and push that tag.
+1. Create a PR with the following changes:
+   - Change the version in [package.json](./package.json) 
+     to `M.N.P`.
+   - Add release notes to [CHANGELOG.md](./CHANGELOG.md)
+2. After merging the PR, add a tag `vM.N.P` to the latest
+   commit on the `scip` branch and push that tag.
