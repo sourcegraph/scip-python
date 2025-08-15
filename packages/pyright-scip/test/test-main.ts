@@ -130,146 +130,146 @@ const isJest = typeof describe !== 'undefined' && typeof test !== 'undefined';
 if (isJest) {
     describe('pyproject parsing', () => {
         test('parses various pyproject.toml formats', () => {
-        const testCases = [
-            {
-                expected: { name: undefined, version: undefined },
-                tomlContents: [
-                    ``,
-                    `[project]`,
-                    `[tool.poetry]`,
-                    `[tool]
+            const testCases = [
+                {
+                    expected: { name: undefined, version: undefined },
+                    tomlContents: [
+                        ``,
+                        `[project]`,
+                        `[tool.poetry]`,
+                        `[tool]
 poetry = {}`,
-                    `[tool.poetry]
+                        `[tool.poetry]
 name = false
 version = {}`,
-                ],
-            },
-            {
-                expected: { name: 'abc', version: undefined },
-                tomlContents: [
-                    `[project]
+                    ],
+                },
+                {
+                    expected: { name: 'abc', version: undefined },
+                    tomlContents: [
+                        `[project]
 name = "abc"`,
-                    `[tool.poetry]
+                        `[tool.poetry]
 name = "abc"`,
-                    `[tool]
+                        `[tool]
 poetry = { name = "abc" }`,
-                    `[project]
+                        `[project]
 name = "abc"
 [tool.poetry]
 name = "ignored"`,
-                ],
-            },
-            {
-                expected: { name: undefined, version: '16.05' },
-                tomlContents: [
-                    `[project]
+                    ],
+                },
+                {
+                    expected: { name: undefined, version: '16.05' },
+                    tomlContents: [
+                        `[project]
 version = "16.05"`,
-                    `[tool.poetry]
+                        `[tool.poetry]
 version = "16.05"`,
-                    `[tool]
+                        `[tool]
 poetry = { version = "16.05" }`,
-                    `[project]
+                        `[project]
 version = "16.05"
 [tool.poetry]
 version = "ignored"`,
-                ],
-            },
-            {
-                expected: { name: 'abc', version: '16.05' },
-                tomlContents: [
-                    `[project]
+                    ],
+                },
+                {
+                    expected: { name: 'abc', version: '16.05' },
+                    tomlContents: [
+                        `[project]
 name = "abc"
 version = "16.05"`,
-                    `[tool.poetry]
+                        `[tool.poetry]
 name = "abc"
 version = "16.05"`,
-                    `[project]
+                        `[project]
 name = "abc"
 [tool.poetry]
 version = "16.05"`,
-                    `[project]
+                        `[project]
 version = "16.05"
 [tool.poetry]
 name = "abc"`,
-                    `[project]
+                        `[project]
 [tool.poetry]
 name = "abc"
 version = "16.05"`,
-                ],
-            },
-        ];
+                    ],
+                },
+            ];
 
-        for (const testCase of testCases) {
-            for (const content of testCase.tomlContents) {
-                const got = Indexer.inferProjectInfo(false, () => content);
-                const want = testCase.expected;
-                if (isJest) {
-                    expect(got.name).toBe(want.name);
-                    expect(got.version).toBe(want.version);
-                } else {
-                    if (got.name !== want.name || got.version !== want.version) {
-                        throw new Error(`name/version mismatch for ${content}`);
+            for (const testCase of testCases) {
+                for (const content of testCase.tomlContents) {
+                    const got = Indexer.inferProjectInfo(false, () => content);
+                    const want = testCase.expected;
+                    if (isJest) {
+                        expect(got.name).toBe(want.name);
+                        expect(got.version).toBe(want.version);
+                    } else {
+                        if (got.name !== want.name || got.version !== want.version) {
+                            throw new Error(`name/version mismatch for ${content}`);
+                        }
                     }
                 }
             }
-        }
         });
     });
 
     describe('snapshot tests', () => {
-    const mode = process.env.UPDATE_SNAPSHOTS ? 'update' : 'check';
-    const quiet = process.env.VERBOSE !== 'true';
+        const mode = process.env.UPDATE_SNAPSHOTS ? 'update' : 'check';
+        const quiet = process.env.VERBOSE !== 'true';
 
-    // Get all test directories
-    let snapshotDirectories = fs.readdirSync(inputDirectory);
+        // Get all test directories
+        let snapshotDirectories = fs.readdirSync(inputDirectory);
 
-    // Check for orphaned outputs
-    if (fs.existsSync(outputDirectory)) {
-        const outputTests = fs.readdirSync(outputDirectory);
-        const inputTests = new Set(snapshotDirectories);
+        // Check for orphaned outputs
+        if (fs.existsSync(outputDirectory)) {
+            const outputTests = fs.readdirSync(outputDirectory);
+            const inputTests = new Set(snapshotDirectories);
 
-        for (const outputTest of outputTests) {
-            if (!inputTests.has(outputTest)) {
-                if (mode === 'update') {
-                    const orphanedPath = path.join(outputDirectory, outputTest);
-                    fs.rmSync(orphanedPath, { recursive: true, force: true });
-                    console.log(`Delete output folder with no corresponding input folder: ${outputTest}`);
-                } else {
-                    fail(`Output folder exists but no corresponding input folder found: ${outputTest}`);
+            for (const outputTest of outputTests) {
+                if (!inputTests.has(outputTest)) {
+                    if (mode === 'update') {
+                        const orphanedPath = path.join(outputDirectory, outputTest);
+                        fs.rmSync(orphanedPath, { recursive: true, force: true });
+                        console.log(`Delete output folder with no corresponding input folder: ${outputTest}`);
+                    } else {
+                        fail(`Output folder exists but no corresponding input folder found: ${outputTest}`);
+                    }
                 }
             }
         }
-    }
 
-    // Run test for each snapshot directory
-    test.each(snapshotDirectories)('snapshot test: %s', (testName) => {
-        let projectName: string | undefined;
-        let projectVersion: string | undefined;
+        // Run test for each snapshot directory
+        test.each(snapshotDirectories)('snapshot test: %s', (testName) => {
+            let projectName: string | undefined;
+            let projectVersion: string | undefined;
 
-        // Only set project name/version from packageInfo if test doesn't have its own pyproject.toml
-        const testProjectRoot = path.join(inputDirectory, testName);
-        if (!fs.existsSync(path.join(testProjectRoot, 'pyproject.toml'))) {
-            projectName = packageInfo['default']['name'];
-            projectVersion = packageInfo['default']['version'];
-        }
+            // Only set project name/version from packageInfo if test doesn't have its own pyproject.toml
+            const testProjectRoot = path.join(inputDirectory, testName);
+            if (!fs.existsSync(path.join(testProjectRoot, 'pyproject.toml'))) {
+                projectName = packageInfo['default']['name'];
+                projectVersion = packageInfo['default']['version'];
+            }
 
-        if (testName in packageInfo['special']) {
-            projectName = packageInfo['special'][testName]['name'];
-            projectVersion = packageInfo['special'][testName]['version'];
-        }
+            if (testName in packageInfo['special']) {
+                projectName = packageInfo['special'][testName]['name'];
+                projectVersion = packageInfo['special'][testName]['version'];
+            }
 
-        processSingleTest(testName, {
-            mode: mode as 'check' | 'update',
-            quiet: quiet,
-            ...(projectName && { projectName }),
-            ...(projectVersion && { projectVersion }),
-            environment: path.join(snapshotRoot, 'testEnv.json'),
-            output: 'index.scip',
-            dev: false,
-            cwd: path.join(inputDirectory, testName),
-            targetOnly: undefined,
+            processSingleTest(testName, {
+                mode: mode as 'check' | 'update',
+                quiet: quiet,
+                ...(projectName && { projectName }),
+                ...(projectVersion && { projectVersion }),
+                environment: path.join(snapshotRoot, 'testEnv.json'),
+                output: 'index.scip',
+                dev: false,
+                cwd: path.join(inputDirectory, testName),
+                targetOnly: undefined,
+            });
         });
-    });
 
         afterAll(() => {
             checkSometimesAssertions();
@@ -280,7 +280,7 @@ version = "16.05"`,
     function runStandaloneTests() {
         const mode = process.argv.includes('--update') ? 'update' : 'check';
         const quiet = !process.argv.includes('--verbose');
-        
+
         // Run pyproject parsing tests
         console.log('Running pyproject parsing tests...');
         const testCases = [
@@ -301,7 +301,7 @@ version = "16.05"`,
                 tomlContents: [`[project]\nname = "abc"\nversion = "16.05"`],
             },
         ];
-        
+
         for (const testCase of testCases) {
             for (const content of testCase.tomlContents) {
                 const got = Indexer.inferProjectInfo(false, () => content);
@@ -313,17 +313,17 @@ version = "16.05"`,
             }
         }
         console.log('✓ pyproject parsing tests passed');
-        
+
         // Run snapshot tests
         console.log('\nRunning snapshot tests...');
         let snapshotDirectories = fs.readdirSync(inputDirectory);
         let failed = false;
-        
+
         for (const testName of snapshotDirectories) {
             if (!quiet) {
                 console.log(`--- Running snapshot test: ${testName} ---`);
             }
-            
+
             try {
                 let projectName: string | undefined;
                 let projectVersion: string | undefined;
@@ -358,14 +358,14 @@ version = "16.05"`,
                 }
             }
         }
-        
+
         checkSometimesAssertions();
-        
+
         if (failed) {
             process.exit(1);
         }
         console.log('\n✓ All snapshot tests passed');
     }
-    
+
     runStandaloneTests();
 }
