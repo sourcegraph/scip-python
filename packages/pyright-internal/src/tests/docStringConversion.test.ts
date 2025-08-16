@@ -14,6 +14,7 @@ import { convertDocStringToMarkdown, convertDocStringToPlainText } from '../anal
 const singleTick = '`';
 const doubleTick = '``';
 const tripleTick = '```';
+const tripleTilda = '~~~';
 
 test('PlaintextIndention', () => {
     const all: string[][] = [
@@ -64,7 +65,7 @@ test('InlineLiterals', () => {
         'This paragraph talks about ``foo``\n' +
         'which is related to :something:`bar`, and probably `qux`:something_else:.\n';
 
-    const markdown = 'This paragraph talks about `foo`\n' + 'which is related to `bar`, and probably `qux`.\n';
+    const markdown = 'This paragraph talks about `foo`  \n' + 'which is related to `bar`, and probably `qux`.\n';
 
     _testConvertToMarkdown(docstring, markdown);
 });
@@ -270,6 +271,34 @@ And some text after.
     _testConvertToMarkdown(docstring, markdown);
 });
 
+test('MarkdownStyleTildaBlock', () => {
+    const docstring = `Backtick block:
+
+${tripleTilda}
+print(foo_bar)
+
+if True:
+    print(bar_foo)
+${tripleTilda}
+
+And some text after.
+`;
+
+    const markdown = `Backtick block:
+
+${tripleTilda}
+print(foo_bar)
+
+if True:
+    print(bar_foo)
+${tripleTilda}
+
+And some text after.
+`;
+
+    _testConvertToMarkdown(docstring, markdown);
+});
+
 test('RestLiteralBlock', () => {
     const docstring = `
 Take a look at this code::
@@ -421,6 +450,14 @@ test('UnfinishedBacktickBlock', () => {
     const docstring = '```\nsomething\n';
 
     const markdown = '```\nsomething\n```\n';
+
+    _testConvertToMarkdown(docstring, markdown);
+});
+
+test('UnfinishedTildaBlock', () => {
+    const docstring = '~~~\nsomething\n';
+
+    const markdown = '~~~\nsomething\n~~~\n';
 
     _testConvertToMarkdown(docstring, markdown);
 });
@@ -611,12 +648,99 @@ test('FieldListGoogleV2', () => {
     const docstring = `
     4. Google (variant 2):
          Args:
-             param1 (type): description`;
+             param1 (type): description
+             param2 (type): description`;
 
     const markdown = `
 4. Google (variant 2):  
 &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;Args:  
-&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;param1 (type): description`;
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;param1 (type): description  
+&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;param2 (type): description`;
+
+    _testConvertToMarkdown(docstring, markdown);
+});
+
+test('Googlewithreturntypes', () => {
+    const docstring = `
+    Example function with types documented in the docstring.
+
+    \`PEP 484\`_ type annotations are supported. If attribute, parameter, and
+    return types are annotated according to \`PEP 484\`_, they do not need to be
+    included in the docstring:
+
+    Args:
+        param1 (int): The first parameter.
+        param2 (str): The second parameter.
+
+    Returns:
+        bool: The return value. True for success, False otherwise.
+
+    .. _PEP 484:
+        https://www.python.org/dev/peps/pep-0484/`;
+
+    const markdown = `
+Example function with types documented in the docstring.
+
+\`PEP 484\`\\_ type annotations are supported. If attribute, parameter, and
+return types are annotated according to \`PEP 484\`\\_, they do not need to be
+included in the docstring:
+
+Args:  
+&nbsp;&nbsp;&nbsp;&nbsp;param1 (int): The first parameter.  
+&nbsp;&nbsp;&nbsp;&nbsp;param2 (str): The second parameter.
+
+Returns:  
+&nbsp;&nbsp;&nbsp;&nbsp;bool: The return value. True for success, False otherwise.`;
+
+    _testConvertToMarkdown(docstring, markdown);
+});
+
+test('GoogleWithComplexTypes', () => {
+    const docstring = `
+    Example function with types documented in the docstring.
+
+    Args:
+        param1 (int|bool): The first parameter.
+        param2 (list[str] with others): The second parameter.
+
+    Returns:
+        bool: The return value. True for success, False otherwise.
+`;
+
+    const markdown = `
+Example function with types documented in the docstring.
+
+Args:  
+&nbsp;&nbsp;&nbsp;&nbsp;param1 (int|bool): The first parameter.  
+&nbsp;&nbsp;&nbsp;&nbsp;param2 (list\\[str\\] with others): The second parameter.
+
+Returns:  
+&nbsp;&nbsp;&nbsp;&nbsp;bool: The return value. True for success, False otherwise.`;
+
+    _testConvertToMarkdown(docstring, markdown);
+});
+
+test('GoogleWithInvalidTypes', () => {
+    const docstring = `
+    Example function with types documented in the docstring.
+
+    Args:
+        param1: (int|bool))): The first parameter.
+        param2: (list[str] with others): The second parameter.
+
+    Returns:
+        bool: The return value. True for success, False otherwise.
+`;
+
+    const markdown = `
+Example function with types documented in the docstring.
+
+Args:  
+&nbsp;&nbsp;&nbsp;&nbsp;param1: (int|bool))): The first parameter.
+param2: (list\\[str\\] with others): The second parameter.
+
+Returns:  
+&nbsp;&nbsp;&nbsp;&nbsp;bool: The return value. True for success, False otherwise.`;
 
     _testConvertToMarkdown(docstring, markdown);
 });
@@ -771,6 +895,73 @@ ${tripleTick}
     _testConvertToMarkdown(docstring, markdown);
 });
 
+test('IndentedCodeBlockTilda', () => {
+    const docstring = `
+Expected:
+    ${tripleTilda}python
+    def some_fn():
+        """
+        Backticks on a different indentation level don't close the code block.
+        ${tripleTilda}
+        """
+    ${tripleTilda}
+`;
+
+    const markdown = `
+Expected:
+${tripleTilda}python
+    def some_fn():
+        """
+        Backticks on a different indentation level don't close the code block.
+        ${tripleTilda}
+        """
+${tripleTilda}
+`;
+    _testConvertToMarkdown(docstring, markdown);
+});
+
+test('MixedCodeBlockBacktick', () => {
+    const docstring = `
+Expected:
+    ${tripleTick}python
+    def some_fn():
+        """
+        Backticks on a different indentation level don't close the code block.
+        ${tripleTick}
+        """
+    ${tripleTick}
+Expected:
+    ${tripleTilda}python
+    def some_fn():
+        """
+        Backticks on a different indentation level don't close the code block.
+        ${tripleTick}
+        """
+    ${tripleTilda}
+`;
+
+    const markdown = `
+Expected:
+${tripleTick}python
+    def some_fn():
+        """
+        Backticks on a different indentation level don't close the code block.
+        ${tripleTick}
+        """
+${tripleTick}
+
+Expected:
+${tripleTilda}python
+    def some_fn():
+        """
+        Backticks on a different indentation level don't close the code block.
+        ${tripleTick}
+        """
+${tripleTilda}
+`;
+    _testConvertToMarkdown(docstring, markdown);
+});
+
 test('RestTableWithHeader', () => {
     const docstring = `
 =============== =========================================================
@@ -855,6 +1046,18 @@ dtype : str, np.dtype, or ExtensionDtype, optional
 |    :class:\`pandas.Period\`     |  :class:\`pandas.arrays.PeriodArray\`|
 
 <br/>`;
+
+    _testConvertToMarkdown(docstring, markdown);
+});
+
+test(`OddnumberOfColons`, () => {
+    const docstring = `
+    @param 'original:str' or 'original:list': original string to compare
+    @param 'new:str': the new string to compare
+    @return 'int': levenshtein difference
+    @return 'list': levenshtein difference if list
+    `;
+    const markdown = `@param 'original:str' or 'original:list': original string to compare\n\n@param 'new:str': the new string to compare\n\n@return 'int': levenshtein difference\n\n@return 'list': levenshtein difference if list`;
 
     _testConvertToMarkdown(docstring, markdown);
 });

@@ -10,8 +10,10 @@
 
 import { DiagnosticAddendum } from '../common/diagnostic';
 import { Localizer } from '../localization/localize';
+import { assignTypeToTypeVar } from './constraintSolver';
 import { DeclarationType } from './declaration';
 import { assignProperty } from './properties';
+import { getLastTypedDeclaredForSymbol } from './symbolUtils';
 import { TypeEvaluator } from './typeEvaluatorTypes';
 import {
     ClassType,
@@ -22,6 +24,7 @@ import {
     isTypeSame,
     maxTypeRecursionCount,
     ModuleType,
+    ProtocolCompatibility,
     Type,
     UnknownType,
 } from './types';
@@ -36,6 +39,7 @@ import {
     partiallySpecializeType,
     populateTypeVarContextForSelfType,
     removeParamSpecVariadicsFromSignature,
+    requiresSpecialization,
 } from './typeUtils';
 import { TypeVarContext } from './typeVarContext';
 
@@ -45,6 +49,9 @@ interface ProtocolAssignmentStackEntry {
 }
 
 const protocolAssignmentStack: ProtocolAssignmentStackEntry[] = [];
+
+// Maximum number of different types that are cached with a protocol.
+const maxProtocolCompatibilityCacheEntries = 32;
 
 // If treatSourceAsInstantiable is true, we're comparing the class object against the
 // protocol. If it's false, we're comparing the class instance against the protocol.
@@ -77,14 +84,25 @@ export function assignClassToProtocol(
     }
 
     // See if we've already determined that this class is compatible with this protocol.
-    if (
-        !enforceInvariance &&
-        !treatSourceAsInstantiable &&
-        destType.details.typeParameters.length === 0 &&
-        srcType.details.typeParameters.length === 0 &&
-        srcType.details.compatibleProtocols?.has(destType.details.fullName)
-    ) {
-        return true;
+    if (!enforceInvariance) {
+        const compatibility = getProtocolCompatibility(destType, srcType, flags, treatSourceAsInstantiable);
+
+        if (compatibility !== undefined) {
+            if (compatibility) {
+                // If the caller has provided a destination type var context,
+                // we can't use the cached value unless the dest has no type
+                // parameters to solve.
+                if (!destTypeVarContext || destType.details.typeParameters.length === 0) {
+                    return true;
+                }
+            }
+
+            // If it's known not to be compatible and the caller hasn't requested
+            // any detailed diagnostic information, we can return false immediately.
+            if (!compatibility && !diag) {
+                return false;
+            }
+        }
     }
 
     protocolAssignmentStack.push({ srcType, destType });
@@ -111,23 +129,65 @@ export function assignClassToProtocol(
 
     protocolAssignmentStack.pop();
 
-    // If the destination protocol is not generic and the source type is not
-    // generic and the two are compatible, cache that information so we can
-    // skip the check next time.
-    if (
-        isCompatible &&
-        !treatSourceAsInstantiable &&
-        destType.details.typeParameters.length === 0 &&
-        srcType.details.typeParameters.length === 0
-    ) {
-        if (!srcType.details.compatibleProtocols) {
-            srcType.details.compatibleProtocols = new Set<string>();
-        }
-
-        srcType.details.compatibleProtocols.add(destType.details.fullName);
-    }
+    // Cache the results for next time.
+    setProtocolCompatibility(destType, srcType, flags, treatSourceAsInstantiable, isCompatible);
 
     return isCompatible;
+}
+
+// Looks up the protocol compatibility in the cache. If it's not found,
+// return undefined.
+function getProtocolCompatibility(
+    destType: ClassType,
+    srcType: ClassType,
+    flags: AssignTypeFlags,
+    treatSourceAsInstantiable: boolean
+): boolean | undefined {
+    const entries = srcType.details.protocolCompatibility?.get(destType.details.fullName);
+    if (entries === undefined) {
+        return undefined;
+    }
+
+    const entry = entries.find((entry) => {
+        return (
+            isTypeSame(entry.destType, destType) &&
+            isTypeSame(entry.srcType, srcType) &&
+            entry.treatSourceAsInstantiable === treatSourceAsInstantiable &&
+            entry.flags === flags
+        );
+    });
+
+    return entry?.isCompatible;
+}
+
+function setProtocolCompatibility(
+    destType: ClassType,
+    srcType: ClassType,
+    flags: AssignTypeFlags,
+    treatSourceAsInstantiable: boolean,
+    isCompatible: boolean
+) {
+    if (!srcType.details.protocolCompatibility) {
+        srcType.details.protocolCompatibility = new Map<string, ProtocolCompatibility[]>();
+    }
+
+    let entries = srcType.details.protocolCompatibility.get(destType.details.fullName);
+    if (!entries) {
+        entries = [];
+        srcType.details.protocolCompatibility.set(destType.details.fullName, entries);
+    }
+
+    entries.push({
+        destType,
+        srcType,
+        treatSourceAsInstantiable,
+        flags,
+        isCompatible,
+    });
+
+    if (entries.length > maxProtocolCompatibilityCacheEntries) {
+        entries.shift();
+    }
 }
 
 function assignClassToProtocolInternal(
@@ -145,10 +205,7 @@ function assignClassToProtocolInternal(
         return isTypeSame(destType, srcType);
     }
 
-    // Strip the type arguments off the dest protocol if they are provided.
-    const genericDestType = ClassType.cloneForSpecialization(destType, undefined, /* isTypeArgumentExplicit */ false);
-    const genericDestTypeVarContext = new TypeVarContext(getTypeVarScopeId(destType));
-
+    const protocolTypeVarContext = createProtocolTypeVarContext(evaluator, destType, destTypeVarContext);
     const selfTypeVarContext = new TypeVarContext(getTypeVarScopeId(destType));
     const noLiteralSrcType = evaluator.stripLiteralValue(srcType) as ClassType;
     populateTypeVarContextForSelfType(selfTypeVarContext, destType, noLiteralSrcType);
@@ -190,250 +247,256 @@ function assignClassToProtocolInternal(
                 return;
             }
 
-            if (symbol.isClassMember() && !symbol.isIgnoredForProtocolMatch() && !checkedSymbolSet.has(name)) {
-                let isMemberFromMetaclass = false;
-                let srcMemberInfo: ClassMember | undefined;
+            if (!symbol.isClassMember() || symbol.isIgnoredForProtocolMatch() || checkedSymbolSet.has(name)) {
+                return;
+            }
 
-                // Special-case the `__class_getitem__` for normal protocol comparison.
-                // This is a convention agreed upon by typeshed maintainers.
-                if (!treatSourceAsInstantiable && name === '__class_getitem__') {
-                    return;
+            let isMemberFromMetaclass = false;
+            let srcMemberInfo: ClassMember | undefined;
+
+            // Special-case the `__class_getitem__` for normal protocol comparison.
+            // This is a convention agreed upon by typeshed maintainers.
+            if (!treatSourceAsInstantiable && name === '__class_getitem__') {
+                return;
+            }
+
+            // Special-case the `__slots__` entry for all protocol comparisons.
+            // This is a convention agreed upon by typeshed maintainers.
+            if (name === '__slots__') {
+                return;
+            }
+
+            // Note that we've already checked this symbol. It doesn't need to
+            // be checked again even if it is declared by a subclass.
+            checkedSymbolSet.add(name);
+
+            // Look in the metaclass first if we're treating the source as an instantiable class.
+            if (
+                treatSourceAsInstantiable &&
+                srcType.details.effectiveMetaclass &&
+                isInstantiableClass(srcType.details.effectiveMetaclass)
+            ) {
+                srcMemberInfo = lookUpClassMember(srcType.details.effectiveMetaclass, name);
+                if (srcMemberInfo) {
+                    srcClassTypeVarContext.addSolveForScope(getTypeVarScopeId(srcType.details.effectiveMetaclass));
+                    isMemberFromMetaclass = true;
+                }
+            }
+
+            if (!srcMemberInfo) {
+                srcMemberInfo = lookUpClassMember(srcType, name);
+            }
+
+            if (!srcMemberInfo) {
+                diag?.addMessage(Localizer.DiagnosticAddendum.protocolMemberMissing().format({ name }));
+                typesAreConsistent = false;
+                return;
+            }
+
+            if (symbol.isClassVar() && !srcMemberInfo.symbol.isClassVar() && !srcMemberInfo.symbol.isClassMember()) {
+                diag?.addMessage(Localizer.DiagnosticAddendum.protocolMemberClassVar().format({ name }));
+                typesAreConsistent = false;
+            }
+
+            let destMemberType = evaluator.getDeclaredTypeOfSymbol(symbol)?.type;
+            if (!destMemberType) {
+                return;
+            }
+
+            // Partially specialize the type of the symbol based on the MRO class.
+            // We can skip this if it's the dest class because it is already
+            // specialized.
+            if (!ClassType.isSameGenericClass(mroClass, destType)) {
+                destMemberType = partiallySpecializeType(destMemberType, mroClass, srcType);
+            }
+
+            let srcMemberType: Type;
+            if (isInstantiableClass(srcMemberInfo.classType)) {
+                const symbolType = evaluator.getEffectiveTypeOfSymbol(srcMemberInfo.symbol);
+
+                // If this is a function, infer its return type prior to specializing it.
+                if (isFunction(symbolType)) {
+                    evaluator.inferReturnTypeIfNecessary(symbolType);
                 }
 
-                // Special-case the `__slots__` entry for all protocol comparisons.
-                // This is a convention agreed upon by typeshed maintainers.
-                if (name === '__slots__') {
-                    return;
+                srcMemberType = partiallySpecializeType(symbolType, srcMemberInfo.classType, noLiteralSrcType);
+            } else {
+                srcMemberType = UnknownType.create();
+            }
+
+            if (isFunction(srcMemberType) || isOverloadedFunction(srcMemberType)) {
+                if (isMemberFromMetaclass) {
+                    const boundSrcFunction = evaluator.bindFunctionToClassOrObject(
+                        ClassType.cloneAsInstance(srcType),
+                        srcMemberType,
+                        /* memberClass */ undefined,
+                        /* errorNode */ undefined,
+                        recursionCount,
+                        /* treatConstructorAsClassMember */ false,
+                        srcType
+                    );
+                    if (boundSrcFunction) {
+                        srcMemberType = removeParamSpecVariadicsFromSignature(boundSrcFunction);
+                    }
+
+                    if (isFunction(destMemberType) || isOverloadedFunction(destMemberType)) {
+                        const boundDeclaredType = evaluator.bindFunctionToClassOrObject(
+                            ClassType.cloneAsInstance(srcType),
+                            destMemberType,
+                            /* memberClass */ undefined,
+                            /* errorNode */ undefined,
+                            recursionCount,
+                            /* treatConstructorAsClassMember */ false,
+                            srcType
+                        );
+                        if (boundDeclaredType) {
+                            destMemberType = removeParamSpecVariadicsFromSignature(boundDeclaredType);
+                        }
+                    }
+                } else if (isInstantiableClass(srcMemberInfo.classType)) {
+                    // Replace any "Self" TypeVar within the dest with the source type.
+                    destMemberType = applySolvedTypeVars(destMemberType, selfTypeVarContext);
+
+                    const boundSrcFunction = evaluator.bindFunctionToClassOrObject(
+                        treatSourceAsInstantiable ? srcType : ClassType.cloneAsInstance(srcType),
+                        srcMemberType,
+                        srcMemberInfo.classType,
+                        /* errorNode */ undefined,
+                        recursionCount
+                    );
+                    if (boundSrcFunction) {
+                        srcMemberType = removeParamSpecVariadicsFromSignature(boundSrcFunction);
+                    }
+
+                    if (isFunction(destMemberType) || isOverloadedFunction(destMemberType)) {
+                        const boundDeclaredType = evaluator.bindFunctionToClassOrObject(
+                            ClassType.cloneAsInstance(srcType),
+                            destMemberType,
+                            srcMemberInfo.classType,
+                            /* errorNode */ undefined,
+                            recursionCount
+                        );
+                        if (boundDeclaredType) {
+                            destMemberType = removeParamSpecVariadicsFromSignature(boundDeclaredType);
+                        }
+                    }
                 }
+            } else {
+                // Replace any "Self" TypeVar within the dest with the source type.
+                destMemberType = applySolvedTypeVars(destMemberType, selfTypeVarContext);
+            }
 
-                // Note that we've already checked this symbol. It doesn't need to
-                // be checked again even if it is declared by a subclass.
-                checkedSymbolSet.add(name);
+            const subDiag = diag?.createAddendum();
 
-                // Look in the metaclass first if we're treating the source as an instantiable class.
+            // Properties require special processing.
+            if (isClassInstance(destMemberType) && ClassType.isPropertyClass(destMemberType)) {
                 if (
-                    treatSourceAsInstantiable &&
-                    srcType.details.effectiveMetaclass &&
-                    isInstantiableClass(srcType.details.effectiveMetaclass)
+                    isClassInstance(srcMemberType) &&
+                    ClassType.isPropertyClass(srcMemberType) &&
+                    !treatSourceAsInstantiable
                 ) {
-                    srcMemberInfo = lookUpClassMember(srcType.details.effectiveMetaclass, name);
-                    if (srcMemberInfo) {
-                        srcClassTypeVarContext.addSolveForScope(getTypeVarScopeId(srcType.details.effectiveMetaclass));
-                        isMemberFromMetaclass = true;
-                    }
-                }
-
-                if (!srcMemberInfo) {
-                    srcMemberInfo = lookUpClassMember(srcType, name);
-                }
-
-                if (!srcMemberInfo) {
-                    diag?.addMessage(Localizer.DiagnosticAddendum.protocolMemberMissing().format({ name }));
-                    typesAreConsistent = false;
-                } else {
-                    let destMemberType = evaluator.getDeclaredTypeOfSymbol(symbol)?.type;
-                    if (destMemberType) {
-                        // Partially specialize the type of the symbol based on the MRO class.
-                        // We can skip this if it's the dest class because it is already
-                        // specialized.
-                        if (!ClassType.isSameGenericClass(mroClass, destType)) {
-                            destMemberType = partiallySpecializeType(destMemberType, mroClass);
+                    if (
+                        !assignProperty(
+                            evaluator,
+                            ClassType.cloneAsInstantiable(destMemberType),
+                            ClassType.cloneAsInstantiable(srcMemberType),
+                            mroClass,
+                            srcType,
+                            subDiag?.createAddendum(),
+                            protocolTypeVarContext,
+                            selfTypeVarContext,
+                            recursionCount
+                        )
+                    ) {
+                        if (subDiag) {
+                            subDiag.addMessage(Localizer.DiagnosticAddendum.memberTypeMismatch().format({ name }));
                         }
-
-                        let srcMemberType: Type;
-                        if (isInstantiableClass(srcMemberInfo.classType)) {
-                            const symbolType = evaluator.getEffectiveTypeOfSymbol(srcMemberInfo.symbol);
-
-                            // If this is a function, infer its return type prior to specializing it.
-                            if (isFunction(symbolType)) {
-                                evaluator.inferReturnTypeIfNecessary(symbolType);
-                            }
-
-                            srcMemberType = partiallySpecializeType(
-                                symbolType,
-                                srcMemberInfo.classType,
-                                noLiteralSrcType
-                            );
-                        } else {
-                            srcMemberType = UnknownType.create();
-                        }
-
-                        if (isFunction(srcMemberType) || isOverloadedFunction(srcMemberType)) {
-                            if (isMemberFromMetaclass) {
-                                const boundSrcFunction = evaluator.bindFunctionToClassOrObject(
-                                    ClassType.cloneAsInstance(srcType),
-                                    srcMemberType,
-                                    /* memberClass */ undefined,
-                                    /* errorNode */ undefined,
-                                    recursionCount,
-                                    /* treatConstructorAsClassMember */ false,
-                                    srcType
-                                );
-                                if (boundSrcFunction) {
-                                    srcMemberType = removeParamSpecVariadicsFromSignature(boundSrcFunction);
-                                }
-
-                                if (isFunction(destMemberType) || isOverloadedFunction(destMemberType)) {
-                                    const boundDeclaredType = evaluator.bindFunctionToClassOrObject(
-                                        ClassType.cloneAsInstance(srcType),
-                                        destMemberType,
-                                        /* memberClass */ undefined,
-                                        /* errorNode */ undefined,
-                                        recursionCount,
-                                        /* treatConstructorAsClassMember */ false,
-                                        srcType
-                                    );
-                                    if (boundDeclaredType) {
-                                        destMemberType = removeParamSpecVariadicsFromSignature(boundDeclaredType);
-                                    }
-                                }
-                            } else if (isInstantiableClass(srcMemberInfo.classType)) {
-                                // Replace any "Self" TypeVar within the dest with the source type.
-                                destMemberType = applySolvedTypeVars(destMemberType, selfTypeVarContext);
-
-                                const boundSrcFunction = evaluator.bindFunctionToClassOrObject(
-                                    treatSourceAsInstantiable ? srcType : ClassType.cloneAsInstance(srcType),
-                                    srcMemberType,
-                                    srcMemberInfo.classType,
-                                    /* errorNode */ undefined,
-                                    recursionCount
-                                );
-                                if (boundSrcFunction) {
-                                    srcMemberType = removeParamSpecVariadicsFromSignature(boundSrcFunction);
-                                }
-
-                                if (isFunction(destMemberType) || isOverloadedFunction(destMemberType)) {
-                                    const boundDeclaredType = evaluator.bindFunctionToClassOrObject(
-                                        ClassType.cloneAsInstance(srcType),
-                                        destMemberType,
-                                        srcMemberInfo.classType,
-                                        /* errorNode */ undefined,
-                                        recursionCount
-                                    );
-                                    if (boundDeclaredType) {
-                                        destMemberType = removeParamSpecVariadicsFromSignature(boundDeclaredType);
-                                    }
-                                }
-                            }
-                        } else {
-                            // Replace any "Self" TypeVar within the dest with the source type.
-                            destMemberType = applySolvedTypeVars(destMemberType, selfTypeVarContext);
-                        }
-
-                        const subDiag = diag?.createAddendum();
-
-                        // Properties require special processing.
-                        if (isClassInstance(destMemberType) && ClassType.isPropertyClass(destMemberType)) {
-                            if (
-                                isClassInstance(srcMemberType) &&
-                                ClassType.isPropertyClass(srcMemberType) &&
-                                !treatSourceAsInstantiable
-                            ) {
-                                if (
-                                    !assignProperty(
-                                        evaluator,
-                                        ClassType.cloneAsInstantiable(destMemberType),
-                                        ClassType.cloneAsInstantiable(srcMemberType),
-                                        mroClass,
-                                        srcType,
-                                        subDiag?.createAddendum(),
-                                        genericDestTypeVarContext,
-                                        selfTypeVarContext,
-                                        recursionCount
-                                    )
-                                ) {
-                                    if (subDiag) {
-                                        subDiag.addMessage(
-                                            Localizer.DiagnosticAddendum.memberTypeMismatch().format({ name })
-                                        );
-                                    }
-                                    typesAreConsistent = false;
-                                }
-                            } else {
-                                // Extract the property type from the property class.
-                                const getterType = evaluator.getGetterTypeFromProperty(
-                                    destMemberType,
-                                    /* inferTypeIfNeeded */ true
-                                );
-                                if (
-                                    !getterType ||
-                                    !evaluator.assignType(
-                                        getterType,
-                                        srcMemberType,
-                                        subDiag?.createAddendum(),
-                                        genericDestTypeVarContext,
-                                        /* srcTypeVarContext */ undefined,
-                                        assignTypeFlags,
-                                        recursionCount
-                                    )
-                                ) {
-                                    if (subDiag) {
-                                        subDiag.addMessage(
-                                            Localizer.DiagnosticAddendum.memberTypeMismatch().format({ name })
-                                        );
-                                    }
-                                    typesAreConsistent = false;
-                                }
-                            }
-                        } else {
-                            // Class and instance variables that are mutable need to
-                            // enforce invariance.
-                            const primaryDecl = symbol.getDeclarations()[0];
-                            const isInvariant = primaryDecl?.type === DeclarationType.Variable && !primaryDecl.isFinal;
-                            if (
-                                !evaluator.assignType(
-                                    destMemberType,
-                                    srcMemberType,
-                                    subDiag?.createAddendum(),
-                                    genericDestTypeVarContext,
-                                    /* srcTypeVarContext */ undefined,
-                                    isInvariant ? assignTypeFlags | AssignTypeFlags.EnforceInvariance : assignTypeFlags,
-                                    recursionCount
-                                )
-                            ) {
-                                if (subDiag) {
-                                    if (isInvariant) {
-                                        subDiag.addMessage(
-                                            Localizer.DiagnosticAddendum.memberIsInvariant().format({ name })
-                                        );
-                                    }
-                                    subDiag.addMessage(
-                                        Localizer.DiagnosticAddendum.memberTypeMismatch().format({ name })
-                                    );
-                                }
-                                typesAreConsistent = false;
-                            }
-                        }
-
-                        const isDestFinal = symbol
-                            .getTypedDeclarations()
-                            .some((decl) => decl.type === DeclarationType.Variable && !!decl.isFinal);
-                        const isSrcFinal = srcMemberInfo.symbol
-                            .getTypedDeclarations()
-                            .some((decl) => decl.type === DeclarationType.Variable && !!decl.isFinal);
-
-                        if (isDestFinal !== isSrcFinal) {
-                            if (isDestFinal) {
-                                if (subDiag) {
-                                    subDiag.addMessage(
-                                        Localizer.DiagnosticAddendum.memberIsFinalInProtocol().format({ name })
-                                    );
-                                }
-                            } else {
-                                if (subDiag) {
-                                    subDiag.addMessage(
-                                        Localizer.DiagnosticAddendum.memberIsNotFinalInProtocol().format({ name })
-                                    );
-                                }
-                            }
-                            typesAreConsistent = false;
-                        }
-                    }
-
-                    if (symbol.isClassVar() && !srcMemberInfo.symbol.isClassVar()) {
-                        diag?.addMessage(Localizer.DiagnosticAddendum.protocolMemberClassVar().format({ name }));
                         typesAreConsistent = false;
                     }
+                } else {
+                    // Extract the property type from the property class.
+                    const getterType = evaluator.getGetterTypeFromProperty(
+                        destMemberType,
+                        /* inferTypeIfNeeded */ true
+                    );
+                    if (
+                        !getterType ||
+                        !evaluator.assignType(
+                            getterType,
+                            srcMemberType,
+                            subDiag?.createAddendum(),
+                            protocolTypeVarContext,
+                            /* srcTypeVarContext */ undefined,
+                            assignTypeFlags,
+                            recursionCount
+                        )
+                    ) {
+                        if (subDiag) {
+                            subDiag.addMessage(Localizer.DiagnosticAddendum.memberTypeMismatch().format({ name }));
+                        }
+                        typesAreConsistent = false;
+                    }
+                }
+            } else {
+                // Class and instance variables that are mutable need to enforce invariance.
+                const primaryDecl = symbol.getDeclarations()[0];
+                const isInvariant = primaryDecl?.type === DeclarationType.Variable && !primaryDecl.isFinal;
+                if (
+                    !evaluator.assignType(
+                        destMemberType,
+                        srcMemberType,
+                        subDiag?.createAddendum(),
+                        protocolTypeVarContext,
+                        /* srcTypeVarContext */ undefined,
+                        isInvariant ? assignTypeFlags | AssignTypeFlags.EnforceInvariance : assignTypeFlags,
+                        recursionCount
+                    )
+                ) {
+                    if (subDiag) {
+                        if (isInvariant) {
+                            subDiag.addMessage(Localizer.DiagnosticAddendum.memberIsInvariant().format({ name }));
+                        }
+                        subDiag.addMessage(Localizer.DiagnosticAddendum.memberTypeMismatch().format({ name }));
+                    }
+                    typesAreConsistent = false;
+                }
+            }
+
+            const isDestFinal = symbol
+                .getTypedDeclarations()
+                .some((decl) => decl.type === DeclarationType.Variable && !!decl.isFinal);
+            const isSrcFinal = srcMemberInfo.symbol
+                .getTypedDeclarations()
+                .some((decl) => decl.type === DeclarationType.Variable && !!decl.isFinal);
+
+            if (isDestFinal !== isSrcFinal) {
+                if (isDestFinal) {
+                    if (subDiag) {
+                        subDiag.addMessage(Localizer.DiagnosticAddendum.memberIsFinalInProtocol().format({ name }));
+                    }
+                } else {
+                    if (subDiag) {
+                        subDiag.addMessage(Localizer.DiagnosticAddendum.memberIsNotFinalInProtocol().format({ name }));
+                    }
+                }
+                typesAreConsistent = false;
+            }
+
+            const destPrimaryDecl = getLastTypedDeclaredForSymbol(symbol);
+            const srcPrimaryDecl = getLastTypedDeclaredForSymbol(srcMemberInfo.symbol);
+
+            if (
+                destPrimaryDecl?.type === DeclarationType.Variable &&
+                srcPrimaryDecl?.type === DeclarationType.Variable
+            ) {
+                const isDestConst = !!destPrimaryDecl.isConstant;
+                const isSrcConst = ClassType.isReadOnlyInstanceVariables(srcType) || !!srcPrimaryDecl.isConstant;
+
+                if (!isDestConst && isSrcConst) {
+                    if (subDiag) {
+                        subDiag.addMessage(Localizer.DiagnosticAddendum.memberIsWritableInProtocol().format({ name }));
+                    }
+                    typesAreConsistent = false;
                 }
             }
         });
@@ -443,13 +506,18 @@ function assignClassToProtocolInternal(
     if (typesAreConsistent && destType.details.typeParameters.length > 0) {
         // Create a specialized version of the protocol defined by the dest and
         // make sure the resulting type args can be assigned.
-        const specializedDestProtocol = applySolvedTypeVars(genericDestType, genericDestTypeVarContext) as ClassType;
+        const genericProtocolType = ClassType.cloneForSpecialization(
+            destType,
+            undefined,
+            /* isTypeArgumentExplicit */ false
+        );
+        const specializedProtocolType = applySolvedTypeVars(genericProtocolType, protocolTypeVarContext) as ClassType;
 
         if (destType.typeArguments) {
             if (
-                !evaluator.verifyTypeArgumentsAssignable(
+                !evaluator.assignTypeArguments(
                     destType,
-                    specializedDestProtocol,
+                    specializedProtocolType,
                     diag,
                     destTypeVarContext,
                     srcTypeVarContext,
@@ -459,22 +527,18 @@ function assignClassToProtocolInternal(
             ) {
                 typesAreConsistent = false;
             }
-        } else if (
-            destTypeVarContext &&
-            destType.details.typeParameters.length > 0 &&
-            specializedDestProtocol.typeArguments &&
-            !destTypeVarContext.isLocked()
-        ) {
-            // Populate the typeVar map with type arguments of the source.
-            const srcTypeArgs = specializedDestProtocol.typeArguments;
-            for (let i = 0; i < destType.details.typeParameters.length; i++) {
-                const typeArgType = i < srcTypeArgs.length ? srcTypeArgs[i] : UnknownType.create();
-                destTypeVarContext.setTypeVarType(
-                    destType.details.typeParameters[i],
-                    /* narrowBound */ undefined,
-                    /* narrowBoundNoLiterals */ undefined,
-                    typeArgType
-                );
+        } else if (destTypeVarContext && !destTypeVarContext.isLocked()) {
+            for (const typeParam of destType.details.typeParameters) {
+                const typeArgEntry = protocolTypeVarContext.getPrimarySignature().getTypeVar(typeParam);
+
+                if (typeArgEntry) {
+                    destTypeVarContext.setTypeVarType(
+                        typeParam,
+                        typeArgEntry?.narrowBound,
+                        typeArgEntry?.narrowBoundNoLiterals,
+                        typeArgEntry?.wideBound
+                    );
+                }
             }
         }
     }
@@ -487,7 +551,7 @@ export function assignModuleToProtocol(
     destType: ClassType,
     srcType: ModuleType,
     diag: DiagnosticAddendum | undefined,
-    typeVarContext: TypeVarContext | undefined,
+    destTypeVarContext: TypeVarContext | undefined,
     flags: AssignTypeFlags,
     recursionCount: number
 ): boolean {
@@ -498,10 +562,7 @@ export function assignModuleToProtocol(
 
     let typesAreConsistent = true;
     const checkedSymbolSet = new Set<string>();
-
-    // Strip the type arguments off the dest protocol if they are provided.
-    const genericDestType = ClassType.cloneForSpecialization(destType, undefined, /* isTypeArgumentExplicit */ false);
-    const genericDestTypeVarContext = new TypeVarContext(getTypeVarScopeId(destType));
+    const protocolTypeVarContext = createProtocolTypeVarContext(evaluator, destType, destTypeVarContext);
 
     destType.details.mro.forEach((mroClass) => {
         if (!isInstantiableClass(mroClass) || !ClassType.isProtocolClass(mroClass)) {
@@ -509,58 +570,63 @@ export function assignModuleToProtocol(
         }
 
         mroClass.details.fields.forEach((symbol, name) => {
-            if (symbol.isClassMember() && !symbol.isIgnoredForProtocolMatch() && !checkedSymbolSet.has(name)) {
-                // Note that we've already checked this symbol. It doesn't need to
-                // be checked again even if it is declared by a subclass.
-                checkedSymbolSet.add(name);
+            if (!symbol.isClassMember() || symbol.isIgnoredForProtocolMatch() || checkedSymbolSet.has(name)) {
+                return;
+            }
 
-                const memberSymbol = srcType.fields.get(name);
+            // Note that we've already checked this symbol. It doesn't need to
+            // be checked again even if it is declared by a subclass.
+            checkedSymbolSet.add(name);
 
-                if (!memberSymbol) {
-                    diag?.addMessage(Localizer.DiagnosticAddendum.protocolMemberMissing().format({ name }));
-                    typesAreConsistent = false;
-                } else {
-                    let destMemberType = evaluator.getDeclaredTypeOfSymbol(symbol)?.type;
-                    if (destMemberType) {
-                        destMemberType = partiallySpecializeType(destMemberType, destType);
+            const memberSymbol = srcType.fields.get(name);
 
-                        const srcMemberType = evaluator.getEffectiveTypeOfSymbol(memberSymbol);
+            if (!memberSymbol) {
+                diag?.addMessage(Localizer.DiagnosticAddendum.protocolMemberMissing().format({ name }));
+                typesAreConsistent = false;
+                return;
+            }
 
-                        if (isFunction(srcMemberType) || isOverloadedFunction(srcMemberType)) {
-                            if (isFunction(destMemberType) || isOverloadedFunction(destMemberType)) {
-                                const boundDeclaredType = evaluator.bindFunctionToClassOrObject(
-                                    ClassType.cloneAsInstance(destType),
-                                    destMemberType,
-                                    destType,
-                                    /* errorNode */ undefined,
-                                    recursionCount
-                                );
-                                if (boundDeclaredType) {
-                                    destMemberType = boundDeclaredType;
-                                }
-                            }
-                        }
+            let destMemberType = evaluator.getDeclaredTypeOfSymbol(symbol)?.type;
+            if (!destMemberType) {
+                return;
+            }
 
-                        const subDiag = diag?.createAddendum();
+            destMemberType = partiallySpecializeType(destMemberType, destType);
 
-                        if (
-                            !evaluator.assignType(
-                                destMemberType,
-                                srcMemberType,
-                                subDiag?.createAddendum(),
-                                genericDestTypeVarContext,
-                                /* srcTypeVarContext */ undefined,
-                                AssignTypeFlags.Default,
-                                recursionCount
-                            )
-                        ) {
-                            if (subDiag) {
-                                subDiag.addMessage(Localizer.DiagnosticAddendum.memberTypeMismatch().format({ name }));
-                            }
-                            typesAreConsistent = false;
-                        }
+            const srcMemberType = evaluator.getEffectiveTypeOfSymbol(memberSymbol);
+
+            if (isFunction(srcMemberType) || isOverloadedFunction(srcMemberType)) {
+                if (isFunction(destMemberType) || isOverloadedFunction(destMemberType)) {
+                    const boundDeclaredType = evaluator.bindFunctionToClassOrObject(
+                        ClassType.cloneAsInstance(destType),
+                        destMemberType,
+                        destType,
+                        /* errorNode */ undefined,
+                        recursionCount
+                    );
+                    if (boundDeclaredType) {
+                        destMemberType = boundDeclaredType;
                     }
                 }
+            }
+
+            const subDiag = diag?.createAddendum();
+
+            if (
+                !evaluator.assignType(
+                    destMemberType,
+                    srcMemberType,
+                    subDiag?.createAddendum(),
+                    protocolTypeVarContext,
+                    /* srcTypeVarContext */ undefined,
+                    AssignTypeFlags.Default,
+                    recursionCount
+                )
+            ) {
+                if (subDiag) {
+                    subDiag.addMessage(Localizer.DiagnosticAddendum.memberTypeMismatch().format({ name }));
+                }
+                typesAreConsistent = false;
             }
         });
     });
@@ -569,14 +635,19 @@ export function assignModuleToProtocol(
     if (typesAreConsistent && destType.details.typeParameters.length > 0 && destType.typeArguments) {
         // Create a specialized version of the protocol defined by the dest and
         // make sure the resulting type args can be assigned.
-        const specializedSrcProtocol = applySolvedTypeVars(genericDestType, genericDestTypeVarContext) as ClassType;
+        const genericProtocolType = ClassType.cloneForSpecialization(
+            destType,
+            undefined,
+            /* isTypeArgumentExplicit */ false
+        );
+        const specializedProtocolType = applySolvedTypeVars(genericProtocolType, protocolTypeVarContext) as ClassType;
 
         if (
-            !evaluator.verifyTypeArgumentsAssignable(
+            !evaluator.assignTypeArguments(
                 destType,
-                specializedSrcProtocol,
+                specializedProtocolType,
                 diag,
-                typeVarContext,
+                destTypeVarContext,
                 /* srcTypeVarContext */ undefined,
                 flags,
                 recursionCount
@@ -587,4 +658,58 @@ export function assignModuleToProtocol(
     }
 
     return typesAreConsistent;
+}
+
+// Given a (possibly-specialized) destType and an optional typeVarContext, creates
+// a new typeVarContext that combines the constraints from both the destType and
+// the destTypeVarContext.
+function createProtocolTypeVarContext(
+    evaluator: TypeEvaluator,
+    destType: ClassType,
+    destTypeVarContext: TypeVarContext | undefined
+): TypeVarContext {
+    const protocolTypeVarContext = new TypeVarContext(getTypeVarScopeId(destType));
+
+    let specializedDestType = destType;
+    if (destTypeVarContext) {
+        specializedDestType = applySolvedTypeVars(destType, destTypeVarContext, {
+            useNarrowBoundOnly: true,
+        }) as ClassType;
+    }
+
+    destType.details.typeParameters.forEach((typeParam, index) => {
+        if (specializedDestType.typeArguments && index < specializedDestType.typeArguments.length) {
+            const typeArg = specializedDestType.typeArguments[index];
+
+            if (!requiresSpecialization(typeArg)) {
+                // If the caller hasn't provided a destTypeVarContext, assume that
+                // the destType represents an "expected type" and populate the
+                // typeVarContext accordingly. For example, if the destType is
+                // MyProto[Literal[0]], we want to constrain the type argument to be
+                // no wider than Literal[0] if the type param is not contravariant.
+                assignTypeToTypeVar(
+                    evaluator,
+                    typeParam,
+                    typeArg,
+                    /* diag */ undefined,
+                    protocolTypeVarContext,
+                    destTypeVarContext ? AssignTypeFlags.Default : AssignTypeFlags.PopulatingExpectedType
+                );
+            }
+        }
+
+        if (destTypeVarContext) {
+            const entry = destTypeVarContext.getPrimarySignature().getTypeVar(typeParam);
+            if (entry) {
+                protocolTypeVarContext.setTypeVarType(
+                    typeParam,
+                    entry.narrowBound,
+                    entry.narrowBoundNoLiterals,
+                    entry.wideBound
+                );
+            }
+        }
+    });
+
+    return protocolTypeVarContext;
 }

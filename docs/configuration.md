@@ -38,7 +38,7 @@ Relative paths specified within the config file are relative to the config fileâ
 
 **typeCheckingMode** ["off", "basic", "strict"]: Specifies the default rule set to use. Some rules can be overridden using additional configuration flags documented below. The default value for this setting is "basic". If set to "off", all type-checking rules are disabled, but Python syntax and semantic errors are still reported.
 
-**useLibraryCodeForTypes** [boolean]: Determines whether pyright reads, parses and analyzes library code to extract type information in the absence of type stub files. Type information will typically be incomplete. We recommend using type stubs where possible. The default value for this option is false.
+**useLibraryCodeForTypes** [boolean]: Determines whether pyright reads, parses and analyzes library code to extract type information in the absence of type stub files. Type information will typically be incomplete. We recommend using type stubs where possible. The default value for this option is true.
 
 
 ## Type Check Diagnostics Settings
@@ -55,6 +55,8 @@ The following settings control pyrightâ€™s diagnostic output (warnings or errors
 <a name="strictParameterNoneValue"></a> **strictParameterNoneValue** [boolean]: PEP 484 indicates that when a function parameter is assigned a default value of None, its type should implicitly be Optional even if the explicit type is not. When enabled, this rule requires that parameter type annotations use Optional explicitly in this case. The default value for this setting is `true`.
 
 <a name="enableTypeIgnoreComments"></a> **enableTypeIgnoreComments** [boolean]: PEP 484 defines support for "# type: ignore" comments. This switch enables or disables support for these comments. The default value for this setting is `true`. This does not affect "# pyright: ignore" comments.
+
+<a name="enableExperimentalFeatures"></a> **enableExperimentalFeatures** [boolean]: Enables a set of experimental (mostly undocumented) features that correspond to proposed or exploratory changes to the Python typing standard. These features will likely change or be removed, so they should not be used except for experimentation purposes.
 
 <a name="reportGeneralTypeIssues"></a> **reportGeneralTypeIssues** [boolean or string, optional]: Generate or suppress diagnostics for general type inconsistencies, unsupported operations, argument/parameter mismatches, etc. This covers all of the basic type-checking rules not covered by other rules. It does not include syntax errors. The default value for this setting is `"error"`.
 
@@ -296,12 +298,13 @@ The following table lists the default severity levels for each diagnostic rule w
 
 | Diagnostic Rule                           | Off        | Basic      | Strict     |
 | :---------------------------------------- | :--------- | :--------- | :--------- |
-| strictListInference                       | false      | false      | true       |
-| strictDictionaryInference                 | false      | false      | true       |
-| strictSetInference                        | false      | false      | true       |
 | analyzeUnannotatedFunctions               | true       | true       | true       |
 | strictParameterNoneValue                  | true       | true       | true       |
 | enableTypeIgnoreComments                  | true       | true       | true       |
+| strictListInference                       | false      | false      | true       |
+| strictDictionaryInference                 | false      | false      | true       |
+| strictSetInference                        | false      | false      | true       |
+| enableExperimentalFeatures                | false      | false      | false      |
 | reportMissingModuleSource                 | "warning"  | "warning"  | "warning"  |
 | reportMissingImports                      | "warning"  | "error"    | "error"    |
 | reportUndefinedVariable                   | "warning"  | "error"    | "error"    |
@@ -328,7 +331,6 @@ The following table lists the default severity levels for each diagnostic rule w
 | reportDeprecated                          | "none"     | "none"     | "error"    |
 | reportDuplicateImport                     | "none"     | "none"     | "error"    |
 | reportFunctionMemberAccess                | "none"     | "none"     | "error"    |
-| reportImportCycles                        | "none"     | "none"     | "error"    |
 | reportIncompatibleMethodOverride          | "none"     | "none"     | "error"    |
 | reportIncompatibleVariableOverride        | "none"     | "none"     | "error"    |
 | reportIncompleteStub                      | "none"     | "none"     | "error"    |
@@ -360,6 +362,7 @@ The following table lists the default severity levels for each diagnostic rule w
 | reportCallInDefaultInitializer            | "none"     | "none"     | "none"     |
 | reportImplicitOverride                    | "none"     | "none"     | "none"     |
 | reportImplicitStringConcatenation         | "none"     | "none"     | "none"     |
+| reportImportCycles                        | "none"     | "none"     | "none"     |
 | reportMissingSuperCall                    | "none"     | "none"     | "none"     |
 | reportPropertyTypeMismatch                | "none"     | "none"     | "none"     |
 | reportShadowedImports                     | "none"     | "none"     | "none"     |

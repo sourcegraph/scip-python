@@ -19,7 +19,9 @@ import {
     getStrictModeNotOverriddenRules,
 } from '../common/configOptions';
 import { assert } from '../common/debug';
+import { DiagnosticAddendum } from '../common/diagnostic';
 import { DiagnosticRule } from '../common/diagnosticRules';
+import { convertOffsetToPosition } from '../common/positionUtils';
 import { TextRange } from '../common/textRange';
 import { TextRangeCollection } from '../common/textRangeCollection';
 import { Localizer } from '../localization/localize';
@@ -35,6 +37,7 @@ export interface CommentDiagnostic {
 
 export function getFileLevelDirectives(
     tokens: TextRangeCollection<Token>,
+    lines: TextRangeCollection<TextRange>,
     defaultRuleSet: DiagnosticRuleSet,
     useStrict: boolean,
     diagnostics: CommentDiagnostic[]
@@ -49,10 +52,17 @@ export function getFileLevelDirectives(
         const token = tokens.getItemAt(i);
         if (token.comments) {
             for (const comment of token.comments) {
-                const textRange: TextRange = { start: comment.start, length: comment.length };
-                const value = _trimTextWithRange(comment.value, textRange);
+                const [value, textRange] = _trimTextWithRange(comment.value, {
+                    start: comment.start,
+                    length: comment.length,
+                });
 
-                ruleSet = _parsePyrightComment(value, textRange, ruleSet, diagnostics);
+                const isCommentOnOwnLine = (): boolean => {
+                    const curTokenLineOffset = convertOffsetToPosition(comment.start, lines).character;
+                    return curTokenLineOffset <= 1;
+                };
+
+                ruleSet = _parsePyrightComment(value, textRange, isCommentOnOwnLine, ruleSet, diagnostics);
             }
         }
     }
@@ -122,6 +132,7 @@ function _overwriteRules(ruleSet: DiagnosticRuleSet, overrideRuleSet: Diagnostic
 function _parsePyrightComment(
     commentValue: string,
     commentRange: TextRange,
+    isCommentOnOwnLine: () => boolean,
     ruleSet: DiagnosticRuleSet,
     diagnostics: CommentDiagnostic[]
 ) {
@@ -133,6 +144,17 @@ function _parsePyrightComment(
         // Handle (actual ignore) "ignore" directives.
         if (operands.trim().startsWith('ignore')) {
             return ruleSet;
+        }
+
+        if (!isCommentOnOwnLine()) {
+            const diagAddendum = new DiagnosticAddendum();
+            diagAddendum.addMessage(Localizer.DiagnosticAddendum.pyrightCommentIgnoreTip());
+            const diag: CommentDiagnostic = {
+                message: Localizer.Diagnostic.pyrightCommentNotOnOwnLine() + diagAddendum.getString(),
+                range: commentRange,
+            };
+
+            diagnostics.push(diag);
         }
 
         const operandList = operands.split(',');
@@ -147,11 +169,10 @@ function _parsePyrightComment(
 
         let rangeOffset = 0;
         for (const operand of operandList) {
-            const operandRange: TextRange = {
+            const [trimmedOperand, operandRange] = _trimTextWithRange(operand, {
                 start: commentRange.start + commentPrefix.length + rangeOffset,
                 length: operand.length,
-            };
-            const trimmedOperand = _trimTextWithRange(operand, operandRange);
+            });
 
             ruleSet = _parsePyrightOperand(trimmedOperand, operandRange, ruleSet, diagnostics);
             rangeOffset += operand.length + 1;
@@ -168,11 +189,10 @@ function _parsePyrightOperand(
     diagnostics: CommentDiagnostic[]
 ) {
     const operandSplit = operand.split('=');
-    const ruleRange: TextRange = {
+    const [trimmedRule, ruleRange] = _trimTextWithRange(operandSplit[0], {
         start: operandRange.start,
         length: operandSplit[0].length,
-    };
-    const trimmedRule = _trimTextWithRange(operandSplit[0], ruleRange);
+    });
 
     // Handle basic directives "basic" and "strict".
     if (operandSplit.length === 1) {
@@ -185,11 +205,10 @@ function _parsePyrightOperand(
     const boolRules = getBooleanDiagnosticRules();
 
     const ruleValue = operandSplit.length > 0 ? operandSplit.slice(1).join('=') : '';
-    const ruleValueRange: TextRange = {
+    const [trimmedRuleValue, ruleValueRange] = _trimTextWithRange(ruleValue, {
         start: operandRange.start + operandSplit[0].length + 1,
         length: ruleValue.length,
-    };
-    const trimmedRuleValue = _trimTextWithRange(ruleValue, ruleValueRange);
+    });
 
     if (diagLevelRules.find((r) => r === trimmedRule)) {
         const diagLevelValue = _parseDiagLevel(trimmedRuleValue);
@@ -265,21 +284,22 @@ function _parseBoolSetting(value: string): boolean | undefined {
 
 // Calls "trim" on the text and adjusts the corresponding range
 // if characters are trimmed from the beginning or end.
-function _trimTextWithRange(text: string, range: TextRange): string {
+function _trimTextWithRange(text: string, range: TextRange): [string, TextRange] {
     assert(text.length === range.length);
     const value1 = text.trimStart();
 
+    let updatedRange = range;
+
     if (value1 !== text) {
         const delta = text.length - value1.length;
-        range.start += delta;
-        range.length -= delta;
+        updatedRange = { start: updatedRange.start + delta, length: updatedRange.length - delta };
     }
 
     const value2 = value1.trimEnd();
     if (value2 !== value1) {
-        range.length -= value1.length - value2.length;
+        updatedRange = { start: updatedRange.start, length: updatedRange.length - value1.length + value2.length };
     }
 
-    assert(value2.length === range.length);
-    return value2;
+    assert(value2.length === updatedRange.length);
+    return [value2, updatedRange];
 }

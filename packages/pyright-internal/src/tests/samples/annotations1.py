@@ -1,7 +1,7 @@
 # This sample tests the handling of type annotations within a
 # python source file (as opposed to a stub file).
 
-from typing import Optional, Type, Union
+from typing import Any, Callable, TypeVar, Union
 import uuid
 from datetime import datetime
 
@@ -9,7 +9,7 @@ from datetime import datetime
 class ClassA:
     # This should generate an error because ClassA
     # is not yet defined at the time it's used.
-    def func0(self) -> Optional[ClassA]:
+    def func0(self) -> ClassA | None:
         return None
 
 
@@ -20,18 +20,16 @@ class ClassB(ClassA):
     # This should generate an error because ClassC
     # is a forward reference, which is not allowed
     # in a python source file.
-    def func2(self) -> Optional[ClassC]:
+    def func2(self) -> ClassC | None:
         return None
 
-    def func3(self) -> "Optional[ClassC]":
+    def func3(self) -> "ClassC | None":
         return None
 
-    def func4(self) -> Optional["ClassC"]:
+    def func4(self) -> "ClassC | None":
         return None
 
-    # This should generate an error for Python versions 3.9
-    # and earlier.
-    def func5(self) -> "Optional"[int]:
+    def func5(self) -> "int | None":
         return None
 
 
@@ -45,9 +43,9 @@ def func10():
 
 # This should generate an error because function calls
 # are not allowed within a type annotation.
-x: func10()
+x1: func10()
 
-y: """
+x2: """
     Union[
         int,
         str
@@ -78,7 +76,7 @@ class ClassD:
 
 # This should generate an error because modules are not allowed in
 # type annotations.
-z: typing
+x3: typing
 
 
 class ClassG:
@@ -100,17 +98,43 @@ def func11():
         f("")
 
 
-def func12(x: Type[int]):
+def func12(x: type[int]):
     # These should not generate an error because they are used
     # in a location that is not considered a type annotation, so the
     # normal annotation limitations do not apply here.
     print(Union[x, x])
-    print(Optional[x])
+    print(x | None)
 
 
-# This should generate an error because foo isn't defined.
-foo: int = foo
+# This should generate an error because x4 isn't defined.
+x4: int = x4
 
 
 class ClassJ:
     datetime: datetime
+
+
+T = TypeVar("T")
+
+
+x5: type[int] = int
+
+# This should generate an error because variables are not allowed
+# in a type annotation.
+x6: x5 = 1
+
+# This should generate an error because variables are not allowed
+# in a type annotation.
+x7: list[x5] = [1]
+
+# This should generate an error because a Callable isn't allowed
+# in a "type".
+x8: type[Callable]
+
+# This should generate an error because a Callable isn't allowed
+# in a "type".
+x9: type[func11]
+
+# This should generate an error because a Callable isn't allowed
+# in a "type".
+x10: type[Callable[..., Any]]

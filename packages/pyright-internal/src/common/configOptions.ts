@@ -36,19 +36,6 @@ export enum PythonPlatform {
 }
 
 export class ExecutionEnvironment {
-    // Default to "." which indicates every file in the project.
-    constructor(
-        root: string,
-        defaultPythonVersion: PythonVersion | undefined,
-        defaultPythonPlatform: string | undefined,
-        defaultExtraPaths: string[] | undefined
-    ) {
-        this.root = root || undefined;
-        this.pythonVersion = defaultPythonVersion || latestStablePythonVersion;
-        this.pythonPlatform = defaultPythonPlatform;
-        this.extraPaths = [...(defaultExtraPaths ?? [])];
-    }
-
     // Root directory for execution - absolute or relative to the
     // project root.
     // Undefined if this is a rootless environment (e.g., open file mode).
@@ -62,6 +49,19 @@ export class ExecutionEnvironment {
 
     // Default to no extra paths.
     extraPaths: string[] = [];
+
+    // Default to "." which indicates every file in the project.
+    constructor(
+        root: string,
+        defaultPythonVersion: PythonVersion | undefined,
+        defaultPythonPlatform: string | undefined,
+        defaultExtraPaths: string[] | undefined
+    ) {
+        this.root = root || undefined;
+        this.pythonVersion = defaultPythonVersion || latestStablePythonVersion;
+        this.pythonPlatform = defaultPythonPlatform;
+        this.extraPaths = Array.from(defaultExtraPaths ?? []);
+    }
 }
 
 export type DiagnosticLevel = 'none' | 'information' | 'warning' | 'error';
@@ -76,8 +76,8 @@ export interface DiagnosticRuleSet {
     printUnknownAsAny: boolean;
 
     // Should type arguments to a generic class be omitted
-    // when printed if all arguments are Unknown or Any?
-    omitTypeArgsIfAny: boolean;
+    // when printed if all arguments are Unknown?
+    omitTypeArgsIfUnknown: boolean;
 
     // Should parameter type be omitted if it is not annotated?
     omitUnannotatedParamType: boolean;
@@ -103,6 +103,10 @@ export interface DiagnosticRuleSet {
 
     // Use strict type rules for parameters assigned default of None?
     strictParameterNoneValue: boolean;
+
+    // Enable experimental features that are not yet part of the
+    // official Python typing spec?
+    enableExperimentalFeatures: boolean;
 
     // Enable support for type: ignore comments?
     enableTypeIgnoreComments: boolean;
@@ -332,10 +336,11 @@ export function getBooleanDiagnosticRules(includeNonOverridable = false) {
     ];
 
     if (includeNonOverridable) {
-        // Do not include this this one because we don't
+        // Do not include this these because we don't
         // want to override it in strict mode or support
         // it within pyright comments.
         boolRules.push(DiagnosticRule.enableTypeIgnoreComments);
+        boolRules.push(DiagnosticRule.enableExperimentalFeatures);
     }
 
     return boolRules;
@@ -421,7 +426,7 @@ export function getStrictModeNotOverriddenRules() {
 export function getOffDiagnosticRuleSet(): DiagnosticRuleSet {
     const diagSettings: DiagnosticRuleSet = {
         printUnknownAsAny: true,
-        omitTypeArgsIfAny: true,
+        omitTypeArgsIfUnknown: true,
         omitUnannotatedParamType: true,
         omitConditionalConstraint: true,
         pep604Printing: true,
@@ -430,6 +435,7 @@ export function getOffDiagnosticRuleSet(): DiagnosticRuleSet {
         strictDictionaryInference: false,
         analyzeUnannotatedFunctions: true,
         strictParameterNoneValue: true,
+        enableExperimentalFeatures: false,
         enableTypeIgnoreComments: true,
         reportGeneralTypeIssues: 'none',
         reportPropertyTypeMismatch: 'none',
@@ -503,7 +509,7 @@ export function getOffDiagnosticRuleSet(): DiagnosticRuleSet {
 export function getBasicDiagnosticRuleSet(): DiagnosticRuleSet {
     const diagSettings: DiagnosticRuleSet = {
         printUnknownAsAny: false,
-        omitTypeArgsIfAny: false,
+        omitTypeArgsIfUnknown: false,
         omitUnannotatedParamType: true,
         omitConditionalConstraint: false,
         pep604Printing: true,
@@ -512,6 +518,7 @@ export function getBasicDiagnosticRuleSet(): DiagnosticRuleSet {
         strictDictionaryInference: false,
         analyzeUnannotatedFunctions: true,
         strictParameterNoneValue: true,
+        enableExperimentalFeatures: false,
         enableTypeIgnoreComments: true,
         reportGeneralTypeIssues: 'error',
         reportPropertyTypeMismatch: 'none',
@@ -585,7 +592,7 @@ export function getBasicDiagnosticRuleSet(): DiagnosticRuleSet {
 export function getStrictDiagnosticRuleSet(): DiagnosticRuleSet {
     const diagSettings: DiagnosticRuleSet = {
         printUnknownAsAny: false,
-        omitTypeArgsIfAny: false,
+        omitTypeArgsIfUnknown: false,
         omitUnannotatedParamType: false,
         omitConditionalConstraint: false,
         pep604Printing: true,
@@ -594,6 +601,7 @@ export function getStrictDiagnosticRuleSet(): DiagnosticRuleSet {
         strictDictionaryInference: true,
         analyzeUnannotatedFunctions: true,
         strictParameterNoneValue: true,
+        enableExperimentalFeatures: false, // Not overridden by strict mode
         enableTypeIgnoreComments: true, // Not overridden by strict mode
         reportGeneralTypeIssues: 'error',
         reportPropertyTypeMismatch: 'none',
@@ -601,7 +609,7 @@ export function getStrictDiagnosticRuleSet(): DiagnosticRuleSet {
         reportMissingImports: 'error',
         reportMissingModuleSource: 'warning', // Not overridden by strict mode
         reportMissingTypeStubs: 'error',
-        reportImportCycles: 'error',
+        reportImportCycles: 'none',
         reportUnusedImport: 'error',
         reportUnusedClass: 'error',
         reportUnusedFunction: 'error',
@@ -677,13 +685,6 @@ export function matchFileSpecs(configOptions: ConfigOptions, filePath: string, i
 // Internal configuration options. These are derived from a combination
 // of the command line and from a JSON-based config file.
 export class ConfigOptions {
-    constructor(projectRoot: string, typeCheckingMode?: string) {
-        this.projectRoot = projectRoot;
-        this.typeCheckingMode = typeCheckingMode;
-        this.diagnosticRuleSet = ConfigOptions.getDiagnosticRuleSet(typeCheckingMode);
-        this.functionSignatureDisplay = SignatureDisplayType.formatted;
-    }
-
     // Absolute directory of project. All relative paths in the config
     // are based on this path.
     projectRoot: string;
@@ -804,6 +805,13 @@ export class ConfigOptions {
 
     // Controls how hover and completion function signatures are displayed.
     functionSignatureDisplay: SignatureDisplayType;
+
+    constructor(projectRoot: string, typeCheckingMode?: string) {
+        this.projectRoot = projectRoot;
+        this.typeCheckingMode = typeCheckingMode;
+        this.diagnosticRuleSet = ConfigOptions.getDiagnosticRuleSet(typeCheckingMode);
+        this.functionSignatureDisplay = SignatureDisplayType.formatted;
+    }
 
     static getDiagnosticRuleSet(typeCheckingMode?: string): DiagnosticRuleSet {
         if (typeCheckingMode === 'strict') {

@@ -96,6 +96,7 @@ export class WorkspaceFactory {
     constructor(
         private readonly _console: ConsoleInterface,
         private readonly _uriParser: UriParser,
+        private readonly _isWeb: boolean,
         private readonly _createService: (
             name: string,
             rootPath: string,
@@ -159,7 +160,7 @@ export class WorkspaceFactory {
     }
 
     items() {
-        return [...this._map.values()];
+        return Array.from(this._map.values());
     }
 
     applyPythonPath(workspace: Workspace, newPythonPath: string | undefined): string | undefined {
@@ -235,14 +236,14 @@ export class WorkspaceFactory {
                 const fileInfo = fromWorkspace.service.backgroundAnalysisProgram.program.getSourceFileInfo(f);
                 if (fileInfo) {
                     // Copy the source file data (closing can destroy the sourceFile)
-                    const version = fileInfo.sourceFile.getClientVersion() || null;
+                    const version = fileInfo.sourceFile.getClientVersion() ?? null;
                     const content = fileInfo.sourceFile.getFileContent() || '';
                     const ipythonMode = fileInfo.sourceFile.getIPythonMode();
                     const chainedSourceFile = fileInfo.chainedSourceFile?.sourceFile.getFilePath();
                     const realFilePath = fileInfo.sourceFile.getRealFilePath();
 
                     // Remove the file from the old workspace first (closing will propagate to the toWorkspace automatically).
-                    fromWorkspace.service.setFileClosed(f, /*isTracked*/ false);
+                    fromWorkspace.service.setFileClosed(f, /* isTracked */ false);
 
                     // Then open it in the toWorkspace so that it is marked tracked there.
                     toWorkspace.service.setFileOpened(
@@ -296,11 +297,26 @@ export class WorkspaceFactory {
         return workspace;
     }
 
+    getWorkspaceForFileSync(filePath: string, pythonPath: string | undefined): Workspace {
+        // Find or create best match.
+        return this._getOrCreateBestWorkspaceFileSync(filePath, pythonPath);
+    }
+
     async getContainingWorkspacesForFile(filePath: string): Promise<Workspace[]> {
         // Wait for all workspaces to be initialized before attempting to find the best workspace. Otherwise
         // the list of files won't be complete and the `contains` check might fail.
         await Promise.all(this.items().map((w) => w.isInitialized.promise));
 
+        // Find or create best match.
+        const workspaces = this.getContainingWorkspacesForFileSync(filePath);
+
+        // The workspaces may have just been created, wait for them all to be initialized
+        await Promise.all(workspaces.map((w) => w.isInitialized.promise));
+
+        return workspaces;
+    }
+
+    getContainingWorkspacesForFileSync(filePath: string): Workspace[] {
         // All workspaces that track the file should be considered.
         let workspaces = this.items().filter((w) => w.service.isTracked(filePath));
 
@@ -313,9 +329,6 @@ export class WorkspaceFactory {
         if (this._isPythonPathImmutable(filePath)) {
             workspaces = workspaces.filter((w) => w.pythonPathKind === WorkspacePythonPathKind.Immutable);
         }
-
-        // The workspaces may have just been created, wait for them all to be initialized
-        await Promise.all(workspaces.map((w) => w.isInitialized.promise));
 
         return workspaces;
     }
@@ -337,9 +350,9 @@ export class WorkspaceFactory {
         // for the notebook.
         // If a notebook has the new python path but is currently in a workspace with the path hardcoded, we need to move it to
         // this workspace.
-        const oldPathFiles = [
-            ...new Set<string>(mutableWorkspace.service.getOpenFiles().filter((f) => this._isPythonPathImmutable(f))),
-        ];
+        const oldPathFiles = Array.from(
+            new Set<string>(mutableWorkspace.service.getOpenFiles().filter((f) => this._isPythonPathImmutable(f)))
+        );
         const exitingWorkspaceWithSamePath = this.items().find(
             (w) => w.pythonPath === mutableWorkspace.pythonPath && w !== mutableWorkspace
         );
@@ -361,7 +374,7 @@ export class WorkspaceFactory {
         // Immutable files from a different workspace (with the same path as the new path)
         // have to be moved to the mutable workspace (which now has the new path)
         if (exitingWorkspaceWithSamePath) {
-            this.moveFiles([...newPathFiles], exitingWorkspaceWithSamePath!, mutableWorkspace);
+            this.moveFiles(Array.from(newPathFiles), exitingWorkspaceWithSamePath!, mutableWorkspace);
             this.removeUnused(exitingWorkspaceWithSamePath);
         }
     }
@@ -374,8 +387,8 @@ export class WorkspaceFactory {
         pythonPathKind: WorkspacePythonPathKind,
         kinds: string[]
     ) {
-        // Update the kind based of the uri is local or not
-        if (!this._uriParser.isLocal(rootUri)) {
+        // Update the kind based if the uri is local or not
+        if (!kinds.includes(WellKnownWorkspaceKinds.Default) && (!this._uriParser.isLocal(rootUri) || this._isWeb)) {
             // Web based workspace should be limited.
             kinds = [...kinds, WellKnownWorkspaceKinds.Limited];
         }
@@ -395,9 +408,6 @@ export class WorkspaceFactory {
             searchPathsToWatch: [],
         };
 
-        // Tell our owner we added something
-        this._onWorkspaceCreated(result);
-
         // Stick in our map
         const key = this._getWorkspaceKey(result);
 
@@ -405,6 +415,11 @@ export class WorkspaceFactory {
         this._remove(result);
         this._console.log(`WorkspaceFactory ${this._id} add ${key}`);
         this._map.set(key, result);
+
+        // Tell our owner we added something. Order matters here as we
+        // don't want to fire the workspace created while the old copy of this
+        // workspace is still in the map.
+        this._onWorkspaceCreated(result);
 
         return result;
     }
@@ -449,7 +464,7 @@ export class WorkspaceFactory {
         await bestInstance.isInitialized.promise;
 
         // If this best instance doesn't match the pythonPath, then we need to create a new one.
-        if (pythonPath && bestInstance.pythonPath !== pythonPath) {
+        if (pythonPath !== undefined && bestInstance.pythonPath !== pythonPath) {
             bestInstance = this._createImmutableCopy(bestInstance, pythonPath);
         }
 
@@ -461,7 +476,7 @@ export class WorkspaceFactory {
         let bestInstance = this._getBestWorkspaceForFile(filePath, pythonPath);
 
         // If this best instance doesn't match the pythonPath, then we need to create a new one.
-        if (pythonPath && bestInstance.pythonPath !== pythonPath) {
+        if (pythonPath !== undefined && bestInstance.pythonPath !== pythonPath) {
             bestInstance = this._createImmutableCopy(bestInstance, pythonPath);
         }
 
@@ -561,7 +576,7 @@ export class WorkspaceFactory {
                 '',
                 this._defaultWorkspacePath,
                 pythonPath,
-                pythonPath ? WorkspacePythonPathKind.Immutable : WorkspacePythonPathKind.Mutable,
+                pythonPath !== undefined ? WorkspacePythonPathKind.Immutable : WorkspacePythonPathKind.Mutable,
                 [WellKnownWorkspaceKinds.Default]
             );
         }
@@ -594,7 +609,7 @@ export class WorkspaceFactory {
         }
 
         // If there's any that match the python path, take the one with the longest path from those.
-        if (pythonPath) {
+        if (pythonPath !== undefined) {
             const matchingWorkspaces = workspaces.filter((w) => w.pythonPath === pythonPath);
             if (matchingWorkspaces.length > 0) {
                 return this._getLongestPathWorkspace(matchingWorkspaces);

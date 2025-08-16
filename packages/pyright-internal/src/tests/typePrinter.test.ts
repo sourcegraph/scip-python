@@ -49,7 +49,7 @@ test('SimpleTypes', () => {
     assert.strictEqual(printType(noneInstanceType, PrintTypeFlags.None, returnTypeCallback), 'None');
 
     const noneInstantiableType = NoneType.createType();
-    assert.strictEqual(printType(noneInstantiableType, PrintTypeFlags.None, returnTypeCallback), 'Type[None]');
+    assert.strictEqual(printType(noneInstantiableType, PrintTypeFlags.None, returnTypeCallback), 'type[None]');
 
     const moduleType = ModuleType.create('Test', '');
     assert.strictEqual(printType(moduleType, PrintTypeFlags.None, returnTypeCallback), 'Module("Test")');
@@ -86,7 +86,7 @@ test('ClassTypes', () => {
 
     classTypeA.details.typeParameters.push(typeVarS, typeVarT);
 
-    assert.strictEqual(printType(classTypeA, PrintTypeFlags.None, returnTypeCallback), 'Type[A[S, T]]');
+    assert.strictEqual(printType(classTypeA, PrintTypeFlags.None, returnTypeCallback), 'type[A[S, T]]');
 
     const instanceA = ClassType.cloneAsInstance(classTypeA);
     assert.strictEqual(printType(instanceA, PrintTypeFlags.None, returnTypeCallback), 'A[S, T]');
@@ -133,14 +133,14 @@ test('FunctionTypes', () => {
     });
 
     FunctionType.addParameter(funcTypeA, {
-        category: ParameterCategory.VarArgList,
+        category: ParameterCategory.ArgsList,
         hasDeclaredType: true,
         type: AnyType.create(),
         name: 'args',
     });
 
     FunctionType.addParameter(funcTypeA, {
-        category: ParameterCategory.VarArgDictionary,
+        category: ParameterCategory.KwargsDict,
         hasDeclaredType: true,
         type: AnyType.create(),
         name: 'kwargs',
@@ -188,7 +188,7 @@ test('FunctionTypes', () => {
     const unpackedTs = TypeVarType.cloneForUnpacked(typeVarTupleTs);
 
     FunctionType.addParameter(funcTypeC, {
-        category: ParameterCategory.VarArgList,
+        category: ParameterCategory.ArgsList,
         hasDeclaredType: true,
         type: unpackedTs,
         name: 'args',
@@ -200,4 +200,12 @@ test('FunctionTypes', () => {
         '(*args: Unpack[Ts]) -> Unknown'
     );
     assert.strictEqual(printType(funcTypeC, PrintTypeFlags.PythonSyntax, returnTypeCallback), 'Callable[..., Any]');
+
+    const funcTypeD = FunctionType.createInstance('D', '', '', FunctionTypeFlags.None);
+
+    funcTypeD.details.paramSpec = paramSpecP;
+    funcTypeD.details.declaredReturnType = NoneType.createInstance();
+
+    assert.strictEqual(printType(funcTypeD, PrintTypeFlags.None, returnTypeCallback), '(**P) -> None');
+    assert.strictEqual(printType(funcTypeD, PrintTypeFlags.PythonSyntax, returnTypeCallback), 'Callable[P, None]');
 });
