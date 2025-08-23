@@ -1,3 +1,7 @@
+# v0.6.4
+
+- Updates base docker image
+
 # v0.6.3
 
 - Fixes a known crash when handling inheritance from class
