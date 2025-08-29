@@ -29,15 +29,28 @@ let getPipCommand = () => {
 };
 
 function pipList(): PipInformation[] {
-    return JSON.parse(child_process.execSync(`${getPipCommand()} list --format=json`).toString()) as PipInformation[];
+    console.log(`Executing pip list.`);
+    return JSON.parse(
+        child_process.execSync(`${getPipCommand()} list --format=json`, { maxBuffer: 1024 * 1024 * 100 }).toString()
+    ) as PipInformation[];
 }
 
 function pipBulkShow(names: string[]): string[] {
-    // TODO: This probably breaks with enough names. Should batch them into 512 or whatever the max for bash would be
-    return child_process
-        .execSync(`${getPipCommand()} show -f ${names.join(' ')}`)
-        .toString()
-        .split('\n---');
+    const BATCH_SIZE = 10;
+    const results: string[] = [];
+    console.log(names.length + ' packages to show');
+
+    for (let i = 0; i < names.length; i += BATCH_SIZE) {
+        const batch = names.slice(i, i + BATCH_SIZE);
+        console.log(`Executing pip show for the following packages: ${batch.join(', ')}`);
+        console.log(`${getPipCommand()} show -f ${batch.join(' ')}`);t
+        const output = child_process
+            .execSync(`${getPipCommand()} show -f ${batch.join(' ')}`, { maxBuffer: 1024 * 1024 * 5 })
+            .toString()
+        results.push(...output.split('\n---'));
+    }
+
+    return results;
 }
 
 export default function getEnvironment(
