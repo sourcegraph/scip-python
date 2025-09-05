@@ -7,11 +7,14 @@ import { SnapshotOptions } from '../src/MainCommand';
 import { join } from 'path';
 import * as path from 'path';
 import * as fs from 'fs';
+import * as os from 'os';
 import { Indexer } from '../src/indexer';
 import { setGlobalAssertionFlags, setGlobalContext, checkSometimesAssertions, SeenCondition } from '../src/assertions';
 import { normalizePathCase, isFileSystemCaseSensitive } from 'pyright-internal/common/pathUtils';
 import { PyrightFileSystem } from 'pyright-internal/pyrightFileSystem';
 import { createFromRealFileSystem } from 'pyright-internal/common/realFileSystem';
+// Import Python CLI tests
+import { pythonCLITests } from './python-cli-test';
 
 function createTempDirectory(outputDirectory: string, testName: string): string {
     const tempPrefix = path.join(path.dirname(outputDirectory), `.tmp-${testName}-`);
@@ -271,6 +274,7 @@ version = "16.05"`,
 
 function unitTests(): void {
     testPyprojectParsing();
+    pythonCLITests();
 }
 
 function snapshotTests(mode: 'check' | 'update', failFast: boolean, quiet: boolean, filterTests?: string[]): void {
@@ -344,7 +348,7 @@ function parseFilterTests(): string[] | undefined {
 }
 
 const filterTests = parseFilterTests();
-const failFast = process.argv.indexOf('--fail-fast') !== -1 ?? false;
+const failFast = process.argv.indexOf('--fail-fast') !== -1;
 const quiet = process.argv.indexOf('--verbose') === -1;
 
 if (process.argv.indexOf('--check') !== -1) {

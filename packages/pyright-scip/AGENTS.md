@@ -8,6 +8,10 @@
 -   `npm run check-snapshots` - Check snapshot tests
 -   `npm run update-snapshots` - Update snapshot tests
 
+After making changes to the codebase, run tests with:
+1. `npm run build-agent` - Build the development version
+2. `npm run check-snapshots` - Run all tests including unit tests
+
 ### Building
 
 -   `npm run webpack` - Development build

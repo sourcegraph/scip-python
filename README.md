@@ -6,6 +6,8 @@ Project is primarily an addition to Pyright. At this time, there are no substant
 
 ## Pre-requisites
 
+scip-python only supports Python 3.10+.
+
 ```
 $ # Install scip-python
 $ npm install -g @sourcegraph/scip-python
