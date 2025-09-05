@@ -1,5 +1,12 @@
 # scip-python CHANGELOG
 
+## v0.6.6
+
+- Changes package listing to use Python's `importlib` instead of
+  `pip show` by default. On versions of pip 24.0 and older, `pip show`
+  is much slower. This also avoids parsing of unstructured data
+  returned by pip in favor of JSON.
+
 ## v0.6.5
 
 - Fixes a crash when `pip show` returns more than 1MB of data. (#151)
