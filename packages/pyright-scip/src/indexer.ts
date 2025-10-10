@@ -1,7 +1,9 @@
 import * as child_process from 'child_process';
+import * as fs from 'fs';
 import * as path from 'path';
 import * as TOML from '@iarna/toml';
 import { Event } from 'vscode-languageserver/lib/common/api';
+import { minimatch } from 'minimatch';
 
 import { Program } from 'pyright-internal/analyzer/program';
 import { ImportResolver } from 'pyright-internal/analyzer/importResolver';
@@ -115,6 +117,65 @@ export class Indexer {
             }
 
             this.projectFiles = targetFiles;
+        }
+
+        // Apply exclusions
+        if (scipConfig.exclude || scipConfig.excludeConfig) {
+            const excludePatterns: string[] = [];
+
+            // Add patterns from --exclude flag
+            if (scipConfig.exclude) {
+                excludePatterns.push(...scipConfig.exclude);
+            }
+
+            // Add patterns from --exclude-config file
+            if (scipConfig.excludeConfig) {
+                const configPath = path.resolve(scipConfig.excludeConfig);
+                if (fs.existsSync(configPath)) {
+                    const configContent = fs.readFileSync(configPath, 'utf8');
+                    const lines = configContent.split('\n')
+                        .map(line => line.trim())
+                        .filter(line => line && !line.startsWith('#')); // Ignore empty lines and comments
+                    excludePatterns.push(...lines);
+                } else {
+                    sendStatus(`Warning: Exclude config file not found: ${configPath}`);
+                }
+            }
+
+            // Filter out excluded files using pattern matching
+            const filteredFiles: Set<string> = new Set();
+            for (const file of this.projectFiles) {
+                let shouldExclude = false;
+
+                for (const pattern of excludePatterns) {
+                    const resolvedPattern = path.isAbsolute(pattern) ? pattern : path.resolve(scipConfig.projectRoot, pattern);
+
+                    // Check exact path match or directory prefix
+                    if (file === resolvedPattern || file.startsWith(resolvedPattern + path.sep)) {
+                        shouldExclude = true;
+                        break;
+                    }
+
+                    // Check glob pattern match (relative to project root)
+                    const relativePath = path.relative(scipConfig.projectRoot, file);
+                    if (minimatch(relativePath, pattern, { dot: true, matchBase: true })) {
+                        shouldExclude = true;
+                        break;
+                    }
+
+                    // Also try matching absolute path against pattern
+                    if (minimatch(file, resolvedPattern, { dot: true })) {
+                        shouldExclude = true;
+                        break;
+                    }
+                }
+
+                if (!shouldExclude) {
+                    filteredFiles.add(file);
+                }
+            }
+
+            this.projectFiles = filteredFiles;
         }
 
         sendStatus(`Total Project Files ${this.projectFiles.size}`);

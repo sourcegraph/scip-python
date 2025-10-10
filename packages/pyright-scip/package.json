@@ -52,6 +52,7 @@
         "diff": "^5.0.0",
         "glob": "^7.2.0",
         "google-protobuf": "^3.19.3",
+        "minimatch": "^10.0.3",
         "ts-node": "^10.5.0",
         "vscode-languageserver": "^7.0.0"
     },
