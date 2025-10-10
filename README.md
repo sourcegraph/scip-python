@@ -75,11 +75,8 @@ tests/broken/
 
 # Glob patterns
 test_*
-**/*.pyc
 build/**
 ```
-
-The exclusion feature supports both exact paths and glob patterns, and works as a filter that gracefully handles non-matching patterns without errors.
 
 ### project-namespace
 
