@@ -133,9 +133,10 @@ export class Indexer {
                 const configPath = path.resolve(scipConfig.excludeConfig);
                 if (fs.existsSync(configPath)) {
                     const configContent = fs.readFileSync(configPath, 'utf8');
-                    const lines = configContent.split('\n')
-                        .map(line => line.trim())
-                        .filter(line => line && !line.startsWith('#')); // Ignore empty lines and comments
+                    const lines = configContent
+                        .split('\n')
+                        .map((line) => line.trim())
+                        .filter((line) => line && !line.startsWith('#')); // Ignore empty lines and comments
                     excludePatterns.push(...lines);
                 } else {
                     sendStatus(`Warning: Exclude config file not found: ${configPath}`);
@@ -148,7 +149,9 @@ export class Indexer {
                 let shouldExclude = false;
 
                 for (const pattern of excludePatterns) {
-                    const resolvedPattern = path.isAbsolute(pattern) ? pattern : path.resolve(scipConfig.projectRoot, pattern);
+                    const resolvedPattern = path.isAbsolute(pattern)
+                        ? pattern
+                        : path.resolve(scipConfig.projectRoot, pattern);
 
                     // Check exact path match or directory prefix
                     if (file === resolvedPattern || file.startsWith(resolvedPattern + path.sep)) {
