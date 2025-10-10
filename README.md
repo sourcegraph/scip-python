@@ -41,6 +41,43 @@ To run scip-python over only a particular directory, you can use the `--target-o
 $ scip-python index . --project-name=$MY_PROJECT --target-only=src/subdir
 ```
 
+### exclude
+
+To exclude specific files or directories from indexing, you can use the `--exclude` flag or `--exclude-config` flag. This is useful for skipping broken files, circular dependencies, or test files.
+
+**Exclude via command line:**
+
+```
+$ scip-python index . --project-name=$MY_PROJECT --exclude path/to/broken.py --exclude tests/
+```
+
+**Exclude using glob patterns:**
+
+```
+$ scip-python index . --project-name=$MY_PROJECT --exclude "test_*" "**/*.pyc" "build/**"
+```
+
+**Exclude using a config file:**
+
+```
+$ scip-python index . --project-name=$MY_PROJECT --exclude-config=.scipignore
+```
+
+**Example config file format (`.scipignore`):**
+
+```
+# Broken files
+src/broken_module.py
+
+# Directories with circular dependencies
+src/experimental/
+tests/broken/
+
+# Glob patterns
+test_*
+build/**
+```
+
 ### project-namespace
 
 Additionally, if your project is loaded with some prefix, you can use the `--project-namespace` to put a namespace before all the generated symbols for this project.
