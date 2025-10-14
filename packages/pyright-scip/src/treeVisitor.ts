@@ -57,6 +57,10 @@ import { Event } from 'vscode-languageserver';
 import { HoverResults } from 'pyright-internal/languageService/hoverProvider';
 import { convertDocStringToMarkdown } from 'pyright-internal/analyzer/docStringConversion';
 import { assert } from 'pyright-internal/common/debug';
+import { assertNeverNormalized, assertSometimesNormalized } from './assertions';
+import { normalizePathCase } from 'pyright-internal/common/pathUtils';
+import { PyrightFileSystem } from 'pyright-internal/pyrightFileSystem';
+import { createFromRealFileSystem } from 'pyright-internal/common/realFileSystem';
 import { ClassMemberLookupFlags, lookUpClassMember } from 'pyright-internal/analyzer/typeUtils';
 
 //  Useful functions for later, but haven't gotten far enough yet to use them.
