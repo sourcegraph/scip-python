@@ -128,7 +128,8 @@ def process_project(path, patterns):
         print("Indexer output:")
         print(result.stdout)
         print(result.stderr)
-
+    except subprocess.CalledProcessError as e:
+        print(f"Command '{e.cmd}' failed with exit code {e.returncode}. Error output:\n{e.stderr}\nStandard output:\n{e.stdout}")
     except Exception as e:
         print(f"An error occurred: {e}")
     finally:
