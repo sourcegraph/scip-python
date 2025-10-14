@@ -22,6 +22,12 @@ export function makePackage(pythonPackage: PythonPackage): ScipSymbol {
 }
 
 export function makeModule(pythonPackage: PythonPackage, moduleName: string): ScipSymbol {
+    if (!pythonPackage) {
+        return ScipSymbol.global(
+            ScipSymbol.package('<unknown>', '0.0.0'),
+            packageDescriptor(moduleName)
+        );
+    }
     let ns = namespaces.get(pythonPackage.name);
     if (ns) {
         moduleName = ns + '.' + moduleName;
