@@ -1646,7 +1646,12 @@ export function getCodeFlowEngine(
 
     function getTypeFromWildcardImport(flowNode: FlowWildcardImport, name: string): Type {
         const importInfo = getImportInfo(flowNode.node.module);
-        assert(importInfo !== undefined && importInfo.isImportFound);
+        // If the module couldn't be resolved (for example, workspace layout
+        // doesn't include the package), don't throw a debug assertion here.
+        // Instead, fall back to Unknown so analysis can continue for other files.
+        if (importInfo === undefined || !importInfo.isImportFound) {
+            return UnknownType.create();
+        }
         assert(flowNode.node.isWildcardImport);
 
         const symbolWithScope = evaluator.lookUpSymbolRecursive(flowNode.node, name, /* honorCodeFlow */ false);

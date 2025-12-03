@@ -72,20 +72,66 @@ def process_pyproject_file(pyproject_file, patterns, venv_python):
     # Extract all dependencies recursively
     for dependency in extract_dependencies(pyproject_data, patterns):
         install_package(dependency, venv_python)
+        
+        
+def _iter_requirements_lines(req_file: Path, visited: set[Path]):
+    """
+    Yield requirement lines from req_file, recursively following -r/--requirement.
+    Removes comments and blank lines. Uses a visited set to avoid cycles.
+    """
+    req_file = req_file.resolve()
+    if req_file in visited:
+        return
+    visited.add(req_file)
 
-
-def process_requirements_file(req_file, patterns, venv_python):
-    """Process a requirements file and install matching packages."""
     print(f"Processing file: {req_file}")
-    with open(req_file, "r") as file:
-        for line in file:
-            package = line.strip()
-            # Ignore comments and empty lines
-            if not package or package.startswith("#"):
-                continue
-            # Install only if package matches any of the patterns
-            if matches_pattern(package, patterns):
-                install_package(package, venv_python)
+    try:
+        with open(req_file, "r", encoding="utf-8") as f:
+            for raw in f:
+                # Remove inline comments, but leave URLs with # in them alone by splitting once.
+                line = raw.strip()
+                if not line or line.startswith("#"):
+                    continue
+                # If there's a comment, strip everything after the first unescaped '#'
+                # Simple heuristic: split at first '#' if present and not part of a URL fragment
+                if "#" in line and not line.lower().startswith(("http://", "https://")):
+                    line = line.split("#", 1)[0].strip()
+                    if not line:
+                        continue
+
+                # Handle -r / --requirement includes
+                if line.startswith("-r ") or line.startswith("--requirement "):
+                    parts = line.split(maxsplit=1)
+                    if len(parts) == 2:
+                        include_path = parts[1].strip().strip("'\"")
+                        include_file = (req_file.parent / include_path).resolve()
+                        if include_file.exists():
+                            yield from _iter_requirements_lines(include_file, visited)
+                        else:
+                            print(f"Included file not found: {include_file}")
+                    continue
+
+                # (Optional) Ignore constraint includes (-c/--constraint) since they are not packages
+                if line.startswith("-c ") or line.startswith("--constraint "):
+                    # You could parse and apply constraints if needed, but we skip here.
+                    continue
+
+                # All other lines are requirement specs; yield as-is
+                yield line
+    except FileNotFoundError:
+        print(f"⚠️ Requirements file not found: {req_file}")
+
+
+
+def process_requirements_file(req_file: Path, patterns, venv_python):
+    """
+    Process a requirements file, following -r includes recursively.
+    Only install specs that match any of the provided patterns.
+    """
+    visited: set[Path] = set()
+    for spec in _iter_requirements_lines(req_file, visited):
+        if matches_pattern(spec, patterns):
+            install_package(spec, venv_python)
                 
     
 def process_project(path, patterns):
