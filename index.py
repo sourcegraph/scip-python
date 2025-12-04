@@ -75,49 +75,50 @@ def process_pyproject_file(pyproject_file, patterns, venv_python):
         
         
 def _iter_requirements_lines(req_file: Path, visited: set[Path]):
-    """
-    Yield requirement lines from req_file, recursively following -r/--requirement.
-    Removes comments and blank lines. Uses a visited set to avoid cycles.
-    """
     req_file = req_file.resolve()
     if req_file in visited:
         return
     visited.add(req_file)
 
     print(f"Processing file: {req_file}")
+
     try:
-        with open(req_file, "r", encoding="utf-8") as f:
-            for raw in f:
-                # Remove inline comments, but leave URLs with # in them alone by splitting once.
-                line = raw.strip()
-                if not line or line.startswith("#"):
-                    continue
-                # If there's a comment, strip everything after the first unescaped '#'
-                # Simple heuristic: split at first '#' if present and not part of a URL fragment
-                if "#" in line and not line.lower().startswith(("http://", "https://")):
-                    line = line.split("#", 1)[0].strip()
-                    if not line:
-                        continue
+        # Try UTF-8 first, fallback to latin-1 to avoid crash
+        try:
+            data = req_file.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            print(f"⚠️ {req_file} is not UTF-8. Falling back to latin-1.")
+            data = req_file.read_text(encoding="latin-1")
 
-                # Handle -r / --requirement includes
-                if line.startswith("-r ") or line.startswith("--requirement "):
-                    parts = line.split(maxsplit=1)
-                    if len(parts) == 2:
-                        include_path = parts[1].strip().strip("'\"")
-                        include_file = (req_file.parent / include_path).resolve()
-                        if include_file.exists():
-                            yield from _iter_requirements_lines(include_file, visited)
-                        else:
-                            print(f"Included file not found: {include_file}")
+        for raw in data.splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#"):
+                continue
+
+            # Remove inline comments unless it's part of a URL
+            if "#" in line and not line.lower().startswith(("http://", "https://")):
+                line = line.split("#", 1)[0].strip()
+                if not line:
                     continue
 
-                # (Optional) Ignore constraint includes (-c/--constraint) since they are not packages
-                if line.startswith("-c ") or line.startswith("--constraint "):
-                    # You could parse and apply constraints if needed, but we skip here.
-                    continue
+            # -r / --requirement include
+            if line.startswith("-r ") or line.startswith("--requirement "):
+                parts = line.split(maxsplit=1)
+                if len(parts) == 2:
+                    include_path = parts[1].strip().strip("'\"")
+                    include_file = (req_file.parent / include_path).resolve()
+                    if include_file.exists():
+                        yield from _iter_requirements_lines(include_file, visited)
+                    else:
+                        print(f"Included file not found: {include_file}")
+                continue
 
-                # All other lines are requirement specs; yield as-is
-                yield line
+            # Skip constraints
+            if line.startswith("-c ") or line.startswith("--constraint "):
+                continue
+
+            yield line
+
     except FileNotFoundError:
         print(f"⚠️ Requirements file not found: {req_file}")
 
