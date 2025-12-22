@@ -136,7 +136,11 @@ export class TypeVarSignatureContext {
     setTupleTypeVar(reference: TypeVarType, types: TupleTypeArgument[]) {
         // Caller should have already assigned a value to this type variable.
         const entry = this.getTypeVar(reference);
-        assert(entry);
+        if (!entry) {
+            console.error(`[DEBUG] setTupleTypeVar called without entry for: ${TypeVarType.getNameWithScope(reference)}`);
+            console.error(`[DEBUG] Stack trace:`, new Error().stack);
+        }
+        assert(entry, `Type variable ${TypeVarType.getNameWithScope(reference)} must be set before calling setTupleTypeVar`);
 
         entry.tupleTypes = types;
     }
@@ -347,7 +351,7 @@ export class TypeVarContext {
 
     // Copy the specified signature contexts into this type var context.
     copySignatureContexts(contexts: TypeVarSignatureContext[]) {
-        assert(contexts.length > 0);
+        assert(contexts.length > 0, 'contexts array must not be empty in copySignatureContexts');
 
         this._signatureContexts = [...contexts];
     }
@@ -380,7 +384,7 @@ export class TypeVarContext {
 
     lock() {
         // Locks the type var map, preventing any further changes.
-        assert(!this._isLocked);
+        assert(!this._isLocked, 'TypeVarContext is already locked in lock()');
         this._isLocked = true;
     }
 
@@ -419,7 +423,7 @@ export class TypeVarContext {
         narrowBoundNoLiterals?: Type,
         wideBound?: Type
     ) {
-        assert(!this._isLocked);
+        assert(!this._isLocked, 'TypeVarContext is locked, cannot call setTypeVarType');
 
         return this._signatureContexts.forEach((context) => {
             context.setTypeVarType(reference, narrowBound, narrowBoundNoLiterals, wideBound);
@@ -427,7 +431,7 @@ export class TypeVarContext {
     }
 
     setTupleTypeVar(reference: TypeVarType, tupleTypes: TupleTypeArgument[]) {
-        assert(!this._isLocked);
+        assert(!this._isLocked, 'TypeVarContext is locked, cannot call setTupleTypeVar');
 
         return this._signatureContexts.forEach((context) => {
             context.setTupleTypeVar(reference, tupleTypes);
@@ -454,7 +458,7 @@ export class TypeVarContext {
     }
 
     getSignatureContext(index: number) {
-        assert(index >= 0 && index < this._signatureContexts.length);
+        assert(index >= 0 && index < this._signatureContexts.length, `Invalid signature context index ${index}, must be between 0 and ${this._signatureContexts.length - 1}`);
         return this._signatureContexts[index];
     }
 

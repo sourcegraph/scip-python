@@ -189,7 +189,7 @@ export namespace TypeBase {
     }
 
     export function cloneTypeAsInstance<T extends TypeBase>(type: T): T {
-        assert(TypeBase.isInstantiable(type));
+        assert(TypeBase.isInstantiable(type), `cloneTypeAsInstance called on non-instantiable type with category ${type.category}`);
 
         const newInstance = TypeBase.cloneType(type);
 
@@ -1448,9 +1448,9 @@ export namespace FunctionType {
         );
         newFunction.details = type.details;
 
-        assert(specializedTypes.parameterTypes.length === type.details.parameters.length);
+        assert(specializedTypes.parameterTypes.length === type.details.parameters.length, `FunctionType.cloneForSpecialization: parameterTypes length ${specializedTypes.parameterTypes.length} doesn't match parameters length ${type.details.parameters.length} for function ${type.details.name}`);
         if (specializedTypes.parameterDefaultArgs) {
-            assert(specializedTypes.parameterDefaultArgs.length === type.details.parameters.length);
+            assert(specializedTypes.parameterDefaultArgs.length === type.details.parameters.length, `FunctionType.cloneForSpecialization: parameterDefaultArgs length ${specializedTypes.parameterDefaultArgs.length} doesn't match parameters length ${type.details.parameters.length} for function ${type.details.name}`);
         }
         newFunction.specializedTypes = specializedTypes;
 
@@ -2224,7 +2224,7 @@ export namespace TypeVarType {
     }
 
     export function cloneAsInstance(type: TypeVarType): TypeVarType {
-        assert(TypeBase.isInstantiable(type));
+        assert(TypeBase.isInstantiable(type), `TypeVarType.cloneAsInstance called on non-instantiable TypeVar: ${type.details.name}`);
         const newInstance = TypeBase.cloneTypeAsInstance(type);
         newInstance.flags &= ~TypeFlags.SpecialForm;
         return newInstance;
@@ -2263,7 +2263,7 @@ export namespace TypeVarType {
     }
 
     export function cloneForUnpacked(type: TypeVarType, isInUnion = false) {
-        assert(type.details.isVariadic);
+        assert(type.details.isVariadic, `cloneForUnpacked called on non-variadic TypeVar: ${type.details.name}`);
         const newInstance = TypeBase.cloneType(type);
         newInstance.isVariadicUnpacked = true;
         newInstance.isVariadicInUnion = isInUnion;
@@ -2271,7 +2271,7 @@ export namespace TypeVarType {
     }
 
     export function cloneForPacked(type: TypeVarType) {
-        assert(type.details.isVariadic);
+        assert(type.details.isVariadic, `cloneForPacked called on non-variadic TypeVar: ${type.details.name}`);
         const newInstance = TypeBase.cloneType(type);
         newInstance.isVariadicUnpacked = false;
         newInstance.isVariadicInUnion = false;
@@ -2311,7 +2311,7 @@ export namespace TypeVarType {
     }
 
     export function cloneAsSpecializedSelf(type: TypeVarType, specializedBoundType: Type): TypeVarType {
-        assert(type.details.isSynthesizedSelf);
+        assert(type.details.isSynthesizedSelf, `cloneAsSpecializedSelf called on non-synthesized-self TypeVar: ${type.details.name}`);
         const newInstance = TypeBase.cloneType(type);
         newInstance.details = { ...newInstance.details };
         newInstance.details.boundType = specializedBoundType;
@@ -2359,7 +2359,7 @@ export namespace TypeVarType {
         const variance = type.computedVariance ?? type.details.declaredVariance;
 
         // By this point, the variance should have been inferred.
-        assert(variance !== Variance.Auto);
+        assert(variance !== Variance.Auto, `TypeVarType.hasConstraints called with Variance.Auto for TypeVar: ${type.details.name}`);
 
         return variance;
     }

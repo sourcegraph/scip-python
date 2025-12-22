@@ -1637,7 +1637,14 @@ export function buildTypeVarContextFromSpecializedClass(classType: ClassType, ma
 
     const typeVarContext = buildTypeVarContext(typeParameters, typeArguments, getTypeVarScopeId(classType));
     if (ClassType.isTupleClass(classType) && classType.tupleTypeArguments && typeParameters.length >= 1) {
-        typeVarContext.setTupleTypeVar(typeParameters[0], classType.tupleTypeArguments);
+        // Ensure the type variable entry exists before setting tuple types.
+        // If typeArguments was undefined, buildTypeVarContext won't have created an entry.
+        const firstTypeParam = typeParameters[0];
+        if (!typeVarContext.getPrimarySignature().getTypeVar(firstTypeParam)) {
+            // Create a placeholder entry for the variadic type variable
+            typeVarContext.setTypeVarType(firstTypeParam, undefined);
+        }
+        typeVarContext.setTupleTypeVar(firstTypeParam, classType.tupleTypeArguments);
     }
 
     return typeVarContext;
@@ -1706,7 +1713,7 @@ export function specializeForBaseClass(srcType: ClassType, baseClass: ClassType)
 
     const typeVarContext = buildTypeVarContextFromSpecializedClass(srcType);
     const specializedType = applySolvedTypeVars(baseClass, typeVarContext);
-    assert(isInstantiableClass(specializedType));
+    assert(isInstantiableClass(specializedType), `Expected instantiable class in specializeForBaseClass but got ${specializedType.category}`);
     return specializedType as ClassType;
 }
 
@@ -3602,7 +3609,7 @@ class ApplySolvedTypeVarsTransformer extends TypeVarTransformer {
 
         const filteredOverloads: FunctionType[] = [];
         doForEachSubtype(combineTypes(overloadTypes), (subtype) => {
-            assert(isFunction(subtype));
+            assert(isFunction(subtype), `Expected function subtype in doForEachSignatureContext but got ${subtype.category}`);
             filteredOverloads.push(subtype);
         });
 
