@@ -15,7 +15,7 @@ jobs:
     steps:
       - uses: actions/checkout@v3
       - name: Install mise
-        uses: jdx/mise-action@v2.4.4
+        uses: jdx/mise-action@v3.6.3
         with:
           version: 2025.8.10
       - name: Get npm cache directory
