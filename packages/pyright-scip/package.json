@@ -46,7 +46,7 @@
         "webpack-cli": "^4.9.1"
     },
     "dependencies": {
-        "@iarna/toml": "^2.2.5",
+        "smol-toml": "^1.6.1",
         "command-exists": "^1.2.9",
         "commander": "^9.2.0",
         "diff": "^5.0.0",

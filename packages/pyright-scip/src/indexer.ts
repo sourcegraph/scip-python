@@ -1,6 +1,6 @@
 import * as child_process from 'child_process';
 import * as path from 'path';
-import * as TOML from '@iarna/toml';
+import * as TOML from 'smol-toml';
 import { Event } from 'vscode-languageserver/lib/common/api';
 
 import { Program } from 'pyright-internal/analyzer/program';
@@ -39,18 +39,18 @@ export class Indexer {
         try {
             const pyprojectTomlContents = getPyprojectTomlContents();
             if (pyprojectTomlContents) {
-                const tomlMap = TOML.parse(pyprojectTomlContents);
+                const tomlMap = TOML.parse(pyprojectTomlContents) as Record<string, any>;
                 // See: https://packaging.python.org/en/latest/specifications/declaring-project-metadata/#specification
-                let project = tomlMap['project'] as TOML.JsonMap | undefined;
+                let project = tomlMap['project'];
                 if (project) {
                     name = project['name'];
                     version = project['version'];
                 }
                 if (!name || !version) {
                     // See: https://python-poetry.org/docs/pyproject/
-                    let tool = tomlMap['tool'] as TOML.JsonMap | undefined;
+                    let tool = tomlMap['tool'];
                     if (tool) {
-                        let toolPoetry = tool['poetry'] as TOML.JsonMap | undefined;
+                        let toolPoetry = tool['poetry'];
                         if (toolPoetry) {
                             name = name ?? toolPoetry['name'];
                             version = version ?? toolPoetry['version'];
