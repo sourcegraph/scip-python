@@ -7,7 +7,7 @@ import { Input } from './lsif-typescript/Input';
 import { join } from 'path';
 import { IndexOptions, SnapshotOptions, mainCommand } from './MainCommand';
 import { sendStatus, setQuiet, setShowProgressRateLimit } from './status';
-import { Indexer } from './indexer';
+import { Indexer, MissingProjectVersionError } from './indexer';
 import { exit } from 'process';
 
 export function indexAction(options: IndexOptions): void {
@@ -46,10 +46,16 @@ export function indexAction(options: IndexOptions): void {
 
         indexer.index();
     } catch (e) {
-        console.warn(
-            '\n\nExperienced Fatal Error While Indexing:\nPlease create an issue at github.com/sourcegraph/scip-python:',
-            e
-        );
+        if (e instanceof MissingProjectVersionError) {
+            console.error(
+                'Could not determine the project version. Pass one explicitly with --project-version.'
+            );
+        } else {
+            console.warn(
+                '\n\nExperienced Fatal Error While Indexing:\nPlease create an issue at github.com/sourcegraph/scip-python:',
+                e
+            );
+        }
         process.chdir(originalWorkdir);
         exit(1);
     }
