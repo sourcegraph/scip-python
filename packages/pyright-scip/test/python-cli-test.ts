@@ -82,8 +82,13 @@ setup(
         execSync(`python3 -m venv "${venvDir}"`, { stdio: 'pipe' });
         const venvBinDir = path.join(venvDir, process.platform === 'win32' ? 'Scripts' : 'bin');
         const pipPath = path.join(venvBinDir, 'pip');
-        // Install the fake package in the virtual environment
-        execSync(`"${pipPath}" install -e "${packageTempDir}"`, { stdio: 'pipe' });
+        // Install the fake package in the virtual environment. We use a regular
+        // (non-editable) install so the package's source files are recorded in
+        // the dist metadata across setuptools versions. Modern setuptools
+        // installs editable packages via an import-hook finder shim
+        // (__editable__..._finder.py), which importlib.metadata reports instead
+        // of the package's own .py files.
+        execSync(`"${pipPath}" install "${packageTempDir}"`, { stdio: 'pipe' });
         // Simulate `source venv/bin/activate` by modifying PATH so that it propagates
         // down to calls inside gatherPackageData.
         const originalPath = process.env.PATH;
