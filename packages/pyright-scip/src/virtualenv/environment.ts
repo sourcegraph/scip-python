@@ -180,7 +180,7 @@ function pipBulkShow(names: string[]): PipBulkShowResult {
 
     return {
         success: true,
-        data: result.stdout.split('\n---').filter((pkg) => pkg.trim()),
+        data: PythonPackage.splitPipShowBlocks(result.stdout),
     };
 }
 

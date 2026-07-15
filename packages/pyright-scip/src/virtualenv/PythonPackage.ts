@@ -49,4 +49,12 @@ export default class PythonPackage {
 
         return new PythonPackage(name, version, files);
     }
+
+    // pip separates each `pip show` block with a line containing only `---`.
+    // Match that exact separator rather than a bare `\n---`, which also shows up
+    // inside a package's License text (e.g. pytest-django's dashed rule lines) and
+    // would split a single package across several blocks.
+    static splitPipShowBlocks(output: string): string[] {
+        return output.split(/\r?\n---\r?\n/).filter((block) => block.trim());
+    }
 }
