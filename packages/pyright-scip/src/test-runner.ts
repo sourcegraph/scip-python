@@ -11,7 +11,8 @@ export interface TestFailure {
         | 'content-mismatch'
         | 'orphaned-output'
         | 'caught-exception'
-        | 'sometimes-assertion';
+        | 'sometimes-assertion'
+        | 'missing-symbol-information';
     message: string;
 }
 
