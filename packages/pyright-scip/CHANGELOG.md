@@ -1,5 +1,12 @@
 # scip-python CHANGELOG
 
+## v0.6.7
+
+- Updates the autoindex Docker image base to Alpine 3.24, Node 24 and
+  Python 3.11, with ca-certificates 20261020, pip 26.2.2 and certifi
+  2026.10.19, so that TLS clients in the image no longer trust the
+  compromised eMudhra intermediate CAs. (#233)
+
 ## v0.6.6
 
 - Changes package listing to use Python's `importlib` instead of
