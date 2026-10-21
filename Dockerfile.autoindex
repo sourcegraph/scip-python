@@ -1,6 +1,8 @@
-FROM nikolaik/python-nodejs:python3.10-nodejs16-alpine@sha256:3c587f799c748f69ed428a599fa061eeb1adc5de7e85ebaeb2797a949c48c4fd
+FROM nikolaik/python-nodejs:python3.11-nodejs24-alpine@sha256:2db8a57a186758d0ca8412eb0571916a384de05f3e7d08585fe540e4eb2600df
 
-RUN apk add --no-cache git bash curl
+# ca-certificates 20261020-r0 distrusts the compromised eMudhra intermediates;
+# the base image ships an older version.
+RUN apk add --no-cache --upgrade git bash curl 'ca-certificates>=20261020-r0' 'ca-certificates-bundle>=20261020-r0'
 RUN npm install -g @sourcegraph/scip-python @sourcegraph/src
 
 CMD ["/bin/sh"]
