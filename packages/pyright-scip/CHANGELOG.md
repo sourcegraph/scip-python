@@ -1,5 +1,11 @@
 # scip-python CHANGELOG
 
+## v0.6.8
+
+- The autoindex Docker image now installs scip-python built from the
+  release commit instead of from npm. The v0.6.7 image was built while
+  npm was still scanning 0.6.7, so it contains scip-python 0.6.6.
+
 ## v0.6.7
 
 - Updates the autoindex Docker image base to Alpine 3.24, Node 24 and
