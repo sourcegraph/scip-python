@@ -18,7 +18,8 @@ jobs:
         with:
           node-version: 24
       - run: npm install
-      - run: cd ./packages/pyright-scip/ && npm install && npm run build
+      # npm pack builds the package and creates the tarball Dockerfile.autoindex installs.
+      - run: cd ./packages/pyright-scip/ && npm install && npm pack
       - run: cd ./packages/pyright-scip/ && npm publish --access public
       - name: Login to DockerHub
         uses: docker/login-action@v2
@@ -29,6 +30,7 @@ jobs:
         id: docker_build_autoindex
         uses: docker/build-push-action@v4
         with:
+          context: .
           file: Dockerfile.autoindex
           push: true
           tags: |
