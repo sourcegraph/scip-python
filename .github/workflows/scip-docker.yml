@@ -30,7 +30,7 @@ jobs:
       - run: npm install
       # npm pack builds the package and creates the tarball Dockerfile.autoindex installs.
       - run: cd ./packages/pyright-scip/ && npm install && npm pack
-      - uses: docker/setup-buildx-action@v2
+      - uses: docker/setup-buildx-action@v4
       - name: Build Dockerfile
         id: docker_build_autoindex
         uses: docker/build-push-action@v4
