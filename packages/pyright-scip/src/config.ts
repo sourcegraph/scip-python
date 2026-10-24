@@ -47,6 +47,15 @@ export class ScipPyrightConfig {
         // TODO: This probably should be ScipConfig.workspaceroot or similar?
         const options = new CommandLineOptions(process.cwd(), false);
 
+        // Match pyright's CLI, which always enables this (see pyright.ts:
+        // "Always enable autoSearchPaths when using the command line.").
+        // Without it, ensureDefaultExtraPaths() below never adds ./src, so
+        // src-layout projects resolve definitions under `src.pkg.mod` while
+        // imports resolve to `pkg.mod`, and cross-package references are lost.
+        // An explicit extraPaths in pyrightconfig.json / [tool.pyright] still
+        // takes precedence, so configured projects are unaffected.
+        options.autoSearchPaths = true;
+
         let config = this._getConfigOptions(host, options);
         config.checkOnlyOpenFiles = false;
         config.indexing = true;
