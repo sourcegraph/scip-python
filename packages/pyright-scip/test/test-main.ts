@@ -47,6 +47,36 @@ function validateOutputExists(outputDirectory: string, testName: string) {
     return null;
 }
 
+function validateSymbolInformation(scipIndex: scip.Index, testName: string) {
+    const externalSymbols = new Set(scipIndex.external_symbols.map((symbol) => symbol.symbol));
+    const missing = new Set<string>();
+
+    for (const document of scipIndex.documents) {
+        const documentSymbols = new Set(document.symbols.map((symbol) => symbol.symbol));
+        for (const occurrence of document.occurrences) {
+            const isEnclosingDefinition =
+                (occurrence.symbol_roles & scip.SymbolRole.Definition) > 0 && occurrence.enclosing_range.length > 0;
+            const isStdlib = occurrence.symbol.startsWith('scip-python python python-stdlib ');
+            if (
+                (isEnclosingDefinition && !documentSymbols.has(occurrence.symbol)) ||
+                (isStdlib && !externalSymbols.has(occurrence.symbol))
+            ) {
+                missing.add(occurrence.symbol);
+            }
+        }
+    }
+
+    if (missing.size > 0) {
+        return {
+            testName,
+            type: 'missing-symbol-information' as const,
+            message: `Missing SymbolInformation for: ${Array.from(missing).join(', ')}`,
+        };
+    }
+
+    return null;
+}
+
 function processSingleTest(
     testName: string,
     inputDirectory: string,
@@ -113,6 +143,12 @@ function processSingleTest(
             type: 'empty-scip-index',
             message: 'SCIP index has 0 documents',
         });
+        return results;
+    }
+
+    const symbolInformationFailure = validateSymbolInformation(scipIndex, testName);
+    if (symbolInformationFailure) {
+        results.failed.push(symbolInformationFailure);
         return results;
     }
 

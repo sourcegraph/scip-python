@@ -508,6 +508,7 @@ export class TreeVisitor extends ParseTreeWalker {
             if (pythonPackage) {
                 const symbol = Symbols.makeModuleInit(pythonPackage, moduleName);
                 this.pushNewOccurrence(node.module, symbol);
+                this.emitExternalSymbolInformation(node.module, symbol, [], false);
             } else {
                 // For python packages & modules that we cannot resolve,
                 // we'll just make a local for the file and note that we could not resolve this module.
@@ -566,8 +567,9 @@ export class TreeVisitor extends ParseTreeWalker {
             return this.emitDeclarationWithoutNode(node, decl);
         }
 
+        const isDefinition = decl.node.id === parent.id;
         const existingSymbol = this.rawGetLsifSymbol(decl.node);
-        if (existingSymbol) {
+        if (existingSymbol && !(isDefinition && decl.node.nodeType === ParseNodeType.Class)) {
             if (decl.node.id === parent.id || decl.node.id === node.id) {
                 switch (decl.node.nodeType) {
                     case ParseNodeType.Function:
@@ -582,8 +584,6 @@ export class TreeVisitor extends ParseTreeWalker {
             }
             return true;
         }
-
-        const isDefinition = decl.node.id === parent.id;
 
         const builtinType = this.evaluator.getBuiltInType(node, node.value);
         if (this.isStdlib(decl, builtinType)) {
@@ -1431,12 +1431,17 @@ export class TreeVisitor extends ParseTreeWalker {
         return this.config.pythonEnvironment.getPackageForModule(moduleName);
     }
 
-    private emitExternalSymbolInformation(node: ParseNode, symbol: ScipSymbol, documentation: string[]) {
+    private emitExternalSymbolInformation(
+        node: ParseNode,
+        symbol: ScipSymbol,
+        documentation: string[],
+        lookupDocumentation = true
+    ) {
         if (this.externalSymbols.has(symbol.value)) {
             return;
         }
 
-        if (documentation.length === 0) {
+        if (documentation.length === 0 && lookupDocumentation) {
             const nodeFileInfo = getFileInfo(node)!;
             const hoverResult = this.program.getHoverForPosition(
                 nodeFileInfo.filePath,
@@ -1448,10 +1453,6 @@ export class TreeVisitor extends ParseTreeWalker {
             if (hoverResult) {
                 documentation = _formatHover(hoverResult!);
             }
-        }
-
-        if (documentation.length === 0) {
-            return;
         }
 
         // TODO: Could consider adding the documentation finder stuff
