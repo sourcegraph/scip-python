@@ -1284,6 +1284,13 @@ export class ImportResolver {
         filePath: string,
         stripTopContainerDir = false
     ): ModuleNameInfoFromPath | undefined {
+        /**
+         * TODO(https://github.com/sourcegraph/scip-python/issues/91)
+         * Both paths are casted to lowercase to make the comparison case-insensitive. This has been fixed upstream and should be removed on merge.
+         */
+        containerPath = containerPath.toLowerCase();
+        filePath = filePath.toLowerCase();
+
         containerPath = ensureTrailingDirectorySeparator(containerPath);
         let filePathWithoutExtension = stripFileExtension(filePath);
 
