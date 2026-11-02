@@ -282,7 +282,8 @@ function testSourceSearchPaths(): void {
         { config: { extraPaths: [] }, expected: undefined },
         { config: undefined, srcIsPackage: true, expected: undefined },
     ]) {
-        const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'scip-search-paths-'));
+        // macOS temporary directories can be symlinked; match the analyzer's resolved file paths.
+        const projectRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'scip-search-paths-')));
         try {
             for (const sourceRoot of ['src', 'custom']) {
                 const packageRoot = path.join(projectRoot, sourceRoot, 'demo');
