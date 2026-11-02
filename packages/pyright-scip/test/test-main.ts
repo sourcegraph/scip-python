@@ -274,7 +274,8 @@ version = "16.05"`,
 }
 
 function testImportRoles(): void {
-    const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'scip-import-roles-'));
+    // macOS temporary directories can be symlinked; match the analyzer's resolved file paths.
+    const projectRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'scip-import-roles-')));
     try {
         fs.writeFileSync(path.join(projectRoot, 'local.py'), 'def value():\n    return 1\n');
         fs.writeFileSync(
