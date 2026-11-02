@@ -310,7 +310,8 @@ version = "16.05"`,
 }
 
 function testExternalDocumentation(): void {
-    const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'scip-external-docs-'));
+    // macOS temporary directories can be symlinked; match the analyzer's resolved file paths.
+    const projectRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'scip-external-docs-')));
     try {
         fs.writeFileSync(path.join(projectRoot, 'requests.py'), 'value = 1\n');
         for (const imports of [
