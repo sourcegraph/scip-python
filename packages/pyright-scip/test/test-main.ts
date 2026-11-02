@@ -8,6 +8,7 @@ import { join } from 'path';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
+import * as assert from 'assert';
 import { Indexer } from '../src/indexer';
 import { setGlobalAssertionFlags, setGlobalContext, checkSometimesAssertions, SeenCondition } from '../src/assertions';
 import { normalizePathCase, isFileSystemCaseSensitive } from 'pyright-internal/common/pathUtils';
@@ -41,6 +42,36 @@ function validateOutputExists(outputDirectory: string, testName: string) {
             testName,
             type: 'missing-output' as const,
             message: `Expected output folder does not exist`,
+        };
+    }
+
+    return null;
+}
+
+function validateSymbolInformation(scipIndex: scip.Index, testName: string) {
+    const externalSymbols = new Set(scipIndex.external_symbols.map((symbol) => symbol.symbol));
+    const missing = new Set<string>();
+
+    for (const document of scipIndex.documents) {
+        const documentSymbols = new Set(document.symbols.map((symbol) => symbol.symbol));
+        for (const occurrence of document.occurrences) {
+            const isEnclosingDefinition =
+                (occurrence.symbol_roles & scip.SymbolRole.Definition) > 0 && occurrence.enclosing_range.length > 0;
+            const isStdlib = occurrence.symbol.startsWith('scip-python python python-stdlib ');
+            if (
+                (isEnclosingDefinition && !documentSymbols.has(occurrence.symbol)) ||
+                (isStdlib && !externalSymbols.has(occurrence.symbol))
+            ) {
+                missing.add(occurrence.symbol);
+            }
+        }
+    }
+
+    if (missing.size > 0) {
+        return {
+            testName,
+            type: 'missing-symbol-information' as const,
+            message: `Missing SymbolInformation for: ${Array.from(missing).join(', ')}`,
         };
     }
 
@@ -113,6 +144,12 @@ function processSingleTest(
             type: 'empty-scip-index',
             message: 'SCIP index has 0 documents',
         });
+        return results;
+    }
+
+    const symbolInformationFailure = validateSymbolInformation(scipIndex, testName);
+    if (symbolInformationFailure) {
+        results.failed.push(symbolInformationFailure);
         return results;
     }
 
@@ -272,8 +309,47 @@ version = "16.05"`,
     }
 }
 
+function testExternalDocumentation(): void {
+    const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'scip-external-docs-'));
+    try {
+        fs.writeFileSync(path.join(projectRoot, 'requests.py'), 'value = 1\n');
+        for (const imports of [
+            'import numbers\nfrom numbers import Real',
+            'from numbers import Real\nimport numbers',
+        ]) {
+            fs.writeFileSync(
+                path.join(projectRoot, 'main.py'),
+                `${imports}\nimport requests\ndef use(x: Real):\n    return x\n`
+            );
+            indexAction({
+                projectName: 'external-docs',
+                projectVersion: '1.0',
+                cwd: projectRoot,
+                output: 'index.scip',
+                environment: path.resolve('snapshots/testEnv.json'),
+                infer: { projectVersionFromCommit: false },
+                quiet: true,
+                dev: false,
+                showProgressRateLimit: undefined,
+            });
+            const index = scip.Index.deserializeBinary(fs.readFileSync(path.join(projectRoot, 'index.scip')));
+            const moduleInfo = index.external_symbols.find((symbol) => symbol.symbol.endsWith(' numbers/__init__:'));
+            assert.ok(moduleInfo && moduleInfo.documentation.length > 0, `Missing module documentation: ${imports}`);
+            assert.ok(
+                !index.external_symbols.some(
+                    (symbol) => symbol.symbol === 'scip-python python external-docs 1.0 requests/__init__:'
+                ),
+                'A local module shadowing an installed package is not external'
+            );
+        }
+    } finally {
+        fs.rmSync(projectRoot, { recursive: true, force: true });
+    }
+}
+
 function unitTests(): void {
     testPyprojectParsing();
+    testExternalDocumentation();
     pythonCLITests();
 }
 
