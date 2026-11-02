@@ -18,7 +18,7 @@ jobs:
       - name: Install mise
         uses: jdx/mise-action@v2.4.4
         with:
-          version: 2025.8.10
+          version: 2025.12.13
       - name: Get npm cache directory
         id: npm-cache
         run: echo "dir=$(npm config get cache)" >> $GITHUB_OUTPUT

@@ -17,7 +17,7 @@ jobs:
 
       - uses: jdx/mise-action@v2.4.4
         with:
-          version: 2025.8.10
+          version: 2025.12.13
 
       - run: npm install
 
