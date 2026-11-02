@@ -9,6 +9,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as assert from 'assert';
+import { spawnSync } from 'child_process';
 import { Indexer } from '../src/indexer';
 import { setGlobalAssertionFlags, setGlobalContext, checkSometimesAssertions, SeenCondition } from '../src/assertions';
 import { normalizePathCase, isFileSystemCaseSensitive } from 'pyright-internal/common/pathUtils';
@@ -315,9 +316,51 @@ function testPyprojectLineEndings(): void {
     }
 }
 
+function testMissingProjectVersion(): void {
+    // macOS temporary directories can be symlinked; match the analyzer's resolved file paths.
+    const projectRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'scip-missing-version-')));
+    try {
+        fs.writeFileSync(path.join(projectRoot, 'main.py'), 'value = 1\n');
+        fs.writeFileSync(
+            path.join(projectRoot, 'pyproject.toml'),
+            '[project]\nname = "version-test"\ndynamic = ["version"]\n'
+        );
+        const args = [
+            path.resolve('index.js'),
+            'index',
+            '--cwd',
+            projectRoot,
+            '--environment',
+            path.resolve('snapshots/testEnv.json'),
+        ];
+        const missing = spawnSync(process.execPath, args, { encoding: 'utf8' });
+        assert.strictEqual(missing.status, 1, missing.stderr);
+        assert.ok(missing.stderr.includes('Pass one explicitly with --project-version.'), missing.stderr);
+        assert.ok(!missing.stderr.includes('TypeError'), missing.stderr);
+
+        for (const version of ['', '1.2.3']) {
+            const explicit = spawnSync(process.execPath, [...args, '--project-version', version], {
+                encoding: 'utf8',
+            });
+            assert.strictEqual(explicit.status, 0, explicit.stderr);
+            const index = scip.Index.deserializeBinary(fs.readFileSync(path.join(projectRoot, 'index.scip')));
+            assert.ok(
+                index.documents.some((doc) =>
+                    doc.occurrences.some((occurrence) =>
+                        occurrence.symbol.startsWith(`scip-python python version-test ${version || '.'} `)
+                    )
+                )
+            );
+        }
+    } finally {
+        fs.rmSync(projectRoot, { recursive: true, force: true });
+    }
+}
+
 function unitTests(): void {
     testPyprojectParsing();
     testPyprojectLineEndings();
+    testMissingProjectVersion();
     pythonCLITests();
 }
 

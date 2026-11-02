@@ -23,6 +23,13 @@ import { scip } from './scip';
 import { ScipPyrightConfig } from './config';
 import { setProjectNamespace } from './symbols';
 
+export class MissingProjectVersionError extends Error {
+    constructor() {
+        super('Could not determine the project version.');
+        this.name = 'MissingProjectVersionError';
+    }
+}
+
 export class Indexer {
     program: Program;
     importResolver: ImportResolver;
@@ -102,6 +109,14 @@ export class Indexer {
             if (!scipConfig.projectVersion && version) {
                 scipConfig.projectVersion = version;
             }
+        }
+
+        // The version can still be undefined here, e.g. when it is declared
+        // dynamically (PEP 621 dynamic = ["version"]) and could not be
+        // inferred. Bail out with an actionable error rather than baking a
+        // bogus version into every symbol.
+        if (scipConfig.projectVersion === undefined) {
+            throw new MissingProjectVersionError();
         }
 
         const matcher = new FileMatcher(this.pyrightConfig, fs);
