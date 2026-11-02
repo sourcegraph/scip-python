@@ -8,6 +8,7 @@ import { join } from 'path';
 import * as path from 'path';
 import * as fs from 'fs';
 import * as os from 'os';
+import * as assert from 'assert';
 import { Indexer } from '../src/indexer';
 import { setGlobalAssertionFlags, setGlobalContext, checkSometimesAssertions, SeenCondition } from '../src/assertions';
 import { normalizePathCase, isFileSystemCaseSensitive } from 'pyright-internal/common/pathUtils';
@@ -272,8 +273,105 @@ version = "16.05"`,
     }
 }
 
+function testAnnotatedVariables(): void {
+    const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'scip-annotations-'));
+    const source = `initialized: int = 1
+uninitialized: int
+print(initialized, uninitialized)
+class Base:
+    field: int = 2
+    pending: int
+    def method(self):
+        method_local: int = 3
+        return method_local
+class Child(Base):
+    pass
+def function():
+    function_local: int = 4
+    return function_local
+obj = Child()
+obj.method()
+module_assigned = 5
+module_assigned: int
+def assigned_first():
+    local_assigned = 6
+    local_assigned: int
+    return local_assigned
+class AssignedFirst:
+    class_assigned = 7
+    class_assigned: int
+`;
+    try {
+        fs.writeFileSync(path.join(projectRoot, 'main.py'), source);
+        indexAction({
+            projectName: 'annotations',
+            projectVersion: '1.0',
+            cwd: projectRoot,
+            output: 'index.scip',
+            environment: path.resolve('snapshots/testEnv.json'),
+            infer: { projectVersionFromCommit: false },
+            quiet: true,
+            dev: false,
+            showProgressRateLimit: undefined,
+        });
+        const index = scip.Index.deserializeBinary(fs.readFileSync(path.join(projectRoot, 'index.scip')));
+        const document = index.documents.find((doc) => doc.relative_path === 'main.py')!;
+        for (const [line, expected] of [
+            [0, 'main/initialized.'],
+            [1, 'main/uninitialized.'],
+            [4, 'main/Base#field.'],
+            [5, 'main/Base#pending.'],
+            [7, 'local '],
+            [12, 'local '],
+            [16, 'main/module_assigned.'],
+            [19, 'local '],
+            [23, 'main/AssignedFirst#class_assigned.'],
+        ] as const) {
+            const definition = document.occurrences.find(
+                (occurrence) =>
+                    occurrence.range[0] === line &&
+                    occurrence.range.length === 3 &&
+                    occurrence.range[2] > occurrence.range[1] &&
+                    (occurrence.symbol_roles & scip.SymbolRole.Definition) !== 0
+            )!;
+            assert.ok(definition, `Missing definition on line ${line}`);
+            assert.ok(
+                expected === 'local ' ? definition.symbol.startsWith(expected) : definition.symbol.endsWith(expected),
+                definition.symbol
+            );
+            const information = document.symbols.filter((symbol) => symbol.symbol === definition.symbol);
+            assert.strictEqual(information.length, 1, `Expected one information record for ${definition.symbol}`);
+            assert.ok(information[0].documentation.length > 0);
+            if ([0, 1, 7, 12].includes(line)) {
+                assert.ok(
+                    document.occurrences.some(
+                        (occurrence) =>
+                            occurrence.symbol === definition.symbol &&
+                            occurrence.symbol_roles === scip.SymbolRole.ReadAccess
+                    )
+                );
+            }
+        }
+        assert.ok(
+            document.occurrences.some(
+                (occurrence) => occurrence.range[0] === 15 && occurrence.symbol.endsWith('main/Base#method().')
+            )
+        );
+        assert.ok(!document.occurrences.some((occurrence) => occurrence.symbol.endsWith('main/Child#method().')));
+        for (const symbol of document.symbols.filter((symbol) => symbol.symbol.startsWith('local '))) {
+            assert.ok(
+                document.occurrences.some((occurrence) => occurrence.symbol === symbol.symbol),
+                `Orphan local information: ${symbol.symbol}`
+            );
+        }
+    } finally {
+        fs.rmSync(projectRoot, { recursive: true, force: true });
+    }
+}
+
 function unitTests(): void {
     testPyprojectParsing();
+    testAnnotatedVariables();
     pythonCLITests();
 }
 
