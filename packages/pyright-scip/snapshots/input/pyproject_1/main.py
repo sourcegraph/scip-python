@@ -1,4 +1,6 @@
+from helpers import value
+
 def main():
-    pass
+    return value()
 
 main()

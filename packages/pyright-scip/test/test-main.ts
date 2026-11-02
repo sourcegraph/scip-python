@@ -49,6 +49,36 @@ function validateOutputExists(outputDirectory: string, testName: string) {
     return null;
 }
 
+function validateSymbolInformation(scipIndex: scip.Index, testName: string) {
+    const externalSymbols = new Set(scipIndex.external_symbols.map((symbol) => symbol.symbol));
+    const missing = new Set<string>();
+
+    for (const document of scipIndex.documents) {
+        const documentSymbols = new Set(document.symbols.map((symbol) => symbol.symbol));
+        for (const occurrence of document.occurrences) {
+            const isEnclosingDefinition =
+                (occurrence.symbol_roles & scip.SymbolRole.Definition) > 0 && occurrence.enclosing_range.length > 0;
+            const isStdlib = occurrence.symbol.startsWith('scip-python python python-stdlib ');
+            if (
+                (isEnclosingDefinition && !documentSymbols.has(occurrence.symbol)) ||
+                (isStdlib && !externalSymbols.has(occurrence.symbol))
+            ) {
+                missing.add(occurrence.symbol);
+            }
+        }
+    }
+
+    if (missing.size > 0) {
+        return {
+            testName,
+            type: 'missing-symbol-information' as const,
+            message: `Missing SymbolInformation for: ${Array.from(missing).join(', ')}`,
+        };
+    }
+
+    return null;
+}
+
 function processSingleTest(
     testName: string,
     inputDirectory: string,
@@ -115,6 +145,12 @@ function processSingleTest(
             type: 'empty-scip-index',
             message: 'SCIP index has 0 documents',
         });
+        return results;
+    }
+
+    const symbolInformationFailure = validateSymbolInformation(scipIndex, testName);
+    if (symbolInformationFailure) {
+        results.failed.push(symbolInformationFailure);
         return results;
     }
 
@@ -371,6 +407,131 @@ class AssignedFirst:
     }
 }
 
+function testImportRoles(): void {
+    // macOS temporary directories can be symlinked; match the analyzer's resolved file paths.
+    const projectRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'scip-import-roles-')));
+    try {
+        fs.writeFileSync(path.join(projectRoot, 'local.py'), 'def value():\n    return 1\n');
+        fs.writeFileSync(
+            path.join(projectRoot, 'main.py'),
+            [
+                'import local as renamed',
+                'from local import value as aliased',
+                'import math',
+                'from math import sqrt',
+                'import nonexistent_module',
+                'from nonexistent_module import missing',
+                'renamed.value(); aliased(); math.sqrt(1); sqrt(1)',
+            ].join('\n')
+        );
+        indexAction({
+            projectName: 'import-roles',
+            projectVersion: '1.0',
+            cwd: projectRoot,
+            output: 'index.scip',
+            environment: path.resolve('snapshots/testEnv.json'),
+            infer: { projectVersionFromCommit: false },
+            quiet: true,
+            dev: false,
+            showProgressRateLimit: undefined,
+        });
+        const index = scip.Index.deserializeBinary(fs.readFileSync(path.join(projectRoot, 'index.scip')));
+        const document = index.documents.find((doc) => doc.relative_path === 'main.py')!;
+        const expectedCounts = [1, 2, 1, 2, 1, 2, 0];
+        for (let line = 0; line < expectedCounts.length; line++) {
+            const imports = document.occurrences.filter(
+                (occurrence) => occurrence.range[0] === line && (occurrence.symbol_roles & scip.SymbolRole.Import) !== 0
+            );
+            assert.strictEqual(imports.length, expectedCounts[line], `Import roles on line ${line + 1}`);
+            assert.ok(imports.every((occurrence) => (occurrence.symbol_roles & scip.SymbolRole.ReadAccess) !== 0));
+        }
+        assert.ok(document.occurrences.some((occurrence) => occurrence.range[0] === 6));
+    } finally {
+        fs.rmSync(projectRoot, { recursive: true, force: true });
+    }
+}
+
+function testExternalDocumentation(): void {
+    // macOS temporary directories can be symlinked; match the analyzer's resolved file paths.
+    const projectRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'scip-external-docs-')));
+    try {
+        fs.writeFileSync(path.join(projectRoot, 'requests.py'), 'value = 1\n');
+        for (const imports of [
+            'import numbers\nfrom numbers import Real',
+            'from numbers import Real\nimport numbers',
+        ]) {
+            fs.writeFileSync(
+                path.join(projectRoot, 'main.py'),
+                `${imports}\nimport requests\ndef use(x: Real):\n    return x\n`
+            );
+            indexAction({
+                projectName: 'external-docs',
+                projectVersion: '1.0',
+                cwd: projectRoot,
+                output: 'index.scip',
+                environment: path.resolve('snapshots/testEnv.json'),
+                infer: { projectVersionFromCommit: false },
+                quiet: true,
+                dev: false,
+                showProgressRateLimit: undefined,
+            });
+            const index = scip.Index.deserializeBinary(fs.readFileSync(path.join(projectRoot, 'index.scip')));
+            const moduleInfo = index.external_symbols.find((symbol) => symbol.symbol.endsWith(' numbers/__init__:'));
+            assert.ok(moduleInfo && moduleInfo.documentation.length > 0, `Missing module documentation: ${imports}`);
+            assert.ok(
+                !index.external_symbols.some(
+                    (symbol) => symbol.symbol === 'scip-python python external-docs 1.0 requests/__init__:'
+                ),
+                'A local module shadowing an installed package is not external'
+            );
+        }
+    } finally {
+        fs.rmSync(projectRoot, { recursive: true, force: true });
+    }
+}
+
+function testPyprojectLineEndings(): void {
+    const fixture = path.resolve('snapshots/input/pyproject_1');
+    for (const newline of ['\n', '\r\n']) {
+        // macOS temporary directories can be symlinked; match the analyzer's resolved file paths.
+        const projectRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'scip-toml-')));
+        try {
+            fs.mkdirSync(path.join(projectRoot, 'lib'));
+            for (const file of ['main.py', 'lib/helpers.py']) {
+                fs.copyFileSync(path.join(fixture, file), path.join(projectRoot, file));
+            }
+            const content =
+                '# metadata\n' +
+                fs
+                    .readFileSync(path.join(fixture, 'pyproject.toml'), 'utf8')
+                    .replace('name = "abc"', 'name = "abc" # inline');
+            fs.writeFileSync(path.join(projectRoot, 'pyproject.toml'), content.replace(/\r?\n/g, newline));
+            indexAction({
+                projectName: '',
+                projectVersion: '',
+                cwd: projectRoot,
+                output: 'index.scip',
+                environment: path.resolve('snapshots/testEnv.json'),
+                infer: { projectVersionFromCommit: false },
+                quiet: true,
+                dev: false,
+                showProgressRateLimit: undefined,
+            });
+            const index = scip.Index.deserializeBinary(fs.readFileSync(path.join(projectRoot, 'index.scip')));
+            const main = index.documents.find((document) => document.relative_path === 'main.py');
+            assert.ok(main, 'tool.scip must take precedence over the tool.pyright exclusion');
+            assert.strictEqual(
+                main!.occurrences.filter(
+                    (occurrence) => occurrence.symbol === 'scip-python python abc 16.05 helpers/value().'
+                ).length,
+                2
+            );
+        } finally {
+            fs.rmSync(projectRoot, { recursive: true, force: true });
+        }
+    }
+}
+
 function testSourceSearchPaths(): void {
     for (const testCase of [
         { config: undefined, expected: 'src_handler' },
@@ -479,6 +640,9 @@ function testMissingProjectVersion(): void {
 function unitTests(): void {
     testPyprojectParsing();
     testAnnotatedVariables();
+    testImportRoles();
+    testExternalDocumentation();
+    testPyprojectLineEndings();
     testSourceSearchPaths();
     testMissingProjectVersion();
     pythonCLITests();
