@@ -274,7 +274,8 @@ version = "16.05"`,
 }
 
 function testAnnotatedVariables(): void {
-    const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'scip-annotations-'));
+    // macOS temporary directories can be symlinked; match the analyzer's resolved file paths.
+    const projectRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'scip-annotations-')));
     const source = `initialized: int = 1
 uninitialized: int
 print(initialized, uninitialized)
