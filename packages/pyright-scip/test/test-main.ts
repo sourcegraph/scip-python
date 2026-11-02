@@ -310,6 +310,50 @@ version = "16.05"`,
     }
 }
 
+function testImportRoles(): void {
+    // macOS temporary directories can be symlinked; match the analyzer's resolved file paths.
+    const projectRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'scip-import-roles-')));
+    try {
+        fs.writeFileSync(path.join(projectRoot, 'local.py'), 'def value():\n    return 1\n');
+        fs.writeFileSync(
+            path.join(projectRoot, 'main.py'),
+            [
+                'import local as renamed',
+                'from local import value as aliased',
+                'import math',
+                'from math import sqrt',
+                'import nonexistent_module',
+                'from nonexistent_module import missing',
+                'renamed.value(); aliased(); math.sqrt(1); sqrt(1)',
+            ].join('\n')
+        );
+        indexAction({
+            projectName: 'import-roles',
+            projectVersion: '1.0',
+            cwd: projectRoot,
+            output: 'index.scip',
+            environment: path.resolve('snapshots/testEnv.json'),
+            infer: { projectVersionFromCommit: false },
+            quiet: true,
+            dev: false,
+            showProgressRateLimit: undefined,
+        });
+        const index = scip.Index.deserializeBinary(fs.readFileSync(path.join(projectRoot, 'index.scip')));
+        const document = index.documents.find((doc) => doc.relative_path === 'main.py')!;
+        const expectedCounts = [1, 2, 1, 2, 1, 2, 0];
+        for (let line = 0; line < expectedCounts.length; line++) {
+            const imports = document.occurrences.filter(
+                (occurrence) => occurrence.range[0] === line && (occurrence.symbol_roles & scip.SymbolRole.Import) !== 0
+            );
+            assert.strictEqual(imports.length, expectedCounts[line], `Import roles on line ${line + 1}`);
+            assert.ok(imports.every((occurrence) => (occurrence.symbol_roles & scip.SymbolRole.ReadAccess) !== 0));
+        }
+        assert.ok(document.occurrences.some((occurrence) => occurrence.range[0] === 6));
+    } finally {
+        fs.rmSync(projectRoot, { recursive: true, force: true });
+    }
+}
+
 function testExternalDocumentation(): void {
     // macOS temporary directories can be symlinked; match the analyzer's resolved file paths.
     const projectRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'scip-external-docs-')));
@@ -498,6 +542,7 @@ function testMissingProjectVersion(): void {
 
 function unitTests(): void {
     testPyprojectParsing();
+    testImportRoles();
     testExternalDocumentation();
     testPyprojectLineEndings();
     testSourceSearchPaths();
