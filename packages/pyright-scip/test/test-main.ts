@@ -318,6 +318,70 @@ function testImportRoles(): void {
     }
 }
 
+function testSourceSearchPaths(): void {
+    for (const testCase of [
+        { config: undefined, expected: 'src_handler' },
+        { config: {}, expected: 'src_handler' },
+        { config: { extraPaths: ['custom'] }, expected: 'custom_handler' },
+        { config: { executionEnvironments: [{ root: '.', extraPaths: ['custom'] }] }, expected: 'custom_handler' },
+        { config: { extraPaths: [] }, expected: undefined },
+        { config: undefined, srcIsPackage: true, expected: undefined },
+    ]) {
+        // macOS temporary directories can be symlinked; match the analyzer's resolved file paths.
+        const projectRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'scip-search-paths-')));
+        try {
+            for (const sourceRoot of ['src', 'custom']) {
+                const packageRoot = path.join(projectRoot, sourceRoot, 'demo');
+                fs.mkdirSync(packageRoot, { recursive: true });
+                fs.writeFileSync(path.join(packageRoot, '__init__.py'), '');
+                fs.writeFileSync(path.join(packageRoot, 'core.py'), `def ${sourceRoot}_handler():\n    return 1\n`);
+            }
+            if (testCase.srcIsPackage) {
+                fs.writeFileSync(path.join(projectRoot, 'src', '__init__.py'), '');
+            }
+            if (testCase.config) {
+                fs.writeFileSync(path.join(projectRoot, 'pyrightconfig.json'), JSON.stringify(testCase.config));
+            }
+            fs.writeFileSync(
+                path.join(projectRoot, 'consumer.py'),
+                'from demo.core import src_handler, custom_handler\nsrc_handler()\ncustom_handler()\n'
+            );
+            indexAction({
+                projectName: 'search-paths',
+                projectVersion: '1.0',
+                cwd: projectRoot,
+                output: 'index.scip',
+                environment: path.resolve('snapshots/testEnv.json'),
+                infer: { projectVersionFromCommit: false },
+                quiet: true,
+                dev: false,
+                showProgressRateLimit: undefined,
+            });
+            const index = scip.Index.deserializeBinary(fs.readFileSync(path.join(projectRoot, 'index.scip')));
+            const consumer = index.documents.find((doc) => doc.relative_path === 'consumer.py')!;
+            for (const name of ['src_handler', 'custom_handler']) {
+                const references = consumer.occurrences.filter((occurrence) =>
+                    occurrence.symbol.endsWith(`/${name}().`)
+                );
+                assert.strictEqual(references.length, name === testCase.expected ? 2 : 0, JSON.stringify(testCase));
+                if (references.length > 0) {
+                    assert.ok(
+                        index.documents.some((doc) =>
+                            doc.occurrences.some(
+                                (occurrence) =>
+                                    occurrence.symbol === references[0].symbol &&
+                                    (occurrence.symbol_roles & scip.SymbolRole.Definition) !== 0
+                            )
+                        )
+                    );
+                }
+            }
+        } finally {
+            fs.rmSync(projectRoot, { recursive: true, force: true });
+        }
+    }
+}
+
 function testMissingProjectVersion(): void {
     // macOS temporary directories can be symlinked; match the analyzer's resolved file paths.
     const projectRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'scip-missing-version-')));
@@ -362,6 +426,7 @@ function testMissingProjectVersion(): void {
 function unitTests(): void {
     testPyprojectParsing();
     testImportRoles();
+    testSourceSearchPaths();
     testMissingProjectVersion();
     pythonCLITests();
 }
