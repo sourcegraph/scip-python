@@ -274,6 +274,48 @@ version = "16.05"`,
     }
 }
 
+function testPyprojectLineEndings(): void {
+    const fixture = path.resolve('snapshots/input/pyproject_1');
+    for (const newline of ['\n', '\r\n']) {
+        // macOS temporary directories can be symlinked; match the analyzer's resolved file paths.
+        const projectRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'scip-toml-')));
+        try {
+            fs.mkdirSync(path.join(projectRoot, 'lib'));
+            for (const file of ['main.py', 'lib/helpers.py']) {
+                fs.copyFileSync(path.join(fixture, file), path.join(projectRoot, file));
+            }
+            const content =
+                '# metadata\n' +
+                fs
+                    .readFileSync(path.join(fixture, 'pyproject.toml'), 'utf8')
+                    .replace('name = "abc"', 'name = "abc" # inline');
+            fs.writeFileSync(path.join(projectRoot, 'pyproject.toml'), content.replace(/\r?\n/g, newline));
+            indexAction({
+                projectName: '',
+                projectVersion: '',
+                cwd: projectRoot,
+                output: 'index.scip',
+                environment: path.resolve('snapshots/testEnv.json'),
+                infer: { projectVersionFromCommit: false },
+                quiet: true,
+                dev: false,
+                showProgressRateLimit: undefined,
+            });
+            const index = scip.Index.deserializeBinary(fs.readFileSync(path.join(projectRoot, 'index.scip')));
+            const main = index.documents.find((document) => document.relative_path === 'main.py');
+            assert.ok(main, 'tool.scip must take precedence over the tool.pyright exclusion');
+            assert.strictEqual(
+                main!.occurrences.filter(
+                    (occurrence) => occurrence.symbol === 'scip-python python abc 16.05 helpers/value().'
+                ).length,
+                2
+            );
+        } finally {
+            fs.rmSync(projectRoot, { recursive: true, force: true });
+        }
+    }
+}
+
 function testSourceSearchPaths(): void {
     for (const testCase of [
         { config: undefined, expected: 'src_handler' },
@@ -381,6 +423,7 @@ function testMissingProjectVersion(): void {
 
 function unitTests(): void {
     testPyprojectParsing();
+    testPyprojectLineEndings();
     testSourceSearchPaths();
     testMissingProjectVersion();
     pythonCLITests();

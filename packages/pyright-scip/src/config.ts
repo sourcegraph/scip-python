@@ -434,7 +434,8 @@ export class ScipPyrightConfig {
         return this._attemptParseFile(pyprojectPath, (fileContents, attemptCount) => {
             try {
                 // First, try and load tool.scip section
-                const configObj = TOML.parse(fileContents);
+                // @iarna/toml 3 rejects CRLF inside comments; preserve lone CR for validation.
+                const configObj = TOML.parse(fileContents.replace(/\r\n/g, '\n'));
                 if (configObj && configObj.tool && (configObj.tool as TOML.JsonMap).scip) {
                     return (configObj.tool as TOML.JsonMap).scip as object;
                 }

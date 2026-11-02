@@ -46,7 +46,8 @@ export class Indexer {
         try {
             const pyprojectTomlContents = getPyprojectTomlContents();
             if (pyprojectTomlContents) {
-                const tomlMap = TOML.parse(pyprojectTomlContents);
+                // @iarna/toml 3 rejects CRLF inside comments; normalize valid line endings only.
+                const tomlMap = TOML.parse(pyprojectTomlContents.replace(/\r\n/g, '\n'));
                 // See: https://packaging.python.org/en/latest/specifications/declaring-project-metadata/#specification
                 let project = tomlMap['project'] as TOML.JsonMap | undefined;
                 if (project) {
