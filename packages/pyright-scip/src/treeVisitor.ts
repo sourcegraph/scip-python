@@ -266,28 +266,12 @@ export class TreeVisitor extends ParseTreeWalker {
     }
 
     override visitTypeAnnotation(node: TypeAnnotationNode): boolean {
-        // We are close to being able to look up a symbol, which could give us additional information here.
-        //  Perhaps we should be using this for additional information for any given name?
-        //  We can revisit this in visitName or perhaps when looking up the lsif symbol
-
-        // If we see a type annotation and we are currently inside of a class,
-        // that means that we are describing fields of a class (as far as I can tell),
-        // so we need to push a new symbol
-        const enclosingClass = ParseTreeUtils.getEnclosingClass(node, true);
-        if (enclosingClass) {
-            const hoverResult = this.program.getHoverForPosition(
-                this.fileInfo!.filePath,
-                convertOffsetToPosition(node.start, this.fileInfo!.lines),
-                'markdown',
-                _cancellationToken
-            );
-
-            this.document.symbols.push(
-                new scip.SymbolInformation({
-                    symbol: this.getScipSymbol(node).value,
-                    documentation: _formatHover(hoverResult!),
-                })
-            );
+        if (node.valueExpression.nodeType === ParseNodeType.Name) {
+            const name = node.valueExpression;
+            const declaration = this.evaluator.getDeclarationsForNameNode(name)?.[0];
+            if (declaration?.node) {
+                this.emitSymbolInformationOnce(name, this.getScipSymbol(declaration.node));
+            }
         }
 
         return true;
@@ -311,13 +295,7 @@ export class TreeVisitor extends ParseTreeWalker {
                         documentation.push('```python\n' + assignmentDoc.join('\n') + '\n```');
                     }
 
-                    // node.typeAnnotationComment
-                    this.document.symbols.push(
-                        new scip.SymbolInformation({
-                            symbol: this.getScipSymbol(dec.node).value,
-                            documentation,
-                        })
-                    );
+                    this.emitSymbolInformationOnce(dec.node, this.getScipSymbol(dec.node), documentation);
                 }
             }
         }
@@ -1161,15 +1139,15 @@ export class TreeVisitor extends ParseTreeWalker {
                     }
                 }
 
-                return Symbols.makeTerm(this.getScipSymbol(enclosingSuite || parent), (node as NameNode).value);
+                // An annotation describes the name; it does not introduce another scope.
+                const scope =
+                    enclosingSuite || (parent.nodeType === ParseNodeType.TypeAnnotation ? parent.parent! : parent);
+                return Symbols.makeTerm(this.getScipSymbol(scope), (node as NameNode).value);
             }
             case ParseNodeType.TypeAnnotation: {
                 switch (node.valueExpression.nodeType) {
                     case ParseNodeType.Name: {
-                        return Symbols.makeTerm(
-                            this.getScipSymbol(ParseTreeUtils.getEnclosingSuite(node) || node.parent!),
-                            node.valueExpression.value
-                        );
+                        return this.getScipSymbol(node.valueExpression);
                     }
                     default: {
                         softAssert(false, 'Unhandled type annotation');

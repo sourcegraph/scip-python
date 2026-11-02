@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 #    ^^^^^^^^^^ reference  python-stdlib 3.11 __future__/__init__:
-#                      ^^^^^^^^^^^ reference  python-stdlib 3.11 __future__/annotations.annotations.
+#                      ^^^^^^^^^^^ reference  python-stdlib 3.11 __future__/annotations.
 
 from contracts import Foo
 #    ^^^^^^^^^ reference  scip-final-repro 0.1.0 contracts/__init__:

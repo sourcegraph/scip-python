@@ -57,7 +57,7 @@ from __future__ import annotations
 #                > #defines of CO\_xxx flags in Include/cpy...
 #                > 
 #                > No feature line is ever to be deleted fr...
-#                      ^^^^^^^^^^^ reference  python-stdlib 3.11 __future__/annotations.annotations.
+#                      ^^^^^^^^^^^ reference  python-stdlib 3.11 __future__/annotations.
 #                      external documentation ```python
 #                                  > (variable) annotations: _Feature
 #                                  > ```
