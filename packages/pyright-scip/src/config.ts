@@ -223,6 +223,13 @@ export class ScipPyrightConfig {
             configOptions.applyDiagnosticOverrides(commandLineOptions.diagnosticSeverityOverrides);
         }
 
+        // Detect conventional src layouts only when search paths are unconfigured.
+        // In this Pyright version, execution-environment paths append to defaults;
+        // adding src before initialization would shadow explicit environment paths.
+        if (configOptions.defaultExtraPaths === undefined && configOptions.executionEnvironments.length === 0) {
+            configOptions.ensureDefaultExtraPaths(this.fs, true, undefined);
+        }
+
         // Override the analyzeUnannotatedFunctions setting based on the command-line setting.
         if (commandLineOptions.analyzeUnannotatedFunctions !== undefined) {
             configOptions.diagnosticRuleSet.analyzeUnannotatedFunctions =

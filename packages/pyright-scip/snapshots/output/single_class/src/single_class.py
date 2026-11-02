@@ -1,40 +1,40 @@
-# < definition scip-python python snapshot-util 0.1 `src.single_class`/__init__:
+# < definition scip-python python snapshot-util 0.1 single_class/__init__:
 
 class ExampleClass:
-#     ^^^^^^^^^^^^ definition  snapshot-util 0.1 `src.single_class`/ExampleClass#
+#     ^^^^^^^^^^^^ definition  snapshot-util 0.1 single_class/ExampleClass#
     a: int
-#   ^ definition  snapshot-util 0.1 `src.single_class`/ExampleClass#a.
+#   ^ definition  snapshot-util 0.1 single_class/ExampleClass#a.
 #      ^^^ reference  python-stdlib 3.11 builtins/int#
     b: int
-#   ^ definition  snapshot-util 0.1 `src.single_class`/ExampleClass#b.
+#   ^ definition  snapshot-util 0.1 single_class/ExampleClass#b.
 #      ^^^ reference  python-stdlib 3.11 builtins/int#
     c: str
-#   ^ definition  snapshot-util 0.1 `src.single_class`/ExampleClass#c.
+#   ^ definition  snapshot-util 0.1 single_class/ExampleClass#c.
 #      ^^^ reference  python-stdlib 3.11 builtins/str#
 
     static_var = "Hello World"
-#   ^^^^^^^^^^ definition  snapshot-util 0.1 `src.single_class`/ExampleClass#static_var.
+#   ^^^^^^^^^^ definition  snapshot-util 0.1 single_class/ExampleClass#static_var.
 
     def __init__(self, a: int, b: int):
-#       ^^^^^^^^ definition  snapshot-util 0.1 `src.single_class`/ExampleClass#__init__().
-#                ^^^^ definition  snapshot-util 0.1 `src.single_class`/ExampleClass#__init__().(self)
-#                      ^ definition  snapshot-util 0.1 `src.single_class`/ExampleClass#__init__().(a)
+#       ^^^^^^^^ definition  snapshot-util 0.1 single_class/ExampleClass#__init__().
+#                ^^^^ definition  snapshot-util 0.1 single_class/ExampleClass#__init__().(self)
+#                      ^ definition  snapshot-util 0.1 single_class/ExampleClass#__init__().(a)
 #                         ^^^ reference  python-stdlib 3.11 builtins/int#
-#                              ^ definition  snapshot-util 0.1 `src.single_class`/ExampleClass#__init__().(b)
+#                              ^ definition  snapshot-util 0.1 single_class/ExampleClass#__init__().(b)
 #                                 ^^^ reference  python-stdlib 3.11 builtins/int#
         local_c = ", world!"
 #       ^^^^^^^ definition local 0
 
         self.a = a
-#       ^^^^ reference  snapshot-util 0.1 `src.single_class`/ExampleClass#__init__().(self)
-#            ^ reference  snapshot-util 0.1 `src.single_class`/ExampleClass#a.
-#                ^ reference  snapshot-util 0.1 `src.single_class`/ExampleClass#__init__().(a)
+#       ^^^^ reference  snapshot-util 0.1 single_class/ExampleClass#__init__().(self)
+#            ^ reference  snapshot-util 0.1 single_class/ExampleClass#a.
+#                ^ reference  snapshot-util 0.1 single_class/ExampleClass#__init__().(a)
         self.b = b
-#       ^^^^ reference  snapshot-util 0.1 `src.single_class`/ExampleClass#__init__().(self)
-#            ^ reference  snapshot-util 0.1 `src.single_class`/ExampleClass#b.
-#                ^ reference  snapshot-util 0.1 `src.single_class`/ExampleClass#__init__().(b)
+#       ^^^^ reference  snapshot-util 0.1 single_class/ExampleClass#__init__().(self)
+#            ^ reference  snapshot-util 0.1 single_class/ExampleClass#b.
+#                ^ reference  snapshot-util 0.1 single_class/ExampleClass#__init__().(b)
         self.c = "hello" + local_c
-#       ^^^^ reference  snapshot-util 0.1 `src.single_class`/ExampleClass#__init__().(self)
-#            ^ reference  snapshot-util 0.1 `src.single_class`/ExampleClass#c.
+#       ^^^^ reference  snapshot-util 0.1 single_class/ExampleClass#__init__().(self)
+#            ^ reference  snapshot-util 0.1 single_class/ExampleClass#c.
 #                          ^^^^^^^ reference local 0
 
