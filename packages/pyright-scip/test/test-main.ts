@@ -275,7 +275,8 @@ version = "16.05"`,
 }
 
 function testMissingProjectVersion(): void {
-    const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'scip-missing-version-'));
+    // macOS temporary directories can be symlinked; match the analyzer's resolved file paths.
+    const projectRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'scip-missing-version-')));
     try {
         fs.writeFileSync(path.join(projectRoot, 'main.py'), 'value = 1\n');
         fs.writeFileSync(
