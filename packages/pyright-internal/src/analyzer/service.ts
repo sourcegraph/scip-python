@@ -1072,7 +1072,8 @@ export class AnalyzerService {
     private _parsePyprojectTomlFile(pyprojectPath: string): object | undefined {
         return this._attemptParseFile(pyprojectPath, (fileContents, attemptCount) => {
             try {
-                const configObj = TOML.parse(fileContents);
+                // NOTE(scip-python): @iarna/toml 3 rejects CRLF in comments. Do not strip lone CR.
+                const configObj = TOML.parse(fileContents.replace(/\r\n/g, '\n'));
                 if (configObj && configObj.tool && (configObj.tool as TOML.JsonMap).pyright) {
                     return (configObj.tool as TOML.JsonMap).pyright as object;
                 }
