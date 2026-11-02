@@ -8,6 +8,8 @@
  */
 
 import assert from 'assert';
+import * as fs from 'fs';
+import * as os from 'os';
 
 import { AnalyzerService } from '../analyzer/service';
 import { CommandLineOptions } from '../common/commandLineOptions';
@@ -280,16 +282,26 @@ test('AutoSearchPathsOnAndExtraPaths', () => {
 });
 
 test('BasicPyprojectTomlParsing', () => {
-    const cwd = normalizePath(combinePaths(process.cwd(), 'src/tests/samples/project_with_pyproject_toml'));
-    const service = new AnalyzerService('<default>', createFromRealFileSystem(), options);
-    const commandLineOptions = new CommandLineOptions(cwd, /* fromVsCodeExtension */ true);
-
-    service.setOptions(commandLineOptions);
-
-    const configOptions = service.test_getConfigOptions(commandLineOptions);
-    assert.strictEqual(configOptions.defaultPythonVersion!, PythonVersion.V3_9);
-    assert.strictEqual(configOptions.diagnosticRuleSet.reportMissingImports, 'error');
-    assert.strictEqual(configOptions.diagnosticRuleSet.reportUnusedClass, 'warning');
+    // NOTE(scip-python): Exercise mixed arrays and comments with both LF and CRLF.
+    const fixture = fs.readFileSync('src/tests/samples/project_with_pyproject_toml/pyproject.toml', 'utf8');
+    for (const newline of ['\n', '\r\n']) {
+        const cwd = normalizePath(fs.mkdtempSync(combinePaths(os.tmpdir(), 'pyright-toml-')));
+        const service = new AnalyzerService('<default>', createFromRealFileSystem(), options);
+        try {
+            const content =
+                '# configuration\n' + fixture.replace('pythonVersion = "3.9"', 'pythonVersion = "3.9" # inline');
+            fs.writeFileSync(combinePaths(cwd, 'pyproject.toml'), content.replace(/\r?\n/g, newline));
+            const commandLineOptions = new CommandLineOptions(cwd, /* fromVsCodeExtension */ true);
+            service.setOptions(commandLineOptions);
+            const configOptions = service.test_getConfigOptions(commandLineOptions);
+            assert.strictEqual(configOptions.defaultPythonVersion!, PythonVersion.V3_9);
+            assert.strictEqual(configOptions.diagnosticRuleSet.reportMissingImports, 'error');
+            assert.strictEqual(configOptions.diagnosticRuleSet.reportUnusedClass, 'warning');
+        } finally {
+            service.dispose();
+            fs.rmSync(cwd, { recursive: true, force: true });
+        }
+    }
 });
 
 test('FindFilesInMemoryOnly', () => {
