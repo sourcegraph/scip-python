@@ -1123,7 +1123,13 @@ export class TreeVisitor extends ParseTreeWalker {
                                 const bound = typeVar.details.boundType! as ClassType;
 
                                 return this.getSymbolOnce(node, () => {
-                                    const pythonPackage = this.getPackageInfo(node, bound.details.moduleName)!;
+                                    const pythonPackage = this.guessPackage(
+                                        bound.details.moduleName,
+                                        bound.details.filePath
+                                    );
+                                    if (!pythonPackage) {
+                                        return ScipSymbol.local(this.counter.next());
+                                    }
                                     let symbol = Symbols.makeTerm(
                                         Symbols.makeType(
                                             Symbols.makeModule(pythonPackage, bound.details.moduleName),
@@ -1343,7 +1349,12 @@ export class TreeVisitor extends ParseTreeWalker {
             }
             return this.getFunctionSymbol(decl);
         } else if (Types.isClass(typeObj)) {
-            const pythonPackage = this.getPackageInfo(node, typeObj.details.moduleName)!;
+            // The package comes from the declaring file. `node` is the referencing
+            // site, which is in the project whenever a project file is visited.
+            const pythonPackage = this.guessPackage(typeObj.details.moduleName, typeObj.details.filePath);
+            if (!pythonPackage) {
+                return ScipSymbol.local(this.counter.next());
+            }
             return Symbols.makeClass(pythonPackage, typeObj.details.moduleName, node.value);
         } else if (Types.isClassInstance(typeObj)) {
             typeObj = typeObj as ClassType;
@@ -1352,7 +1363,10 @@ export class TreeVisitor extends ParseTreeWalker {
         } else if (Types.isTypeVar(typeObj)) {
             throw 'typevar';
         } else if (Types.isModule(typeObj)) {
-            const pythonPackage = this.getPackageInfo(node, typeObj.moduleName)!;
+            const pythonPackage = this.guessPackage(typeObj.moduleName, typeObj.filePath);
+            if (!pythonPackage) {
+                return ScipSymbol.local(this.counter.next());
+            }
             return Symbols.makeModuleInit(pythonPackage, typeObj.moduleName);
         } else if (Types.isOverloadedFunction(typeObj)) {
             if (!typeObj.overloads) {
