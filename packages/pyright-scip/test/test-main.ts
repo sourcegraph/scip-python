@@ -276,7 +276,8 @@ version = "16.05"`,
 function testPyprojectLineEndings(): void {
     const fixture = path.resolve('snapshots/input/pyproject_1');
     for (const newline of ['\n', '\r\n']) {
-        const projectRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'scip-toml-'));
+        // macOS temporary directories can be symlinked; match the analyzer's resolved file paths.
+        const projectRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'scip-toml-')));
         try {
             fs.mkdirSync(path.join(projectRoot, 'lib'));
             for (const file of ['main.py', 'lib/helpers.py']) {
