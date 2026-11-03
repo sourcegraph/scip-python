@@ -266,28 +266,12 @@ export class TreeVisitor extends ParseTreeWalker {
     }
 
     override visitTypeAnnotation(node: TypeAnnotationNode): boolean {
-        // We are close to being able to look up a symbol, which could give us additional information here.
-        //  Perhaps we should be using this for additional information for any given name?
-        //  We can revisit this in visitName or perhaps when looking up the lsif symbol
-
-        // If we see a type annotation and we are currently inside of a class,
-        // that means that we are describing fields of a class (as far as I can tell),
-        // so we need to push a new symbol
-        const enclosingClass = ParseTreeUtils.getEnclosingClass(node, true);
-        if (enclosingClass) {
-            const hoverResult = this.program.getHoverForPosition(
-                this.fileInfo!.filePath,
-                convertOffsetToPosition(node.start, this.fileInfo!.lines),
-                'markdown',
-                _cancellationToken
-            );
-
-            this.document.symbols.push(
-                new scip.SymbolInformation({
-                    symbol: this.getScipSymbol(node).value,
-                    documentation: _formatHover(hoverResult!),
-                })
-            );
+        if (node.valueExpression.nodeType === ParseNodeType.Name) {
+            const name = node.valueExpression;
+            const declaration = this.evaluator.getDeclarationsForNameNode(name)?.[0];
+            if (declaration?.node) {
+                this.emitSymbolInformationOnce(name, this.getScipSymbol(declaration.node));
+            }
         }
 
         return true;
@@ -311,13 +295,7 @@ export class TreeVisitor extends ParseTreeWalker {
                         documentation.push('```python\n' + assignmentDoc.join('\n') + '\n```');
                     }
 
-                    // node.typeAnnotationComment
-                    this.document.symbols.push(
-                        new scip.SymbolInformation({
-                            symbol: this.getScipSymbol(dec.node).value,
-                            documentation,
-                        })
-                    );
+                    this.emitSymbolInformationOnce(dec.node, this.getScipSymbol(dec.node), documentation);
                 }
             }
         }
@@ -456,7 +434,7 @@ export class TreeVisitor extends ParseTreeWalker {
         const symbol = this.getScipSymbol(node);
         this.document.occurrences.push(
             new scip.Occurrence({
-                symbol_roles: scip.SymbolRole.ReadAccess,
+                symbol_roles: scip.SymbolRole.Import | scip.SymbolRole.ReadAccess,
                 symbol: symbol.value,
                 range: parseNodeToRange(node.module, this.fileInfo!.lines).toLsif(),
             })
@@ -471,7 +449,7 @@ export class TreeVisitor extends ParseTreeWalker {
     }
 
     override visitImportFromAs(node: ImportFromAsNode): boolean {
-        this.pushNewOccurrence(node, this.getScipSymbol(node));
+        this.pushNewOccurrence(node, this.getScipSymbol(node), scip.SymbolRole.Import | scip.SymbolRole.ReadAccess);
         return false;
     }
 
@@ -481,6 +459,7 @@ export class TreeVisitor extends ParseTreeWalker {
     override visitImportAs(node: ImportAsNode): boolean {
         const moduleName = _formatModuleName(node.module);
         const importInfo = getImportInfo(node.module);
+        const roles = scip.SymbolRole.Import | scip.SymbolRole.ReadAccess;
 
         if (
             importInfo &&
@@ -502,12 +481,13 @@ export class TreeVisitor extends ParseTreeWalker {
         ) {
             const symbol = Symbols.makeModuleInit(this.projectPackage, moduleName);
 
-            this.pushNewOccurrence(node.module, symbol);
+            this.pushNewOccurrence(node.module, symbol, roles);
         } else {
             const pythonPackage = this.moduleNameNodeToPythonPackage(node.module);
             if (pythonPackage) {
                 const symbol = Symbols.makeModuleInit(pythonPackage, moduleName);
-                this.pushNewOccurrence(node.module, symbol);
+                this.pushNewOccurrence(node.module, symbol, roles);
+                this.emitExternalSymbolInformation(node.module, symbol, [], false);
             } else {
                 // For python packages & modules that we cannot resolve,
                 // we'll just make a local for the file and note that we could not resolve this module.
@@ -519,7 +499,7 @@ export class TreeVisitor extends ParseTreeWalker {
                 const symbol = this.getLocalForDeclaration(node, [
                     `(module): ${moduleName} [unable to resolve module]`,
                 ]);
-                this.pushNewOccurrence(node.module, symbol);
+                this.pushNewOccurrence(node.module, symbol, roles);
             }
         }
 
@@ -566,8 +546,9 @@ export class TreeVisitor extends ParseTreeWalker {
             return this.emitDeclarationWithoutNode(node, decl);
         }
 
+        const isDefinition = decl.node.id === parent.id;
         const existingSymbol = this.rawGetLsifSymbol(decl.node);
-        if (existingSymbol) {
+        if (existingSymbol && !(isDefinition && decl.node.nodeType === ParseNodeType.Class)) {
             if (decl.node.id === parent.id || decl.node.id === node.id) {
                 switch (decl.node.nodeType) {
                     case ParseNodeType.Function:
@@ -582,8 +563,6 @@ export class TreeVisitor extends ParseTreeWalker {
             }
             return true;
         }
-
-        const isDefinition = decl.node.id === parent.id;
 
         const builtinType = this.evaluator.getBuiltInType(node, node.value);
         if (this.isStdlib(decl, builtinType)) {
@@ -1160,15 +1139,15 @@ export class TreeVisitor extends ParseTreeWalker {
                     }
                 }
 
-                return Symbols.makeTerm(this.getScipSymbol(enclosingSuite || parent), (node as NameNode).value);
+                // An annotation describes the name; it does not introduce another scope.
+                const scope =
+                    enclosingSuite || (parent.nodeType === ParseNodeType.TypeAnnotation ? parent.parent! : parent);
+                return Symbols.makeTerm(this.getScipSymbol(scope), (node as NameNode).value);
             }
             case ParseNodeType.TypeAnnotation: {
                 switch (node.valueExpression.nodeType) {
                     case ParseNodeType.Name: {
-                        return Symbols.makeTerm(
-                            this.getScipSymbol(ParseTreeUtils.getEnclosingSuite(node) || node.parent!),
-                            node.valueExpression.value
-                        );
+                        return this.getScipSymbol(node.valueExpression);
                     }
                     default: {
                         softAssert(false, 'Unhandled type annotation');
@@ -1431,12 +1410,18 @@ export class TreeVisitor extends ParseTreeWalker {
         return this.config.pythonEnvironment.getPackageForModule(moduleName);
     }
 
-    private emitExternalSymbolInformation(node: ParseNode, symbol: ScipSymbol, documentation: string[]) {
-        if (this.externalSymbols.has(symbol.value)) {
+    private emitExternalSymbolInformation(
+        node: ParseNode,
+        symbol: ScipSymbol,
+        documentation: string[],
+        lookupDocumentation = true
+    ) {
+        const existing = this.externalSymbols.get(symbol.value);
+        if (existing && existing.documentation.length > 0) {
             return;
         }
 
-        if (documentation.length === 0) {
+        if (documentation.length === 0 && lookupDocumentation) {
             const nodeFileInfo = getFileInfo(node)!;
             const hoverResult = this.program.getHoverForPosition(
                 nodeFileInfo.filePath,
@@ -1448,10 +1433,6 @@ export class TreeVisitor extends ParseTreeWalker {
             if (hoverResult) {
                 documentation = _formatHover(hoverResult!);
             }
-        }
-
-        if (documentation.length === 0) {
-            return;
         }
 
         // TODO: Could consider adding the documentation finder stuff

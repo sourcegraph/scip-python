@@ -1,6 +1,6 @@
 {
     "name": "@sourcegraph/scip-python",
-    "version": "0.6.6",
+    "version": "0.6.8",
     "description": "SCIP indexer for Python",
     "main": "index.js",
     "scripts": {
@@ -46,7 +46,7 @@
         "webpack-cli": "^4.9.1"
     },
     "dependencies": {
-        "@iarna/toml": "^2.2.5",
+        "@iarna/toml": "^3.0.0",
         "command-exists": "^1.2.9",
         "commander": "^9.2.0",
         "diff": "^5.0.0",

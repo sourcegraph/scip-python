@@ -1,6 +1,12 @@
-FROM nikolaik/python-nodejs:python3.10-nodejs16-alpine@sha256:3c587f799c748f69ed428a599fa061eeb1adc5de7e85ebaeb2797a949c48c4fd
+FROM nikolaik/python-nodejs:python3.11-nodejs24-alpine@sha256:f5f3688c6a25b348ed196cc159bf7fa0538454a7d8775560bc4052d57c971645
 
-RUN apk add --no-cache git bash curl
-RUN npm install -g @sourcegraph/scip-python @sourcegraph/src
+# ca-certificates 20261020-r0 distrusts the compromised eMudhra intermediates;
+# the base image ships an older version.
+RUN apk add --no-cache --upgrade git bash curl 'ca-certificates>=20261020-r0' 'ca-certificates-bundle>=20261020-r0'
+# Install scip-python from this checkout (run `npm pack` in packages/pyright-scip
+# first), not from npm: npm holds new versions for malware scanning, so a
+# release build would otherwise install the previous version.
+COPY packages/pyright-scip/sourcegraph-scip-python-*.tgz /tmp/scip-python.tgz
+RUN npm install -g /tmp/scip-python.tgz @sourcegraph/src && rm /tmp/scip-python.tgz
 
 CMD ["/bin/sh"]

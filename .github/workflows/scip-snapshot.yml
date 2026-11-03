@@ -14,15 +14,15 @@ jobs:
         os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v7
       - name: Install mise
-        uses: jdx/mise-action@v2.4.4
+        uses: jdx/mise-action@v5.2.6
         with:
-          version: 2025.8.10
+          version: 2026.10.25
       - name: Get npm cache directory
         id: npm-cache
         run: echo "dir=$(npm config get cache)" >> $GITHUB_OUTPUT
-      - uses: actions/cache@v3
+      - uses: actions/cache@v6
         with:
           path: ${{ steps.npm-cache.outputs.dir }}
           key: ${{ runner.os }}-node-${{ hashFiles('**/package-lock.json') }}
@@ -42,5 +42,6 @@ jobs:
           fi
       - run: npm install
       - run: cd ./packages/pyright-scip/ && npm install && npm run build
+      - run: cd ./packages/pyright-scip/ && npm test -- --runInBand
       - run: python --version
       - run: cd ./packages/pyright-scip/ && npm run check-snapshots
