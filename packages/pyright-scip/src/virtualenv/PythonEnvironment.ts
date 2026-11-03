@@ -1,7 +1,7 @@
 import * as path from 'path';
 import PythonPackage from './PythonPackage';
 
-const pathSepRegex = new RegExp(path.sep, 'g');
+const pathSepRegex = /[\\/]/g;
 
 export default class PythonEnvironment {
     /// Maps a module name (x.y.z) to an index in this.packages
