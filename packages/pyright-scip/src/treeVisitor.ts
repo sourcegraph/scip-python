@@ -1121,6 +1121,18 @@ export class TreeVisitor extends ParseTreeWalker {
                     }
                 }
 
+                // PEP 572: the target of an assignment expression inside a
+                // comprehension binds in the scope containing the comprehension.
+                // Walking up through the parents would stop at the
+                // ListComprehension node, which has no symbol of its own, so
+                // resolve module-level targets against the module directly.
+                if (parent.nodeType === ParseNodeType.AssignmentExpression && parent.name === node) {
+                    const evaluationNode = ParseTreeUtils.getEvaluationNodeForAssignmentExpression(parent);
+                    if (evaluationNode?.nodeType === ParseNodeType.Module) {
+                        return Symbols.makeTerm(this.getScipSymbol(evaluationNode), node.value);
+                    }
+                }
+
                 const enclosingSuite = ParseTreeUtils.getEnclosingSuite(node);
                 if (enclosingSuite) {
                     // Certain enclosing suites contain their scope completely.
