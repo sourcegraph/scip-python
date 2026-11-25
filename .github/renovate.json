@@ -10,5 +10,27 @@
   ],
   "extends": [
     "local>sourcegraph/renovate-config"
+  ],
+  "timezone": "Europe/Warsaw",
+  "schedule": [
+    "before 9am on monday"
+  ],
+  "packageRules": [
+    {
+      "description": "Merge non-major updates once all checks pass; major updates need review. Renovate merges them itself: GitHub auto-merge would only wait for the required snapshot tests, not the Docker image build.",
+      "matchUpdateTypes": ["minor", "patch", "digest", "pin", "pinDigest"],
+      "automerge": true,
+      "platformAutomerge": false
+    },
+    {
+      "description": "The shared preset auto-merges some npm updates of every type; keep major updates for review.",
+      "matchUpdateTypes": ["major"],
+      "automerge": false
+    },
+    {
+      "description": "Update GitHub Actions and the tool versions they install in one PR.",
+      "matchManagers": ["github-actions"],
+      "groupName": "GitHub Actions"
+    }
   ]
 }
