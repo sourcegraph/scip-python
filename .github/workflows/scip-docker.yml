@@ -8,6 +8,9 @@ on:
     paths:
       - '.github/workflows/**'
       - 'Dockerfile.autoindex'
+      # The image installs the packed package, so build it for version and dependency changes too.
+      - 'packages/pyright-scip/package.json'
+      - 'packages/pyright-scip/package-lock.json'
 
 jobs:
   build-image:

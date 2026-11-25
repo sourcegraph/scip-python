@@ -1,0 +1,69 @@
+name: scheduled-release
+
+# Opens a patch release PR every 4 weeks on Monday, even without code changes,
+# so the Docker image is rebuilt with the latest Alpine package updates.
+# Merging the PR publishes the release (see tag-release.yml).
+on:
+  # Cron can't express "every 4 weeks", so this runs every Monday
+  # and skips weeks that aren't a multiple of 4 after RELEASE_MONDAY.
+  schedule:
+    - cron: '0 9 * * 1'
+  workflow_dispatch:
+
+env:
+  RELEASE_MONDAY: '2026-11-23'
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  open-release-pr:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Release from scip even when dispatched from another branch.
+          ref: scip
+          fetch-depth: 0
+
+      - name: Open release PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_EVENT_NAME" = "schedule" ]; then
+            DAYS=$(( ($(date -u +%s) - $(date -u -d "$RELEASE_MONDAY" +%s)) / 86400 ))
+            if (( DAYS % 28 != 0 )); then
+              echo "Not a release week ($DAYS days after $RELEASE_MONDAY)"
+              exit 0
+            fi
+          fi
+
+          ./dev/prepare_release.sh
+          VERSION="$(jq -r .version packages/pyright-scip/package.json)"
+          BRANCH="release/v$VERSION"
+
+          # A separate assignment, so a failed lookup stops the job under set -e.
+          OPEN_PR="$(gh pr list --head "$BRANCH" --state open --json number --jq '.[].number')"
+          if [ -n "$OPEN_PR" ]; then
+            echo "::warning::PR #$OPEN_PR for $BRANCH is already open; merge or close it first."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$BRANCH"
+          git commit -am "release/v$VERSION"
+          # With no open PR, a leftover branch (from a run that failed after pushing,
+          # or a PR closed without deleting it) is stale, so replace it.
+          git push --force origin "$BRANCH"
+
+          gh pr create --base scip --head "$BRANCH" --title "release/v$VERSION" --body "$(cat <<EOF
+          Scheduled release, so the Docker image picks up the latest Alpine package updates. Edit the CHANGELOG entry before merging if needed.
+
+          GitHub doesn't start CI on PRs opened by GitHub Actions until someone approves it: select **Approve workflows to run** below to run the required checks.
+
+          Merging this PR tags v$VERSION, publishes \`@sourcegraph/scip-python\` to npm and pushes the \`sourcegraph/scip-python\` Docker images.
+          EOF
+          )"

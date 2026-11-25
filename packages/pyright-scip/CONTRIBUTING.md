@@ -113,9 +113,23 @@ When modifying code in the `pyright-internal` package:
 
 ## Publishing releases
 
-1. Create a PR with the following changes:
+A [scheduled workflow](/.github/workflows/scheduled-release.yml)
+opens a patch release PR every 4 weeks on Monday, even without code changes,
+so the Docker image picks up the latest Alpine package updates.
+It can also be run on demand from the
+[GitHub Actions UI](https://github.com/sourcegraph/scip-python/actions/workflows/scheduled-release.yml).
+GitHub doesn't run CI on that PR until you select
+**Approve workflows to run** on it.
+
+1. Create a PR with the following changes (the scheduled PR already has both):
    - Change the version in [package.json](./package.json) 
      to `M.N.P`.
    - Add release notes to [CHANGELOG.md](./CHANGELOG.md)
-2. After merging the PR, add a tag `vM.N.P` to the latest
-   commit on the `scip` branch and push that tag.
+
+   To prepare one by hand, run `NEW_VERSION="M.N.P" ./dev/prepare_release.sh`
+   from the repository root (without `NEW_VERSION`, it bumps the patch version)
+   and edit the CHANGELOG entry.
+2. Once the PR is merged to `scip`, the [tag workflow](/.github/workflows/tag-release.yml)
+   pushes the `vM.N.P` tag and starts the
+   [release workflow](/.github/workflows/scip-release.yml),
+   which publishes the npm package and the Docker images.

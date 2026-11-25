@@ -4,9 +4,12 @@ on:
   push:
     tags:
       - v*
+  # tag-release.yml dispatches this workflow for the tags it pushes.
+  workflow_dispatch:
 
 jobs:
   release-image:
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -20,12 +23,43 @@ jobs:
       - run: npm install
       # npm pack builds the package and creates the tarball Dockerfile.autoindex installs.
       - run: cd ./packages/pyright-scip/ && npm install && npm pack
-      - run: cd ./packages/pyright-scip/ && npm publish --access public
+      - name: Publish to npm
+        working-directory: packages/pyright-scip
+        run: |
+          set -euo pipefail
+          NAME="$(jq -r .name package.json)"
+          VERSION="$(jq -r .version package.json)"
+          if [ "v$VERSION" != "$GITHUB_REF_NAME" ]; then
+            echo "package.json has version $VERSION, which doesn't match the tag $GITHUB_REF_NAME"
+            exit 1
+          fi
+          # npm versions are immutable, so when a rerun after a failed Docker push
+          # finds this version published, skip to the Docker steps.
+          STATUS="$(curl -sS -o /dev/null -w '%{http_code}' "https://registry.npmjs.org/$NAME/$VERSION")"
+          case "$STATUS" in
+            200) echo "$NAME@$VERSION is already on npm; skipping npm publish" ;;
+            404) npm publish --access public ;;
+            *) echo "Unexpected HTTP $STATUS from the npm registry"; exit 1 ;;
+          esac
       - name: Login to DockerHub
         uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
+      - name: Docker tags
+        id: docker_tags
+        run: |
+          set -euo pipefail
+          TAGS="sourcegraph/scip-python:$GITHUB_REF_NAME"
+          # Only the newest release moves the floating tags, so rerunning an
+          # older release doesn't roll them back.
+          LATEST="$(git ls-remote --tags --refs origin 'refs/tags/v[0-9]*' | sed 's|.*refs/tags/||' | sort -V | tail -n 1)"
+          if [ "$GITHUB_REF_NAME" = "$LATEST" ]; then
+            TAGS+=$'\nsourcegraph/scip-python:latest\nsourcegraph/scip-python:autoindex'
+          else
+            echo "$LATEST is newer than $GITHUB_REF_NAME; not moving latest and autoindex"
+          fi
+          { echo 'tags<<EOF'; echo "$TAGS"; echo 'EOF'; } >>"$GITHUB_OUTPUT"
       - name: Build and push
         id: docker_build_autoindex
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
@@ -33,7 +67,4 @@ jobs:
           context: .
           file: Dockerfile.autoindex
           push: true
-          tags: |
-            sourcegraph/scip-python:autoindex
-            sourcegraph/scip-python:latest
-            sourcegraph/scip-python:${{ github.ref_name }}
+          tags: ${{ steps.docker_tags.outputs.tags }}
