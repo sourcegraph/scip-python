@@ -1,0 +1,52 @@
+name: tag-release
+
+# Tags a release when a version bump in package.json lands on scip.
+on:
+  push:
+    branches:
+      - scip
+    paths:
+      - 'packages/pyright-scip/package.json'
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Tag release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="v$(jq -r .version packages/pyright-scip/package.json)"
+          if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+            # A rerun of this workflow finds its own tag; publish again.
+            # Other package.json changes, such as dependency bumps, find an older tag.
+            if [ "$(git rev-parse "$TAG^{commit}")" != "$GITHUB_SHA" ]; then
+              echo "$TAG already exists on an earlier commit; nothing to release"
+              exit 0
+            fi
+          else
+            # Catch hand-edited versions, such as v0.6.9 or an older release.
+            LATEST="$(git tag --list 'v[0-9]*' | sort -V | tail -n 1)"
+            if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] ||
+              [ "$(printf '%s\n%s\n' "$LATEST" "$TAG" | sort -V | tail -n 1)" != "$TAG" ]; then
+              echo "$TAG is not of the form vM.N.P or isn't newer than $LATEST"
+              exit 1
+            fi
+            git tag "$TAG" "$GITHUB_SHA"
+            git push origin "$TAG"
+          fi
+
+          # Tags pushed with GITHUB_TOKEN don't trigger workflows, so start the
+          # release for the tag explicitly. Don't call scip-release.yml as a
+          # reusable workflow instead: npm trusted publishing would then check
+          # this workflow's file name and reject the publish.
+          gh workflow run scip-release.yml --ref "$TAG"
