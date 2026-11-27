@@ -57,11 +57,11 @@ while (line := input("Enter text: ")) != "quit":
 # if + comprehension
 if any((any_n := num) < 0 for num in some_list):
 #  ^^^ reference local 4
-#       ^^^^^ definition any_n.
+#       ^^^^^ definition  snapshot-util 0.1 walrus/any_n.
 #                ^^^ reference local 5
 #                             ^^^ definition local 5
 #                                    ^^^^^^^^^ reference  snapshot-util 0.1 walrus/some_list.
     print(f"Negative number found: {any_n}")
 #   ^^^^^ reference  python-stdlib 3.11 builtins/print().
-#                                   ^^^^^ reference any_n.
+#                                   ^^^^^ reference  snapshot-util 0.1 walrus/any_n.
 
