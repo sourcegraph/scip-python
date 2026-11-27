@@ -10,6 +10,8 @@ export interface IndexOptions {
     output: string;
     cwd: string;
     targetOnly?: string;
+    exclude?: string[];
+    excludeConfig?: string;
     infer?: { projectVersionFromCommit: boolean };
 
     // Progress reporting configuration
@@ -64,6 +66,8 @@ export function mainCommand(
         .option('--project-namespace <namespace>', 'A prefix to prepend to all module definitions in the current index')
         .option('--cwd <path>', 'working directory for executing scip-python', process.cwd())
         .option('--target-only <path>', 'limit analysis to the following path')
+        .option('--exclude <paths...>', 'exclude files or directories from analysis (can specify multiple)')
+        .option('--exclude-config <file>', 'path to a config file containing paths to exclude (one per line)')
         .option(
             '--output <path>',
             'Path to the output file. If this path is relative, it is interpreted relative to the value for --cwd.',
