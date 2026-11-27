@@ -25,6 +25,7 @@ jobs:
         uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
           username: sourcegraph
+          scope: sourcegraph/scip-python
         env:
           DOCKERHUB_OIDC_CONNECTIONID: 7937e496-9edf-4170-9bc8-9ff38a3954fe
       - name: Build and push
